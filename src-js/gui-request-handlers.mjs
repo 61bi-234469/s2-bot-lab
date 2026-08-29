@@ -80,7 +80,7 @@ export function createGuiRequestHandlers({ proposeCc2 = null } = {}) {
       if (method === "POST" && path === "/api/suggest") {
         if (proposeCc2 === null) return fail(503, { error: "CC2 WASM is unavailable" });
         const engine = requireCc2Type(body.engine ?? "cc2-raw");
-        try { return ok({ ...(await proposeCc2({ engine, state: body.state })), engine: publicEngine(engine) }); }
+        try { return ok({ ...(await proposeCc2({ engine, state: body.state })), info: { version: "deterministic-wasm-512" }, engine: publicEngine(engine) }); }
         catch (error) { return fail(422, { error: messageOf(error) }); }
       }
       if (method === "POST" && path === "/api/apply-s2") {
