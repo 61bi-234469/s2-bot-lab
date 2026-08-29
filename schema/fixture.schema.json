@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "s2-analysis-engine/schema/fixture/1",
+  "title": "S-FIXTURE/1",
+  "type": "object",
+  "required": ["$schema", "schemaVersion", "id", "rulesetId", "evidenceLayer", "coverageCells", "source", "input", "expected", "comparison", "generatedAt", "hash"],
+  "properties": {
+    "$schema": { "const": "s2-analysis-engine/schema/fixture/1" },
+    "schemaVersion": { "const": 1 },
+    "id": { "type": "string", "minLength": 1 },
+    "rulesetId": { "type": "string", "minLength": 1 },
+    "evidenceLayer": { "enum": ["differential", "golden", "replay-results", "metamorphic", "cross-runtime"] },
+    "coverageCells": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } },
+    "source": { "type": "object", "required": ["kind"] },
+    "input": {
+      "type": "object",
+      "required": ["state", "action"],
+      "properties": {
+        "state": { "$ref": "canonical-state.schema.json" },
+        "action": { "$ref": "#/$defs/action" }
+      },
+      "additionalProperties": false
+    },
+    "expected": { "type": "object", "required": ["legality", "lockResult", "chain", "attackStages", "cancelResult", "tankResult", "nextState"] },
+    "comparison": {
+      "type": "object",
+      "required": ["mode", "floatTolerance"],
+      "properties": { "mode": { "const": "exact" }, "floatTolerance": { "const": 0 } },
+      "additionalProperties": false
+    },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+  },
+  "$defs": {
+    "packet": {
+      "type": "object",
+      "required": ["packetId", "sourceGameId", "amount", "holeSize", "arrivalFrame", "confirmed", "order"],
+      "properties": {
+        "packetId": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "sourceGameId": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "amount": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "holeSize": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "arrivalFrame": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "confirmed": { "type": "boolean" },
+        "order": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+      },
+      "additionalProperties": false
+    },
+    "placement": {
+      "type": "object",
+      "required": ["piece", "rotation", "x", "y", "usedHold", "rotationEvidence"],
+      "properties": {
+        "piece": { "enum": ["I", "J", "L", "O", "S", "T", "Z"] },
+        "rotation": { "enum": ["spawn", "right", "reverse", "left"] },
+        "x": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+        "y": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+        "usedHold": { "type": "boolean" },
+        "rotationEvidence": {
+          "type": "object",
+          "required": ["lastInputWasRotation", "kickIndex"],
+          "properties": {
+            "lastInputWasRotation": { "type": "boolean" },
+            "kickIndex": { "anyOf": [{ "type": "integer", "minimum": 0, "maximum": 9007199254740991 }, { "type": "null" }] },
+            "kickId": { "type": "string", "pattern": "^[0-3][0-3]$" },
+            "kickOffset": {
+              "type": "array",
+              "prefixItems": [
+                { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+                { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 }
+              ],
+              "minItems": 2,
+              "maxItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "if": { "properties": { "lastInputWasRotation": { "const": false } } },
+          "then": { "properties": { "kickIndex": { "type": "null" } } },
+          "else": { "required": ["kickId", "kickOffset"] }
+        }
+      },
+      "additionalProperties": false
+    },
+    "action": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "placement"],
+          "properties": { "kind": { "const": "placement" }, "placement": { "$ref": "#/$defs/placement" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "packet"],
+          "properties": { "kind": { "const": "garbage-receive" }, "packet": { "$ref": "#/$defs/packet" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "packetId", "sourceGameId", "arrivalFrame"],
+          "properties": {
+            "kind": { "const": "garbage-confirm" },
+            "packetId": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+            "sourceGameId": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+            "arrivalFrame": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "fromFrame", "toFrame"],
+          "properties": {
+            "kind": { "const": "tick" },
+            "fromFrame": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+            "toFrame": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "additionalProperties": false
+}

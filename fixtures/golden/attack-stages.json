@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "component": "triangle-attack-adapter",
+  "evidenceLayer": "golden",
+  "source": {
+    "kind": "manual",
+    "primarySource": "@haelp/teto 4.2.7 garbageCalcV2 and Engine lock path",
+    "rationale": "Small arithmetic cases whose expected stages can be independently inspected."
+  },
+  "cases": [
+    {
+      "id": "quad-no-chain",
+      "coverageCells": ["clear.lines", "attack.total", "rounding.mode"],
+      "input": {
+        "clear": { "lines": 4, "spin": "none", "piece": "I", "perfectClear": false, "garbageCleared": 0 },
+        "chain": { "b2b": 0, "combo": 0 },
+        "enemies": 1,
+        "multiplier": 1,
+        "rules": { "spinBonuses": "T-spins", "comboTable": "none", "garbageTargetBonus": "none", "b2bChaining": true, "b2bCharging": false, "rounding": "down", "specialBonus": true, "perfectClearGarbage": 10 }
+      },
+      "expected": { "raw": 4, "afterMultiplier": 4, "afterRounding": 4, "specialBonus": 0, "perfectClearBonus": 0, "surgeChunks": [], "outgoingBeforeCancel": 4 }
+    },
+    {
+      "id": "tspin-double-b2b",
+      "coverageCells": ["spin.t-corner", "b2b.exact", "attack.total"],
+      "input": {
+        "clear": { "lines": 2, "spin": "normal", "piece": "T", "perfectClear": false, "garbageCleared": 0 },
+        "chain": { "b2b": 2, "combo": 0 },
+        "enemies": 1,
+        "multiplier": 1,
+        "rules": { "spinBonuses": "T-spins", "comboTable": "none", "garbageTargetBonus": "none", "b2bChaining": true, "b2bCharging": false, "rounding": "down", "specialBonus": false, "perfectClearGarbage": 10 }
+      },
+      "expected": { "raw": 5, "afterMultiplier": 5, "afterRounding": 5, "specialBonus": 0, "perfectClearBonus": 0, "surgeChunks": [], "outgoingBeforeCancel": 5 }
+    },
+    {
+      "id": "modern-combo-double",
+      "coverageCells": ["combo.table", "attack.total"],
+      "input": {
+        "clear": { "lines": 2, "spin": "none", "piece": "O", "perfectClear": false, "garbageCleared": 0 },
+        "chain": { "b2b": 0, "combo": 3 },
+        "enemies": 1,
+        "multiplier": 1,
+        "rules": { "spinBonuses": "T-spins", "comboTable": "modern guideline", "garbageTargetBonus": "none", "b2bChaining": true, "b2bCharging": false, "rounding": "down", "specialBonus": false, "perfectClearGarbage": 10 }
+      },
+      "expected": { "raw": 2, "afterMultiplier": 2, "afterRounding": 2, "specialBonus": 0, "perfectClearBonus": 0, "surgeChunks": [], "outgoingBeforeCancel": 2 }
+    },
+    {
+      "id": "multiplier-special-bonus-order",
+      "coverageCells": ["attack.total", "attack.special-bonus", "rounding.mode"],
+      "input": {
+        "clear": { "lines": 4, "spin": "none", "piece": "I", "perfectClear": false, "garbageCleared": 1 },
+        "chain": { "b2b": 0, "combo": 0 },
+        "enemies": 1,
+        "multiplier": 1.5,
+        "rules": { "spinBonuses": "T-spins", "comboTable": "none", "garbageTargetBonus": "none", "b2bChaining": true, "b2bCharging": false, "rounding": "down", "specialBonus": true, "perfectClearGarbage": 10 }
+      },
+      "expected": { "raw": 4, "afterMultiplier": 6, "afterRounding": 7, "specialBonus": 1, "perfectClearBonus": 0, "surgeChunks": [], "outgoingBeforeCancel": 7 }
+    },
+    {
+      "id": "perfect-clear-separate-chunk",
+      "coverageCells": ["clear.perfect", "attack.total"],
+      "input": {
+        "clear": { "lines": 1, "spin": "none", "piece": "I", "perfectClear": true, "garbageCleared": 0 },
+        "chain": { "b2b": 0, "combo": 1 },
+        "enemies": 1,
+        "multiplier": 1,
+        "rules": { "spinBonuses": "T-spins", "comboTable": "none", "garbageTargetBonus": "none", "b2bChaining": true, "b2bCharging": false, "rounding": "down", "specialBonus": true, "perfectClearGarbage": 10 }
+      },
+      "expected": { "raw": 0, "afterMultiplier": 0, "afterRounding": 0, "specialBonus": 0, "perfectClearBonus": 10, "surgeChunks": [], "outgoingBeforeCancel": 10 }
+    }
+  ]
+}

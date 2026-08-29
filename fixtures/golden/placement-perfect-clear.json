@@ -1,0 +1,208 @@
+{
+  "$schema": "s2-analysis-engine/schema/fixture/1",
+  "schemaVersion": 1,
+  "id": "placement-perfect-clear",
+  "rulesetId": "tetrio-s2-v19-foundation000000000000000000000000000000000000000000000000000000-beta-1-5-0",
+  "evidenceLayer": "golden",
+  "coverageCells": [
+    "clear.lines",
+    "clear.perfect",
+    "b2b.exact",
+    "attack.total"
+  ],
+  "source": {
+    "kind": "manual",
+    "manual": {
+      "author": "GPT-5",
+      "primarySource": "@haelp/teto 4.2.7 Engine lock path perfect-clear handling",
+      "rationale": "Fix perfect-clear B2B preservation and the independently rounded PC garbage chunk in a complete canonical placement transition."
+    }
+  },
+  "input": {
+    "state": {
+      "$schema": "s2-analysis-engine/schema/canonical-state/1",
+      "schemaVersion": 1,
+      "rulesetId": "tetrio-s2-v19-foundation000000000000000000000000000000000000000000000000000000-beta-1-5-0",
+      "board": {
+        "width": 10,
+        "height": 6,
+        "cells": "GGGGGG______________________________________________________",
+        "fidelity": "exact"
+      },
+      "pieces": {
+        "current": "I",
+        "hold": null,
+        "holdAvailable": true,
+        "known": [
+          "I",
+          "T"
+        ],
+        "queueModel": {
+          "type": "7-bag",
+          "bagRemaining": [
+            "S",
+            "Z",
+            "J",
+            "L"
+          ],
+          "seed": null,
+          "tail": "unknown"
+        },
+        "fidelity": "exact"
+      },
+      "chain": {
+        "combo": 0,
+        "b2b": 0,
+        "fidelity": "exact"
+      },
+      "garbage": {
+        "packets": [],
+        "generatorState": {
+          "rngState": 123456789,
+          "lastTankFrame": 90,
+          "lastHoleColumn": -1,
+          "sentForOpener": 0,
+          "holeChanged": false,
+          "receivedCountSinceReset": 0
+        },
+        "capState": {
+          "consumedThisTick": 0
+        },
+        "fidelity": "exact"
+      },
+      "time": {
+        "logicalFrame": 101,
+        "frameSemantics": "virtual-tank-only",
+        "piecesPlaced": 0,
+        "fidelity": "exact"
+      },
+      "informationLoss": [],
+      "provenance": {
+        "sourcePath": "editor-session",
+        "producedBy": "s2-analysis-engine-fixture"
+      }
+    },
+    "action": {
+      "kind": "placement",
+      "placement": {
+        "piece": "I",
+        "rotation": "spawn",
+        "x": 6,
+        "y": -2,
+        "usedHold": false,
+        "rotationEvidence": {
+          "lastInputWasRotation": false,
+          "kickIndex": null
+        }
+      }
+    }
+  },
+  "expected": {
+    "legality": {
+      "legal": true,
+      "reason": null
+    },
+    "lockResult": {
+      "clearedRows": [
+        0
+      ],
+      "lines": 1,
+      "spin": "none",
+      "perfectClear": true
+    },
+    "chain": {
+      "comboBefore": 0,
+      "comboAfter": 1,
+      "b2bBefore": 0,
+      "b2bAfter": 1,
+      "brokeB2b": false
+    },
+    "attackStages": {
+      "raw": 0,
+      "afterMultiplier": 0,
+      "afterRounding": 0,
+      "specialBonus": 0,
+      "perfectClearBonus": 10,
+      "surgeChunks": [],
+      "outgoingBeforeCancel": 10
+    },
+    "cancelResult": {
+      "cancelled": 0,
+      "remainingIncoming": [],
+      "outgoingAfterCancel": 10
+    },
+    "tankResult": {
+      "inserted": [],
+      "deferred": [],
+      "toppedOut": false
+    },
+    "nextState": {
+      "$schema": "s2-analysis-engine/schema/canonical-state/1",
+      "schemaVersion": 1,
+      "rulesetId": "tetrio-s2-v19-foundation000000000000000000000000000000000000000000000000000000-beta-1-5-0",
+      "board": {
+        "width": 10,
+        "height": 6,
+        "cells": "____________________________________________________________",
+        "fidelity": "exact"
+      },
+      "pieces": {
+        "current": "I",
+        "hold": null,
+        "holdAvailable": true,
+        "known": [
+          "T"
+        ],
+        "queueModel": {
+          "type": "7-bag",
+          "bagRemaining": [
+            "S",
+            "Z",
+            "J",
+            "L"
+          ],
+          "seed": null,
+          "tail": "unknown"
+        },
+        "fidelity": "exact"
+      },
+      "chain": {
+        "combo": 1,
+        "b2b": 1,
+        "fidelity": "exact"
+      },
+      "garbage": {
+        "packets": [],
+        "generatorState": {
+          "rngState": 123456789,
+          "lastTankFrame": 90,
+          "lastHoleColumn": -1,
+          "sentForOpener": 10,
+          "holeChanged": false,
+          "receivedCountSinceReset": 0
+        },
+        "capState": {
+          "consumedThisTick": 0
+        },
+        "fidelity": "exact"
+      },
+      "time": {
+        "logicalFrame": 101,
+        "frameSemantics": "virtual-tank-only",
+        "piecesPlaced": 1,
+        "fidelity": "exact"
+      },
+      "informationLoss": [],
+      "provenance": {
+        "sourcePath": "editor-session",
+        "producedBy": "s2-analysis-engine-fixture"
+      }
+    }
+  },
+  "comparison": {
+    "mode": "exact",
+    "floatTolerance": 0
+  },
+  "generatedAt": "2026-08-13T00:00:00Z",
+  "hash": "sha256:aade3fbfbb8bb0d29af5ab5cf69cc097334d52517bf5efdfa939406104d6bcc1"
+}

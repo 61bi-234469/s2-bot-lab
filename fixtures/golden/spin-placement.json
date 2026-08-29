@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "component": "triangle-placement-spin",
+  "evidenceLayer": "golden",
+  "source": {
+    "kind": "manual",
+    "primarySource": "@haelp/teto 4.2.7 Engine #detectSpinFromCorners and #isTSpinKick",
+    "rationale": "Fix the T-corner front-corner and final SRS kick promotion boundaries before replay-derived coverage."
+  },
+  "cases": [
+    {
+      "id": "t-full-front-corners",
+      "coverageCells": ["spin.t-corner"],
+      "boardRows": ["___G_G____", "__________", "___G_G____", "__________", "__________", "__________"],
+      "rotation": "spawn",
+      "kickIndex": 0,
+      "kickId": "00",
+      "kickOffset": [0, 0],
+      "expectedSpin": "normal"
+    },
+    {
+      "id": "t-mini-one-front-corner",
+      "coverageCells": ["spin.t-corner"],
+      "boardRows": ["___G_G____", "__________", "___G______", "__________", "__________", "__________"],
+      "rotation": "spawn",
+      "kickIndex": 0,
+      "kickId": "00",
+      "kickOffset": [0, 0],
+      "expectedSpin": "mini"
+    },
+    {
+      "id": "t-mini-final-kick-promotion",
+      "coverageCells": ["spin.t-corner", "reachability.kick"],
+      "boardRows": ["_____G____", "__________", "___G_G____", "__________", "__________", "__________"],
+      "rotation": "left",
+      "kickIndex": 3,
+      "kickId": "03",
+      "kickOffset": [1, -2],
+      "expectedSpin": "normal"
+    },
+    {
+      "id": "inconsistent-final-kick-evidence",
+      "coverageCells": ["spin.t-corner", "reachability.kick"],
+      "boardRows": ["_____G____", "__________", "___G_G____", "__________", "__________", "__________"],
+      "rotation": "left",
+      "kickIndex": 3,
+      "kickId": "03",
+      "kickOffset": [0, -2],
+      "expectedError": "rotation evidence does not match the configured kick table"
+    },
+    {
+      "id": "t-spin-single-stage-connection",
+      "coverageCells": ["spin.t-corner", "clear.lines", "attack.total", "attack.special-bonus"],
+      "boardRows": ["___G_G____", "GGG___GGGG", "___G_G____", "__________", "__________", "__________"],
+      "rotation": "spawn",
+      "kickIndex": 0,
+      "kickId": "00",
+      "kickOffset": [0, 0],
+      "expectedSpin": "normal",
+      "expectedStages": {
+        "clearedRows": [1],
+        "lines": 1,
+        "raw": 2,
+        "afterRounding": 3,
+        "specialBonus": 1,
+        "comboAfter": 1,
+        "b2bAfter": 1
+      }
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "$schema": "s2-analysis-engine/schema/ruleset-manifest/1",
+  "schemaVersion": 1,
+  "id": "tetrio-s2-v19-2c47b3df945f6714449b92d1b44346ef4bf0e1a20e95be8ed10c28be75c66a60-beta-1-5-0",
+  "displayId": "tetrio-s2-v19-2c47b3df945f-beta-1-5-0",
+  "rulesetVersion": 19,
+  "behaviorRevision": "beta-1-5-0",
+  "canonicalIdentity": true,
+  "normalizedOptionsScope": "all-rule-affecting",
+  "normalizedOptions": {"TEMP_zenith_grace":"","TEMP_zenith_rng":false,"absolute_lines":false,"allclear_b2b":1,"allclear_b2b_dupes":false,"allclear_b2b_sends":true,"allclear_charges":false,"allclear_garbage":5,"allclears":true,"allow180":true,"allow_harddrop":true,"anchorseed":false,"are":0,"b2bchaining":false,"b2bcharge_at":4,"b2bcharge_base":3,"b2bcharging":true,"b2bextras":false,"bagtype":"7-bag","bgmnoreset":true,"boardbuffer":20,"boardheight":20,"boardskin":"generic","boardwidth":10,"can_retry":false,"can_undo":false,"cancelmultiplier":1,"clutch":true,"combotable":"multiplier","countdown":true,"countdown_interval":1000,"display_fire":false,"display_hold":true,"display_next":true,"display_replay":false,"display_shadow":true,"display_username":true,"display_zen":false,"forfeit_time":300,"fromretry":false,"g":0.02,"garbageabsolutecap":0,"garbageare":5,"garbagearebump":12,"garbageattackcap":0,"garbageblocking":"combo blocking","garbagecap":8,"garbagecapincrease":0,"garbagecapmargin":0,"garbagecapmax":40,"garbageentry":"instant","garbagefavor":0,"garbageholesize":1,"garbageincrease":0.008,"garbagemargin":10800,"garbagemultiplier":1,"garbagephase":0,"garbagequeue":false,"garbagespecialbonus":true,"garbagespeed":20,"garbagetargetbonus":"none","gincrease":0.0035,"gmargin":7200,"gravitymay20g":true,"hasgarbage":true,"infinite_hold":false,"infinite_movement":false,"infinite_stock":false,"inverted":false,"invisible":false,"kickset":"SRS+","latencymode":"low","levelgbase":0.8,"levelgspeed":0.007,"levels":false,"levelspeed":1,"levelstatic":false,"levelstaticspeed":10,"lineclear_are":0,"lockresets":15,"locktime":30,"manual_allowed":false,"map":"","master_invisible":false,"masterlevels":false,"messiness_center":false,"messiness_change":1,"messiness_inner":0,"messiness_nosame":false,"messiness_timeout":0,"minoskin":{"z":"tetrio","l":"tetrio","o":"tetrio","s":"tetrio","i":"tetrio","j":"tetrio","t":"tetrio","other":"tetrio","ghost":"tetrio"},"mission_type":"mission_league","neverstopbgm":true,"new_payback":false,"nextcount":5,"no_mission_sound":false,"no_szo":false,"noextrawidth":true,"nolockout":true,"noreplay":false,"nosiren":false,"nosound":false,"objective_count":0,"objective_result":"","objective_time":0,"objective_type":"none","openerphase":14,"passthrough":"zero","pro":false,"pro_alert":false,"pro_retry":false,"receivemultiplier":1,"retryisclear":false,"room_handling":false,"room_handling_arr":2,"room_handling_das":10,"room_handling_sdf":6,"roundmode":"down","score":0,"seed_random":false,"shielded":0,"slot_bar1":"impending","slot_bar2":"","slot_counter1":"stopwatch","slot_counter2":"attack","slot_counter3":"pieces","slot_counter4":"","slot_counter5":"vs","song":"none","spinbonuses":"all-mini+","startinglevel":1,"stock":0,"stride":false,"survival_cap":0,"survival_layer_amt":10,"survival_layer_min":0,"survival_layer_non":false,"survival_messiness":0,"survival_timer_itv":1,"survivalmode":"none","topoutisclear":false,"tutorial":false,"usebombs":false,"usezenconfig":false,"version":19,"void_holes":0,"void_holes_hungryness":12,"zenith":false,"zenith_allspin":false,"zenith_ally":[],"zenith_allyexpert":false,"zenith_doublehole":false,"zenith_duo":false,"zenith_expert":false,"zenith_gravity":false,"zenith_isshadowedside":false,"zenith_messy":false,"zenith_mods":[],"zenith_volatile":false,"zenlevel":1,"zenlevels":false,"zenprogress":0},
+  "normalizedOptionsHash": "sha256:2c47b3df945f6714449b92d1b44346ef4bf0e1a20e95be8ed10c28be75c66a60",
+  "optionResolution": {
+    "missingRuleAffecting": "unsupported",
+    "unknownOptionPolicy": "fail-closed"
+  },
+  "unresolvedRuleAffectingOptions": [],
+  "optionRegistry": {
+    "keyCount": 173,
+    "keyNameSha256": "sha256:6cca053f48e04407f490eebbda53e2d7d53639bcac139ec638e3d3c898282830",
+    "classCounts": { "rule-affecting": 162, "state-input": 3, "runtime-only": 5, "presentation": 3 },
+    "nonRuleAffecting": {
+      "state-input": ["seed", "gameid", "handling"],
+      "runtime-only": ["countdown_count", "precountdown", "prestart", "fullinterval", "fulloffset"],
+      "presentation": ["mission", "username", "zoominto"]
+    },
+    "unknownOptionPolicy": "fail-closed",
+    "guardOnlyAdmission": "unsupported-unless-inactive",
+    "semanticAdmission": {
+      "counts": { "interpreted": 28, "hardcodedCompatible": 3, "valueInactiveOrOperationIrrelevant": 119, "guardOnly": 12 },
+      "hardcodedCompatible": { "allclears": true, "allclear_b2b_sends": true, "garbageblocking": "combo blocking" },
+      "guardOnly": ["boardbuffer", "boardheight", "boardwidth", "clutch", "g", "gincrease", "gmargin", "gravitymay20g", "infinite_movement", "lockresets", "locktime", "topoutisclear"]
+    }
+  },
+  "analysisModel": {
+    "movementAssumption": "engine-frame-with-hidden-spawn-buffer",
+    "frameSemantics": "engine-frame",
+    "dynamicValueMethod": "per-frame-accumulation",
+    "declaredLimitations": [
+      "The full 162-key rule-affecting identity is canonical, but guard-only semantic admission remains provisional.",
+      "Depth-1 movement uses engine-frame-single-held-controller/3 with at most one idle frame and two resolved-handling key edges; IRS/IHS, arbitrary subframe input, and multi-ply spawn continuation remain outside that capability.",
+      "The raw CC2 GUI uses a declared synthetic inter-lock clock; verified Replay positions use replay-clock/1."
+    ]
+  },
+  "operationRequirements": {
+    "evaluatePosition": {
+      "currentStateMechanisms": ["structured-garbage", "exact-b2b", "chain-state", "time-state", "rule-option"],
+      "reachableMechanisms": []
+    },
+    "analyzeBest": {
+      "currentStateMechanisms": ["structured-garbage", "exact-b2b", "chain-state", "time-state", "known-queue", "rule-option"],
+      "reachableMechanisms": ["b2b-charging", "surge", "cancellation", "movement-model"]
+    },
+    "analyzeTopN": {
+      "currentStateMechanisms": ["structured-garbage", "exact-b2b", "chain-state", "time-state", "known-queue", "rule-option"],
+      "reachableMechanisms": ["b2b-charging", "surge", "cancellation", "movement-model"]
+    },
+    "analyzeSequence": {
+      "currentStateMechanisms": ["structured-garbage", "exact-b2b", "chain-state", "time-state", "known-queue", "rule-option"],
+      "reachableMechanisms": ["b2b-charging", "surge", "cancellation", "movement-model"]
+    },
+    "evaluatePlayedMove": {
+      "currentStateMechanisms": ["structured-garbage", "exact-b2b", "chain-state", "time-state", "rule-option"],
+      "reachableMechanisms": ["b2b-charging", "surge", "cancellation", "movement-model"]
+    }
+  },
+  "neutralPredicates": {
+    "structured-garbage": "garbage-empty",
+    "exact-b2b": "b2b-inactive",
+    "chain-state": "chain-inactive"
+  },
+  "qualification": {
+    "status": "canonical-identity-provisional-semantics",
+    "evidence": "multiple external replay fixtures and full 173-key end option blocks",
+    "qualifiedFor": ["full-option-identity", "depth1-engine-frame-single-held-controller", "verified-replay-lock-clock", "verified-replay-lock-transition-projection"],
+    "unverifiedFor": ["full-controller-reachability", "multi-ply-engine-frame-continuation", "full-replay-transition-conformance"]
+  }
+}

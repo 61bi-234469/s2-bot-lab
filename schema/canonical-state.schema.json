@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "s2-analysis-engine/schema/canonical-state/1",
+  "title": "S-STATE/1 canonical state",
+  "type": "object",
+  "required": ["$schema", "schemaVersion", "rulesetId", "garbage"],
+  "properties": {
+    "$schema": { "const": "s2-analysis-engine/schema/canonical-state/1" },
+    "schemaVersion": { "const": 1 },
+    "rulesetId": { "type": "string", "minLength": 1 },
+    "board": { "$ref": "#/$defs/boardState" },
+    "pieces": { "$ref": "#/$defs/pieceState" },
+    "chain": {
+      "type": "object",
+      "description": "One-based active-chain lengths; zero means inactive. Triangle adapters convert to its zero-based/-1 counters.",
+      "required": ["combo", "b2b", "fidelity"],
+      "properties": {
+        "combo": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "b2b": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "fidelity": { "enum": ["exact", "partial", "absent"] }
+      },
+      "additionalProperties": false
+    },
+    "garbage": { "$ref": "#/$defs/garbageState" },
+    "time": { "$ref": "#/$defs/timeState" },
+    "movement": {
+      "type": "object",
+      "required": ["phase", "lastWasClear", "handling", "fidelity"],
+      "properties": {
+        "phase": { "enum": ["spawn-ready", "active-piece"] },
+        "lastWasClear": { "type": "boolean" },
+        "handling": { "$ref": "#/$defs/handling" },
+        "fidelity": { "$ref": "#/$defs/fidelity" }
+      },
+      "additionalProperties": false
+    },
+    "informationLoss": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["field", "reason", "effect"],
+        "properties": {
+          "field": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string", "minLength": 1 },
+          "effect": { "enum": ["degraded", "speculative", "unsupported"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["sourcePath", "producedBy"],
+      "properties": {
+        "sourcePath": { "enum": ["replay-ir", "editor-session", "fumen-string", "fumen-string-with-quiz", "raw-cc2-gui"] },
+        "producedBy": { "type": "string", "minLength": 1 },
+        "clock": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "const": "synthetic-fixed-lock-step" },
+                "framesPerLock": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+              },
+              "required": ["kind", "framesPerLock"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "const": "replay-engine-frame" },
+                "adapter": { "const": "replay-clock/1" },
+                "sourceSha256": { "type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$" }
+              },
+              "required": ["kind", "adapter", "sourceSha256"],
+              "additionalProperties": true
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "fidelity": { "enum": ["exact", "partial", "absent"] },
+    "handling": {
+      "type": "object",
+      "description": "Resolved player handling. Triangle Game.Handling accepts numbers without narrower runtime bounds; canonical state narrows them to finite non-negative cross-runtime-safe values.",
+      "required": ["arr", "das", "dcd", "sdf", "safelock", "cancel", "may20g", "irs", "ihs"],
+      "properties": {
+        "arr": { "type": "number", "minimum": 0, "maximum": 9007199254740991 },
+        "das": { "type": "number", "minimum": 0, "maximum": 9007199254740991 },
+        "dcd": { "type": "number", "minimum": 0, "maximum": 9007199254740991 },
+        "sdf": { "type": "number", "minimum": 0, "maximum": 9007199254740991 },
+        "safelock": { "type": "boolean" },
+        "cancel": { "type": "boolean" },
+        "may20g": { "type": "boolean" },
+        "irs": { "enum": ["off", "hold", "tap"] },
+        "ihs": { "enum": ["off", "hold", "tap"] }
+      },
+      "additionalProperties": false
+    },
+    "piece": { "enum": ["I", "J", "L", "O", "S", "T", "Z"] },
+    "boardState": {
+      "type": "object",
+      "required": ["width", "height", "cells", "fidelity"],
+      "properties": {
+        "width": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "height": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "cells": { "type": "string", "pattern": "^[IJLOSTZG_]+$" },
+        "fidelity": { "$ref": "#/$defs/fidelity" },
+        "visibleHeight": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "bufferHeight": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+      },
+      "additionalProperties": false
+    },
+    "pieceState": {
+      "type": "object",
+      "required": ["current", "hold", "holdAvailable", "known", "queueModel", "fidelity"],
+      "properties": {
+        "current": { "anyOf": [{ "$ref": "#/$defs/piece" }, { "type": "null" }] },
+        "hold": { "anyOf": [{ "$ref": "#/$defs/piece" }, { "type": "null" }] },
+        "holdAvailable": { "type": "boolean" },
+        "known": { "type": "array", "items": { "$ref": "#/$defs/piece" } },
+        "queueModel": {
+          "type": "object",
+          "required": ["type", "bagRemaining", "seed", "tail"],
+          "properties": {
+            "type": { "type": "string", "minLength": 1 },
+            "bagRemaining": { "type": "array", "items": { "$ref": "#/$defs/piece" } },
+            "seed": { "anyOf": [{ "type": "integer", "minimum": 0, "maximum": 9007199254740991 }, { "type": "null" }] },
+            "tail": { "enum": ["unknown", "deterministic"] }
+          },
+          "additionalProperties": false
+        },
+        "fidelity": { "$ref": "#/$defs/fidelity" }
+      },
+      "additionalProperties": false
+    },
+    "packet": {
+      "type": "object",
+      "required": ["packetId", "sourceGameId", "amount", "holeSize", "arrivalFrame", "confirmed", "order"],
+      "properties": {
+        "packetId": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "sourceGameId": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "amount": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "holeSize": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "arrivalFrame": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "confirmed": { "type": "boolean" },
+        "order": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+      },
+      "additionalProperties": false
+    },
+    "garbageState": {
+      "type": "object",
+      "required": ["packets", "generatorState", "capState", "fidelity"],
+      "properties": {
+        "packets": { "type": "array", "items": { "$ref": "#/$defs/packet" } },
+        "generatorState": {
+          "type": "object",
+          "required": ["rngState", "lastTankFrame", "lastHoleColumn", "sentForOpener", "holeChanged", "receivedCountSinceReset"],
+          "properties": {
+            "rngState": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+            "lastTankFrame": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+            "lastHoleColumn": { "type": "integer", "minimum": -1, "maximum": 9 },
+            "sentForOpener": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+            "holeChanged": { "type": "boolean" },
+            "receivedCountSinceReset": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+          },
+          "additionalProperties": false
+        },
+        "capState": {
+          "type": "object",
+          "required": ["consumedThisTick"],
+          "properties": { "consumedThisTick": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 } },
+          "additionalProperties": false
+        },
+        "fidelity": { "enum": ["exact", "partial", "absent"] }
+      },
+      "additionalProperties": false
+    },
+    "timeState": {
+      "type": "object",
+      "required": ["logicalFrame", "frameSemantics", "piecesPlaced", "fidelity"],
+      "properties": {
+        "logicalFrame": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "frameSemantics": { "enum": ["engine-frame", "virtual-tank-only"] },
+        "piecesPlaced": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "fidelity": { "$ref": "#/$defs/fidelity" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

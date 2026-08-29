@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "component": "operation-aware-fallback",
+  "evidenceLayer": "golden",
+  "sourceFixture": "fixtures/golden/placement-no-clear-tank.json",
+  "manifest": {
+    "operationRequirements": {
+      "evaluatePosition": {
+        "currentStateMechanisms": ["b2b-charging"],
+        "reachableMechanisms": []
+      },
+      "analyzeBest": {
+        "currentStateMechanisms": ["b2b-charging"],
+        "reachableMechanisms": ["b2b-charging", "surge"]
+      },
+      "analyzeSequence": {
+        "currentStateMechanisms": ["structured-garbage"],
+        "reachableMechanisms": ["structured-garbage", "cancellation"]
+      }
+    },
+    "neutralPredicates": {
+      "b2b-charging": "b2b-inactive",
+      "structured-garbage": "garbage-empty"
+    }
+  },
+  "engine": {
+    "capabilities": {
+      "unknownQueue": "reject",
+      "mechanismSupport": {
+        "b2b-charging": "unsupported",
+        "surge": "unsupported",
+        "structured-garbage": "unsupported",
+        "cancellation": "unsupported"
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "current-position-neutral-auto-exact",
+      "operation": "evaluatePosition",
+      "userSelected": false,
+      "expected": { "inert": true, "autoFallbackSafe": true, "decision": "auto-exact", "resultKind": "exact-input", "degraded": [], "errorCode": null }
+    },
+    {
+      "id": "forward-search-reachable-mechanism-blocks-auto",
+      "operation": "analyzeBest",
+      "userSelected": false,
+      "expected": { "inert": true, "autoFallbackSafe": false, "decision": "unsupported", "resultKind": null, "degraded": ["b2b-charging-unavailable", "surge-unavailable"], "errorCode": "capability-missing" }
+    },
+    {
+      "id": "explicit-forward-search-is-labeled-degraded",
+      "operation": "analyzeBest",
+      "userSelected": true,
+      "expected": { "inert": true, "autoFallbackSafe": false, "decision": "user-degraded", "resultKind": "degraded-input", "degraded": ["b2b-charging-unavailable", "surge-unavailable", "user-selected-incompatible-engine"], "errorCode": null }
+    },
+    {
+      "id": "active-b2b-is-not-inert",
+      "operation": "analyzeBest",
+      "userSelected": true,
+      "statePatch": { "b2b": 1 },
+      "expected": { "inert": false, "autoFallbackSafe": false, "decision": "unsupported", "resultKind": null, "degraded": ["b2b-charging-unavailable", "surge-unavailable"], "errorCode": "capability-missing" }
+    },
+    {
+      "id": "unknown-queue-rejected",
+      "operation": "evaluatePosition",
+      "userSelected": false,
+      "statePatch": { "queueTail": "unknown" },
+      "expected": { "inert": false, "autoFallbackSafe": false, "decision": "unsupported", "resultKind": null, "degraded": ["queue-unknown"], "errorCode": "capability-missing" }
+    },
+    {
+      "id": "unknown-queue-speculation-is-labeled",
+      "operation": "evaluatePosition",
+      "userSelected": false,
+      "statePatch": { "queueTail": "unknown" },
+      "enginePatch": { "unknownQueue": "speculate" },
+      "expected": { "inert": true, "autoFallbackSafe": true, "decision": "auto-speculative", "resultKind": "speculative-input", "degraded": ["queue-unknown"], "errorCode": null }
+    },
+    {
+      "id": "information-loss-blocks-inertness",
+      "operation": "evaluatePosition",
+      "userSelected": false,
+      "statePatch": { "informationLossField": "time" },
+      "expected": { "inert": false, "autoFallbackSafe": false, "decision": "unsupported", "resultKind": null, "degraded": ["time-state-unavailable"], "errorCode": "capability-missing" }
+    }
+  ]
+}

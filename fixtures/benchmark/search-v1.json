@@ -1,0 +1,69 @@
+{
+  "$schema": "s2-analysis-engine/benchmark/search-corpus/1",
+  "schemaVersion": 1,
+  "id": "s2-search-reachable-v1",
+  "description": "Correctness-qualified unrestricted-within-kickset search corpus spanning neutral, B2B/Surge, incoming messiness, and cancellation states.",
+  "cases": [
+    {
+      "id": "neutral-tank",
+      "fixturePath": "fixtures/golden/placement-no-clear-tank.json",
+      "maxDepth": 2,
+      "nodeBudget": 100000,
+      "deterministicSeed": 0,
+      "expected": {
+        "nodes": 16736,
+        "score": "-0.4499999999999994",
+        "principalVariation": [
+          { "piece": "O", "rotation": "left", "x": 0, "y": 0, "usedHold": false },
+          { "piece": "I", "rotation": "left", "x": 1, "y": 0, "usedHold": false }
+        ]
+      }
+    },
+    {
+      "id": "b2b-charging-surge",
+      "fixturePath": "fixtures/golden/placement-b2b-charging-surge.json",
+      "maxDepth": 2,
+      "nodeBudget": 100000,
+      "deterministicSeed": 0,
+      "expected": {
+        "nodes": 11086,
+        "score": "38.099999999999994",
+        "principalVariation": [
+          { "piece": "O", "rotation": "left", "x": 0, "y": 1, "usedHold": false },
+          { "piece": "I", "rotation": "left", "x": 1, "y": 0, "usedHold": false }
+        ]
+      }
+    },
+    {
+      "id": "incoming-messiness",
+      "fixturePath": "fixtures/golden/placement-messiness-hole-columns.json",
+      "maxDepth": 2,
+      "nodeBudget": 100000,
+      "deterministicSeed": 0,
+      "expected": {
+        "nodes": 17460,
+        "score": "-8.149999999999999",
+        "principalVariation": [
+          { "piece": "O", "rotation": "left", "x": 0, "y": 0, "usedHold": false },
+          { "piece": "I", "rotation": "left", "x": 1, "y": 2, "usedHold": false }
+        ]
+      }
+    },
+    {
+      "id": "partial-cancellation",
+      "fixturePath": "fixtures/golden/placement-quad-partial-cancel.json",
+      "maxDepth": 2,
+      "nodeBudget": 100000,
+      "deterministicSeed": 0,
+      "expected": {
+        "nodes": 1878,
+        "score": "11.4",
+        "principalVariation": [
+          { "piece": "I", "rotation": "reverse", "x": 6, "y": 3, "usedHold": false },
+          { "piece": "I", "rotation": "left", "x": 1, "y": 0, "usedHold": false }
+        ]
+      }
+    }
+  ],
+  "hash": "sha256:c4a8e216a9558cb10bce9ab96c07a72332c633d35e14e3550b38720a0bff1696"
+}

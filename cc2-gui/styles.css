@@ -1,0 +1,399 @@
+/* Early-2000s terminal emulator skin: flat, monospace, 1px rules. No
+   gradients, shadows, blur or rounded corners anywhere, so the whole sheet is
+   colour plus borders. Layout boxes and grid tracks are unchanged. */
+:root {
+  color-scheme: dark;
+  --bg: #0b0b0b;          /* console black */
+  --panel: #101010;
+  --line: #333833;        /* 1px rule */
+  --line-dim: #222622;
+  --text: #c7ccc7;        /* phosphor-tinted light gray */
+  --muted: #6f766f;
+  --accent: #ffb000;      /* amber CRT */
+  --green: #33d17a;
+  --cyan: #2fc7d4;
+  --red: #e05252;
+  --cell: clamp(17px, 3.7vh, 29px);
+  --mono: Consolas, "DejaVu Sans Mono", "Liberation Mono", "MS Gothic", monospace;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font: 12px/1.45 var(--mono);
+}
+/* Everything is the terminal font: no proportional text anywhere. */
+button, select, input, h1, h2, p, time { font-family: var(--mono); }
+
+.shell { width: min(1120px, 100%); margin: 0 auto; padding: 18px clamp(10px, 3vw, 28px) 14px; }
+.masthead, footer { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
+.masthead { padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.eyebrow, .deck-label, h2 { margin: 0; color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: .14em; }
+h1 { margin: 3px 0 0; font-size: clamp(17px, 2.4vw, 22px); font-weight: 700; letter-spacing: .1em; }
+/* The prompt marker is the whole masthead ornament. */
+h1::before { content: "> "; color: var(--green); }
+.subtitle { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
+.engine-status { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border: 1px solid var(--line); color: var(--muted); font-size: 11px; letter-spacing: .1em; }
+.status-light { width: 7px; height: 7px; background: #4a504a; }
+.engine-status[data-state="thinking"] .status-light { background: var(--accent); }
+.engine-status[data-state="ready"] .status-light { background: var(--green); }
+.engine-status[data-state="error"] .status-light { background: var(--red); }
+
+.rule-boundary { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; margin-top: 12px; padding: 7px 9px; border: 1px solid var(--line); border-left: 2px solid var(--accent); background: var(--panel); color: var(--muted); font-size: 11px; }
+.rule-boundary strong, .rule-boundary em { color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: .1em; font-style: normal; }
+.rule-boundary em { color: var(--red); }
+
+/* Mode tabs. The single-bot analysis view and the Bot vs Bot arena are two
+   modes of the same page, so only the selected panel is in the document flow. */
+.mode-tabs { margin-top: 12px; }
+.mode-tablist { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border-bottom: 1px solid var(--line); }
+.mode-tab { display: grid; gap: 2px; justify-items: start; padding: 8px 11px; border: 1px solid var(--line); border-bottom: 0; background: transparent; color: var(--muted); text-align: left; }
+.mode-tab + .mode-tab { border-left: 0; }
+.mode-tab .mode-tab-label { font-size: 12px; font-weight: 700; letter-spacing: .12em; }
+.mode-tab .mode-tab-label::before { content: "[ "; }
+.mode-tab .mode-tab-label::after { content: " ]"; }
+.mode-tab small { color: #565c56; font-size: 10px; }
+.mode-tab[aria-selected="true"] { background: #1a1a1a; color: var(--text); }
+.mode-tab[aria-selected="true"] .mode-tab-label { color: var(--accent); }
+.mode-panel[hidden] { display: none; }
+.mode-panel:focus-visible { outline: 1px solid var(--line); outline-offset: 4px; }
+.mode-panel > .match-deck { margin-top: 12px; }
+
+.play-layout { display: grid; grid-template-columns: minmax(130px, 1fr) auto minmax(130px, 1fr); align-items: start; gap: clamp(16px, 4vw, 50px); margin: 18px auto 16px; max-width: 820px; }
+.side-column { display: grid; gap: 12px; }
+.panel { border: 1px solid var(--line); background: var(--panel); }
+.panel h2 { padding: 6px 9px; border-bottom: 1px solid var(--line); color: var(--muted); }
+.panel h2::before { content: "── "; color: var(--line); }
+.piece-preview { height: 90px; display: grid; place-items: center; }
+/* B2B / REN / latest clear, under the HOLD box as in the fumen-mobile-fork
+   replay screen. The clear name keeps its line height while empty, so a clear
+   appearing and expiring does not shift the box above it. */
+.clear-info { display: grid; gap: 2px; padding: 0 9px 8px; color: var(--muted); font-size: 10px; letter-spacing: .04em; }
+.clear-info span { white-space: nowrap; }
+.clear-info span[data-active="true"] { color: var(--green); }
+/* Charged: breaking the chain from here releases a Surge. Keep the active
+   counter green; the lightning mark is the only additional emphasis. */
+.clear-info span[data-surge="true"]::after { content: " \26A1"; }
+.clear-info .clear-name { min-height: 1.3em; color: var(--accent); white-space: normal; }
+/* The grid is sized to the piece's own bounding box (see renderMini() in
+   app.mjs), so the enclosing box centres the tetromino itself rather than the
+   4x2 area it could occupy. */
+.mini-grid { display: grid; grid-template-columns: repeat(var(--mini-cols, 4), var(--mini-cell, 17px)); grid-template-rows: repeat(var(--mini-rows, 2), var(--mini-cell, 17px)); }
+.mini-cell { margin: 1px; background: transparent; }
+.mini-cell.filled { background: var(--piece-color); }
+
+.stat-panel { padding: 4px 9px; }
+.stat-panel div { display: flex; justify-content: space-between; align-items: baseline; padding: 5px 0; border-bottom: 1px solid var(--line-dim); }
+.stat-panel div:last-child { border: 0; }
+.stat-panel span { color: var(--muted); font-size: 10px; letter-spacing: .1em; }
+.stat-panel strong, .stat-panel time { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat-panel time { color: var(--cyan); }
+
+.field-column { min-width: calc(var(--cell) * 10 + 6px); }
+.main-field-stage { position: relative; }
+.field-frame { position: relative; border: 1px solid var(--line); }
+.field { --grid-line: transparent; display: grid; grid-template-columns: repeat(10, var(--cell)); grid-template-rows: repeat(20, var(--cell)); background: #050505; }
+/* The 1px border is what separates one mino from the next, so it stays even
+   where the empty grid is invisible: --grid-line only colours the empty cells,
+   and .cell.filled sets its own border colour. */
+.cell { border: 1px solid var(--grid-line, #151815); background: transparent; }
+/* One cell is one flat colour square. No gradient, no inset highlight and no
+   glow: the dark seam alone separates neighbouring minos. */
+.cell.filled { background: var(--piece-color); border-color: #050505; }
+/* Only the edges facing away from the piece carry a rim (see outerEdges() in
+   app.mjs), so the four cells read as one tetromino rather than four squares.
+   The unset edge variables resolve to a fully transparent shadow. */
+.cell.ghost, .cell.placed, .cell.active {
+  position: relative;
+  z-index: 1;
+  border-color: #050505;
+  box-shadow:
+    var(--edge-top, 0 0 transparent), var(--edge-right, 0 0 transparent),
+    var(--edge-bottom, 0 0 transparent), var(--edge-left, 0 0 transparent);
+}
+.cell.et { --edge-top: inset 0 1px 0 var(--edge-color); }
+.cell.er { --edge-right: inset -1px 0 0 var(--edge-color); }
+.cell.eb { --edge-bottom: inset 0 -1px 0 var(--edge-color); }
+.cell.el { --edge-left: inset 1px 0 0 var(--edge-color); }
+/* Planned placement: outline only, and the only thing on the field that moves. */
+.cell.ghost { --edge-color: var(--piece-color); background: transparent; animation: current-pulse 1.4s steps(2, end) infinite; }
+/* Most recent locked piece: solid, with a white rim so it stands out from the
+   identically coloured blocks already on the stack. Deliberately static. */
+.cell.placed { --edge-color: #e6e6e6; }
+/* The piece a player is moving right now: solid like the stack it is about to
+   join, with a bright rim so it can be told apart from it at a glance. It does
+   not pulse — the ghost below it is what marks where it would land. */
+.cell.active { --edge-color: #f4f4f4; z-index: 2; }
+@keyframes current-pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .cell.ghost { animation: none; opacity: .8; } }
+.current-strip { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; padding-top: 8px; color: var(--muted); font-size: 10px; letter-spacing: .08em; }
+.current-strip strong { color: var(--text); font-size: 11px; }
+/* Names whichever mino the field is highlighting right now. */
+.current-strip .placing { color: var(--cyan); }
+.separator { color: var(--line); }
+
+.next-list { display: grid; }
+.next-item { min-height: 62px; display: grid; place-items: center; border-bottom: 1px solid var(--line-dim); }
+.next-item:last-child { border: 0; }
+
+.control-deck { display: grid; grid-template-columns: minmax(280px, 1fr) auto; gap: 14px 24px; padding: 13px 15px; border: 1px solid var(--line); background: var(--panel); }
+.suggestion-main { display: flex; align-items: baseline; gap: 10px; margin-top: 5px; }
+.suggestion-main strong { font-size: clamp(18px, 2.4vw, 24px); font-weight: 700; letter-spacing: .04em; }
+.suggestion-main strong::before { content: "$ "; color: var(--green); font-weight: 400; }
+.suggestion-main span { color: var(--muted); font-size: 12px; }
+.metrics { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 9px; color: var(--muted); font-size: 10px; letter-spacing: .06em; }
+.metrics strong { color: var(--cyan); font-size: 11px; }
+.comparison-grid { display: grid; grid-template-columns: repeat(3, minmax(130px, 1fr)); gap: 0; margin-top: 11px; border: 1px solid var(--line); }
+.comparison-grid > div { display: grid; gap: 3px; min-height: 54px; padding: 7px 9px; background: transparent; }
+.comparison-grid > div + div { border-left: 1px solid var(--line); }
+.comparison-grid span { color: var(--muted); font-size: 9px; letter-spacing: .06em; }
+.comparison-grid strong { color: var(--cyan); font-size: 14px; font-weight: 700; }
+.comparison-grid small { color: #5f665f; font-size: 10px; }
+.buttons { display: grid; grid-template-columns: repeat(2, minmax(110px, 1fr)); gap: 6px; }
+button { padding: 7px 11px; border: 1px solid var(--line); background: #161816; color: var(--text); font-size: 11px; font-weight: 700; letter-spacing: .06em; cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--text); background: #1f221f; }
+button:disabled { color: #4a504a; border-color: var(--line-dim); cursor: not-allowed; }
+button.primary { border-color: var(--accent); background: transparent; color: var(--accent); }
+button.primary:hover:not(:disabled) { background: var(--accent); color: #100b00; }
+button[aria-pressed="true"] { border-color: var(--green); color: var(--green); }
+button.quiet { border-color: var(--line-dim); background: transparent; color: var(--muted); }
+.think-control { grid-column: 1 / -1; display: grid; grid-template-columns: auto 1fr; gap: 11px; align-items: center; color: var(--muted); font-size: 10px; letter-spacing: .08em; }
+input[type="range"] { accent-color: var(--accent); width: 100%; }
+footer { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line-dim); color: #4f554f; font-size: 10px; }
+
+.match-deck { margin-top: 14px; padding: 13px 15px; border: 1px solid var(--line); background: var(--panel); }
+.match-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.match-heading h2 { margin-top: 4px; font-size: 16px; letter-spacing: .12em; color: var(--text); }
+.match-heading > span { color: var(--cyan); font-size: 11px; }
+.match-controls { display: grid; grid-template-columns: repeat(2, minmax(150px, 1fr)) repeat(3, auto); gap: 7px; margin-top: 11px; align-items: end; }
+/* One button drives start, pause and resume, so its colour has to carry the
+   state the two separate buttons used to show by being present at all. */
+.match-run-button { min-width: 124px; }
+.match-run-button[data-state="start"] { border-color: var(--accent); color: var(--accent); }
+.match-run-button[data-state="running"] { border-color: var(--green); color: var(--green); }
+.match-run-button[data-state="paused"] { border-color: var(--cyan); color: var(--cyan); }
+.match-controls label, .bot-picker > label, .match-settings > label, .match-setting > label { display: grid; gap: 4px; color: var(--muted); font-size: 9px; letter-spacing: .08em; }
+/* Auto-fit rather than a fixed column count: this row has gained settings twice,
+   and a fixed count strands the overflow item alone on a second line. */
+.match-settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 7px; margin-top: 7px; }
+.fair-comparison-setting span:last-child, .pre-lock-preview-setting span:last-child, .ttrm-compatible-setting span:last-child { display: flex; align-items: center; gap: 6px; min-height: 30px; color: var(--text); }
+.fair-comparison-setting input, .pre-lock-preview-setting input, .ttrm-compatible-setting input { accent-color: var(--accent); }
+.bot-picker { display: grid; gap: 4px; min-width: 0; }
+.bot-picker-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; }
+.bot-settings-button { padding-inline: 9px; font-size: 9px; }
+.bot-picker small { overflow: hidden; min-height: 1.2em; color: #565c56; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+select, input[type="number"] { min-width: 0; width: 100%; padding: 6px 7px; border: 1px solid var(--line); background: #0d0f0d; color: var(--text); font-size: 11px; }
+input[type="number"]:disabled { border-color: var(--line-dim); color: #4a504a; cursor: not-allowed; }
+.match-setting { display: grid; gap: 4px; }
+.match-limit-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; }
+.infinity-toggle, .random-seed-toggle { display: flex; align-items: center; gap: 4px; min-width: 42px; padding: 0 6px; border: 1px solid var(--line); background: #0d0f0d; color: var(--text); font-size: 14px; }
+.infinity-toggle input, .random-seed-toggle input { accent-color: var(--accent); }
+.match-summary { display: block; min-height: 26px; margin-top: 8px; padding: 6px 8px; border: 1px solid var(--line); border-left: 2px solid var(--cyan); background: transparent; color: var(--cyan); font-size: 10px; line-height: 1.4; }
+/* Saving only means anything once a round has produced something to save, so the
+   two export buttons sit with the result line rather than with START/STEP/RESET,
+   which are the controls that produce it. */
+.match-outcome { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; align-items: stretch; margin-top: 8px; }
+.match-outcome .match-summary { margin-top: 0; }
+.match-exports { display: flex; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid var(--line-dim); }
+.export-label { color: var(--muted); font-size: 9px; letter-spacing: .08em; }
+.match-exports button { padding: 5px 9px; font-size: 10px; }
+.match-export-message { display: block; margin-top: 5px; padding: 0 2px; color: var(--muted); font-size: 10px; line-height: 1.4; }
+.match-export-message[data-state="saved"] { color: var(--green); }
+.match-export-message[data-state="failed"] { color: var(--red); }
+.match-export-message[hidden] { display: none; }
+.match-fields { display: grid; grid-template-columns: 1fr auto 1fr; gap: 14px; align-items: center; width: min(1040px, 100%); margin: 14px auto 0; }
+.match-player { min-width: 0; }
+.match-player header, .match-player footer { display: flex; justify-content: space-between; gap: 8px; margin: 0; padding: 5px 2px; border: 0; color: var(--muted); font-size: 9px; }
+.match-player header { border-bottom: 1px solid var(--line-dim); }
+.match-player footer { border-top: 1px solid var(--line-dim); }
+.match-player header strong { color: var(--text); }
+.match-player footer time { color: var(--cyan); font-variant-numeric: tabular-nums; }
+/* Every part of a match player is sized from the field cell so the HOLD and
+   NEXT boxes keep the proportions of the reference replay screen: a rail is
+   3.4 cells wide and a piece box 2.9 cells tall, roughly a third of the board
+   width. The board itself is a 1:2 box, so one cell is a twentieth of its
+   height. */
+.match-body {
+  --match-field-h: clamp(240px, min(40vh, 32vw), 380px);
+  --match-cell: calc(var(--match-field-h) / 20);
+  --mini-cell: calc(var(--match-cell) * .72);
+  --rail-width: calc(var(--match-cell) * 3.4);
+  --gauge-width: 12px;
+  --match-gap: 4px;
+  display: grid; grid-template-columns: auto auto auto auto; gap: var(--match-gap); justify-content: center; align-items: stretch;
+  padding-top: 6px;
+}
+.match-rail { display: grid; align-content: start; justify-items: center; gap: 4px; width: var(--rail-width); }
+.rail-label { color: var(--muted); font-size: 8px; letter-spacing: .08em; }
+.mini-box { display: grid; place-items: center; width: 100%; min-height: calc(var(--match-cell) * 2.9); padding: 3px 0; border: 1px solid var(--line-dim); background: #0d0f0d; }
+.mini-next { display: grid; gap: 3px; width: 100%; justify-items: center; }
+.mini-next .mini-box { padding: 2px 0; }
+/* The rail is only as wide as the HOLD box, so the clear name is allowed to
+   wrap there while the two counters stay on one line each. */
+.match-rail .clear-info { justify-items: stretch; width: 100%; gap: 3px; padding: 5px 3px 0; font-size: max(10px, calc(var(--match-cell) * .58)); letter-spacing: 0; text-align: center; }
+.match-rail .clear-info .clear-name { line-height: 1.25; }
+/* The track is a stretched grid item, so it already covers exactly the same box
+   as the field beside it. Dividing it into 20 equal rows therefore makes one
+   gauge row the height of one board cell, which percentages could not do: a
+   stretched item has no specified height for a percentage child to resolve
+   against, but grid tracks size from the used height. */
+.garbage-gauge { position: relative; overflow: hidden; display: grid; grid-template-rows: repeat(20, 1fr); width: var(--gauge-width, 12px); border: 1px solid var(--line); background: #0d0f0d; }
+/* One segment per incoming attack. The rule between two of them is the upper
+   segment's own bottom edge, so it lands on a cell boundary. It is cut out of
+   the bar in the track colour and kept at 2px: on a 12px wide bar a hairline
+   is not readable, and the point of the rule is to stop 4+2 being read as 6. */
+.gauge-segment { grid-column: 1; background: var(--red); }
+.gauge-segment + .gauge-segment { border-bottom: 2px solid #0d0f0d; }
+.garbage-gauge::after { content: attr(data-pending); position: absolute; top: 1px; left: 0; right: 0; text-align: center; color: #ffdede; font-size: 8px; font-weight: 700; }
+.garbage-gauge[data-pending="0"]::after { content: ""; }
+.match-field-wrap { position: relative; height: var(--match-field-h); aspect-ratio: 1 / 2; min-width: 0; }
+/* Flat, unruled board: the match view reads as a stack of minos on empty space,
+   so the empty grid is not drawn. */
+.match-field { --grid-line: transparent; display: grid; grid-template-columns: repeat(10, 1fr); grid-template-rows: repeat(20, 1fr); width: 100%; height: 100%; border: 1px solid var(--line); background: #050505; }
+.match-field .cell { min-width: 0; min-height: 0; }
+.field-rate-stats { position: absolute; bottom: 3px; z-index: 2; display: grid; gap: 1px; pointer-events: none; font-size: 9px; font-weight: 700; text-transform: uppercase; }
+.field-rate-stats span { display: block; white-space: nowrap; }
+.field-rate-stats b { color: var(--text); font-weight: 700; }
+.field-rate-stats small { color: var(--muted); font-size: 7px; }
+.field-rate-left { right: calc(100% + 5px); align-items: end; color: var(--cyan); text-align: right; }
+.field-rate-right { left: calc(100% + 5px); color: var(--accent); }
+/* No gutter is reserved for the match readouts: the board sits against its
+   rails and the readouts overhang into the empty lower part of the rail
+   columns, which is why they are sized to a rail width and lifted above it. */
+.match-field-wrap .field-rate-stats { max-width: var(--rail-width); font-size: max(7px, calc(var(--match-cell) * .5)); }
+.match-field-wrap .field-rate-stats small { font-size: .78em; }
+.match-field-wrap .field-rate-left { right: calc(100% + var(--gauge-width) + var(--match-gap) + 3px); }
+.match-field-wrap .field-rate-right { left: calc(100% + 3px); }
+/* 17 derived metrics in four columns, so the last row is deliberately ragged.
+   The 1px gap over a filled container is what draws the seams, which keeps the
+   short row from needing filler cells. */
+.match-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 5px 0 0; border: 1px solid var(--line-dim); background: var(--line-dim); }
+.match-metrics > div { min-width: 0; padding: 4px 6px; background: var(--panel); }
+.match-metrics dt { overflow: hidden; margin: 0; color: var(--muted); font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.match-metrics dd { overflow: hidden; margin: 1px 0 0; color: var(--text); font-size: 10px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.versus-mark { color: var(--accent); font-size: 15px; font-weight: 700; letter-spacing: .1em; }
+.match-note { margin: 10px 0 0; color: #565c56; font-size: 10px; line-height: 1.5; text-align: center; }
+
+.bot-settings-dialog { width: min(470px, calc(100vw - 28px)); padding: 0; border: 1px solid var(--line); background: #0d0f0d; color: var(--text); }
+.bot-settings-dialog::backdrop { background: rgba(0,0,0,.8); }
+.bot-settings-dialog form { margin: 0; }
+.bot-settings-dialog header { display: flex; align-items: start; justify-content: space-between; gap: 16px; padding: 12px 15px 10px; border-bottom: 1px solid var(--line); }
+.bot-settings-dialog h2 { margin-top: 4px; font-size: 15px; letter-spacing: .1em; color: var(--text); }
+.dialog-close { width: 28px; height: 28px; padding: 0; border-color: var(--line-dim); color: var(--muted); font-size: 15px; line-height: 1; }
+.bot-settings-description { margin: 0; padding: 11px 15px 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.bot-settings-fields { display: grid; gap: 6px; padding: 11px 15px 15px; }
+.bot-parameter { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, .7fr); align-items: center; gap: 14px; padding: 8px 10px; border: 1px solid var(--line-dim); background: transparent; }
+.bot-parameter label { color: var(--muted); font-size: 10px; letter-spacing: .06em; }
+.bot-parameter-control { display: flex; align-items: center; gap: 6px; }
+.bot-parameter-control span { color: var(--muted); font-size: 9px; }
+.bot-parameter-control input[type="checkbox"] { width: 16px; height: 16px; margin-left: auto; accent-color: var(--accent); }
+/* A settings row that explains itself puts the note under both columns. */
+.bot-parameter-description { grid-column: 1 / -1; color: #565c56; font-size: 9px; line-height: 1.5; }
+.bot-settings-fields .deck-label { grid-column: 1 / -1; margin: 10px 0 0; }
+/* A key binding field shows the key it captured and is never typed into. */
+.bot-parameter-control .key-binding { width: 100%; text-align: center; text-transform: none; caret-color: transparent; cursor: pointer; }
+.bot-parameter-control .key-binding:focus { border-color: var(--accent); color: var(--accent); }
+.dialog-effects { display: grid; gap: 7px; margin: 0; padding: 11px 15px 4px 30px; color: var(--text); font-size: 11px; line-height: 1.6; }
+.dialog-effects li::marker { color: var(--muted); }
+.dialog-effects li.warning { color: var(--accent); }
+.dialog-actions { display: flex; justify-content: end; gap: 6px; padding: 10px 15px 14px; border-top: 1px solid var(--line); }
+
+/* The seven tetrominoes, flat. */
+[data-piece="I"] { --piece-color: #23c3d6; }
+[data-piece="O"] { --piece-color: #d8c02e; }
+[data-piece="T"] { --piece-color: #a457d6; }
+[data-piece="L"] { --piece-color: #d8862e; }
+[data-piece="J"] { --piece-color: #4a6fd8; }
+[data-piece="S"] { --piece-color: #4fb355; }
+[data-piece="Z"] { --piece-color: #d1483f; }
+/* Garbage rows the S2 Simulator tanked into the board. Any cell symbol that is
+   not one of the seven tetrominoes is garbage, so the gray is also the fallback. */
+[data-piece="G"], .cell.filled:not([data-piece="I"]):not([data-piece="O"]):not([data-piece="T"]):not([data-piece="L"]):not([data-piece="J"]):not([data-piece="S"]):not([data-piece="Z"]) { --piece-color: #767c76; }
+.cell.filled[data-piece="G"] { background: #767c76; }
+
+@media (max-width: 720px) {
+  :root { --cell: min(7.8vw, 27px); }
+  .play-layout { grid-template-columns: 88px auto 88px; gap: 8px; }
+  .stat-panel { display: none; }
+  .piece-preview { height: 70px; }
+  .clear-info { padding: 0 7px 7px; font-size: 9px; }
+  .next-item { min-height: 54px; }
+  .control-deck { grid-template-columns: 1fr; }
+  .rule-boundary { grid-template-columns: 1fr; gap: 5px; }
+  .buttons { grid-template-columns: repeat(2, 1fr); }
+  .comparison-grid { grid-template-columns: 1fr; }
+  .comparison-grid > div + div { border-left: 0; border-top: 1px solid var(--line); }
+  .match-controls { grid-template-columns: 1fr 1fr; }
+  .match-settings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .match-outcome { grid-template-columns: minmax(0, 1fr); }
+  .match-exports { justify-content: center; padding: 6px 8px; }
+  .match-fields { gap: 8px; }
+  /* Narrow viewports size the field from the width left over by the rails and
+     the gauge, so the two boards keep fitting side by side. The board is fluid
+     here, so the cell that sizes the rails tracks the viewport instead of the
+     board height. A rail this narrow has no room for the field-edge PPS/APM/APP
+     and VS/AREA overlays to hang over, so they step aside: the detail grid
+     under each field carries the same five values. */
+  .match-body { --match-cell: 2.4vw; --match-gap: 3px; grid-template-columns: auto auto minmax(0, 1fr) auto; }
+  .match-rail { gap: 3px; }
+  .rail-label { font-size: 6px; }
+  .match-rail .clear-info { gap: 1px; padding: 3px 2px; font-size: max(7px, calc(var(--match-cell) * .62)); }
+  .garbage-gauge { width: 9px; }
+  .match-field-wrap { width: 100%; height: auto; align-self: start; }
+  .match-field-wrap .field-rate-stats { display: none; }
+  .field-rate-stats { bottom: 3px; font-size: 6px; }
+  .field-rate-stats small { font-size: 5px; }
+  .match-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 470px) {
+  :root { --cell: min(6.6vw, 24px); }
+  .masthead { align-items: center; }
+  /* The stacked side column must be allowed below its min-content width, or a
+     panel heading alone widens the page past the viewport. */
+  .play-layout { grid-template-columns: minmax(0, 1fr) auto; }
+  .side-column { min-width: 0; }
+  .panel h2 { padding: 7px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .left-column { grid-column: 1; grid-row: 1; }
+  .field-column { grid-column: 2; grid-row: 1 / span 2; }
+  .right-column { grid-column: 1; grid-row: 2; }
+  .next-item:nth-child(n+4) { display: none; }
+  .mode-tab { padding: 7px 8px; }
+  .mode-tab .mode-tab-label { font-size: 11px; letter-spacing: .06em; }
+  .mode-tab small { display: none; }
+  .bot-picker-row { grid-template-columns: 1fr; }
+  .bot-parameter { grid-template-columns: 1fr; gap: 6px; }
+  footer { display: none; }
+}
+
+/* REPLAY: the transport that drives the two fields. The timeline, its marker
+   band and the time labels share one column so a mark, a slider position and a
+   time all point at the same frame. */
+.replay-source { grid-template-columns: minmax(190px, 1.2fr) repeat(2, minmax(130px, 1fr)) repeat(2, auto); }
+.replay-file-control { display: grid; gap: 4px; color: var(--muted); font-size: 9px; letter-spacing: .08em; }
+.replay-file-control input[type="file"] { width: 100%; padding: 5px 6px; border: 1px solid var(--line); background: #0d0f0d; color: var(--text); font-size: 10px; }
+.replay-file-control input[type="file"]::file-selector-button { margin-right: 8px; padding: 3px 8px; border: 1px solid var(--line); background: transparent; color: var(--accent); font: inherit; }
+.replay-transport { display: grid; gap: 4px; margin-top: 10px; }
+.replay-seek { width: 100%; margin: 0; accent-color: var(--accent); }
+.replay-seek:disabled { accent-color: var(--line); }
+/* Red is a row that rose into the board, green one that was cancelled. The
+   band is drawn from the left player's own garbage events. */
+.replay-markers { display: block; width: 100%; height: 6px; border: 1px solid var(--line-dim); background: #0d0f0d; }
+.replay-time { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.replay-buttons { display: flex; align-items: end; justify-content: center; gap: 6px; margin-top: 2px; }
+.replay-buttons button { min-width: 46px; padding: 6px 9px; }
+.replay-buttons #replay-play { min-width: 92px; }
+.replay-speed-control { display: grid; gap: 4px; width: 78px; color: var(--muted); font-size: 9px; letter-spacing: .08em; }
+.replay-deck .match-heading > span[data-state="FAILED"] { color: var(--accent); }
+
+@media (max-width: 900px) {
+  .replay-source { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 470px) {
+  .replay-buttons { flex-wrap: wrap; }
+  .replay-buttons button { min-width: 40px; }
+}

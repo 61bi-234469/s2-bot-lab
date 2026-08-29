@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "component": "triangle-chain-adapter",
+  "evidenceLayer": "golden",
+  "source": {
+    "kind": "manual",
+    "primarySource": "@haelp/teto 4.2.7 Engine lock path lines 1415-1494",
+    "rationale": "Fix canonical one-based chain semantics and Surge threshold/split boundaries independently of Triangle counters."
+  },
+  "chainCases": [
+    { "id": "first-difficult-clear", "before": { "combo": 0, "b2b": 0 }, "clear": { "lines": 4, "spin": "none", "perfectClear": false }, "rules": { "perfectClearB2bBonus": 1 }, "expected": { "comboBefore": 0, "comboAfter": 1, "b2bBefore": 0, "b2bAfter": 1, "brokeB2b": false, "brokenB2bCount": 0 } },
+    { "id": "second-difficult-clear", "before": { "combo": 1, "b2b": 1 }, "clear": { "lines": 2, "spin": "normal", "perfectClear": false }, "rules": { "perfectClearB2bBonus": 1 }, "expected": { "comboBefore": 1, "comboAfter": 2, "b2bBefore": 1, "b2bAfter": 2, "brokeB2b": false, "brokenB2bCount": 0 } },
+    { "id": "ordinary-clear-breaks-b2b", "before": { "combo": 3, "b2b": 5 }, "clear": { "lines": 1, "spin": "none", "perfectClear": false }, "rules": { "perfectClearB2bBonus": 1 }, "expected": { "comboBefore": 3, "comboAfter": 4, "b2bBefore": 5, "b2bAfter": 0, "brokeB2b": true, "brokenB2bCount": 5 } },
+    { "id": "no-clear-preserves-b2b", "before": { "combo": 3, "b2b": 5 }, "clear": { "lines": 0, "spin": "none", "perfectClear": false }, "rules": { "perfectClearB2bBonus": 1 }, "expected": { "comboBefore": 3, "comboAfter": 0, "b2bBefore": 5, "b2bAfter": 5, "brokeB2b": false, "brokenB2bCount": 0 } },
+    { "id": "perfect-clear-adds-b2b", "before": { "combo": 0, "b2b": 2 }, "clear": { "lines": 2, "spin": "none", "perfectClear": true }, "rules": { "perfectClearB2bBonus": 1 }, "expected": { "comboBefore": 0, "comboAfter": 1, "b2bBefore": 2, "b2bAfter": 3, "brokeB2b": false, "brokenB2bCount": 0 } }
+  ],
+  "surgeCases": [
+    { "id": "at-threshold", "brokenB2bCount": 4, "charging": { "at": 4, "base": 3 }, "multiplier": 1, "expected": { "amount": 0, "chunks": [] } },
+    { "id": "first-above-threshold", "brokenB2bCount": 5, "charging": { "at": 4, "base": 3 }, "multiplier": 1, "expected": { "amount": 4, "chunks": [1, 1, 2] } },
+    { "id": "split-remainder", "brokenB2bCount": 6, "charging": { "at": 4, "base": 3 }, "multiplier": 1, "expected": { "amount": 5, "chunks": [2, 2, 1] } }
+  ]
+}
+

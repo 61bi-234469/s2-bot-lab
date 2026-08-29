@@ -1,0 +1,209 @@
+{
+  "$schema": "s2-analysis-engine/schema/fixture/1",
+  "schemaVersion": 1,
+  "id": "placement-dynamic-multiplier-accumulation",
+  "rulesetId": "tetrio-s2-v19-dynamic-multiplier0000000000000000000000000000000000000000000000-beta-1-5-0",
+  "evidenceLayer": "golden",
+  "coverageCells": [
+    "time.dynamic-value",
+    "time.method-parity",
+    "attack.total",
+    "rounding.mode"
+  ],
+  "source": {
+    "kind": "manual",
+    "manual": {
+      "author": "Claude Opus 5",
+      "primarySource": "@haelp/teto 4.2.7 IncreaseTracker and Engine lock path",
+      "rationale": "Fix per-frame accumulation as the SIM-003 method for time-dependent values at a frame where the closed form would send one more garbage row."
+    }
+  },
+  "input": {
+    "state": {
+      "$schema": "s2-analysis-engine/schema/canonical-state/1",
+      "schemaVersion": 1,
+      "rulesetId": "tetrio-s2-v19-dynamic-multiplier0000000000000000000000000000000000000000000000-beta-1-5-0",
+      "board": {
+        "width": 10,
+        "height": 6,
+        "cells": "LLLLLLLLL_LLLLLLLLL_LLLLLLLLL_LLLLLLLLL_L___________________",
+        "fidelity": "exact"
+      },
+      "pieces": {
+        "current": "I",
+        "hold": null,
+        "holdAvailable": true,
+        "known": [
+          "T",
+          "O"
+        ],
+        "queueModel": {
+          "type": "7-bag",
+          "bagRemaining": [
+            "S",
+            "Z",
+            "J"
+          ],
+          "seed": null,
+          "tail": "unknown"
+        },
+        "fidelity": "exact"
+      },
+      "chain": {
+        "combo": 0,
+        "b2b": 1,
+        "fidelity": "exact"
+      },
+      "garbage": {
+        "packets": [],
+        "generatorState": {
+          "rngState": 123456789,
+          "lastTankFrame": 12000,
+          "lastHoleColumn": -1,
+          "sentForOpener": 0,
+          "holeChanged": false,
+          "receivedCountSinceReset": 0
+        },
+        "capState": {
+          "consumedThisTick": 0
+        },
+        "fidelity": "exact"
+      },
+      "time": {
+        "logicalFrame": 12300,
+        "frameSemantics": "engine-frame",
+        "piecesPlaced": 62,
+        "fidelity": "exact"
+      },
+      "informationLoss": [],
+      "provenance": {
+        "sourcePath": "replay-ir",
+        "producedBy": "s2-analysis-engine-fixture"
+      }
+    },
+    "action": {
+      "kind": "placement",
+      "placement": {
+        "piece": "I",
+        "rotation": "right",
+        "x": 7,
+        "y": 0,
+        "usedHold": false,
+        "rotationEvidence": {
+          "lastInputWasRotation": false,
+          "kickIndex": null
+        }
+      }
+    }
+  },
+  "expected": {
+    "legality": {
+      "legal": true,
+      "reason": null
+    },
+    "lockResult": {
+      "clearedRows": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "lines": 4,
+      "spin": "none",
+      "perfectClear": false
+    },
+    "chain": {
+      "comboBefore": 0,
+      "comboAfter": 1,
+      "b2bBefore": 1,
+      "b2bAfter": 2,
+      "brokeB2b": false
+    },
+    "attackStages": {
+      "raw": 5,
+      "afterMultiplier": 5.99999999999989,
+      "afterRounding": 5,
+      "specialBonus": 0,
+      "perfectClearBonus": 0,
+      "surgeChunks": [],
+      "outgoingBeforeCancel": 5
+    },
+    "cancelResult": {
+      "cancelled": 0,
+      "remainingIncoming": [],
+      "outgoingAfterCancel": 5
+    },
+    "tankResult": {
+      "inserted": [],
+      "deferred": [],
+      "toppedOut": false
+    },
+    "nextState": {
+      "$schema": "s2-analysis-engine/schema/canonical-state/1",
+      "schemaVersion": 1,
+      "rulesetId": "tetrio-s2-v19-dynamic-multiplier0000000000000000000000000000000000000000000000-beta-1-5-0",
+      "board": {
+        "width": 10,
+        "height": 6,
+        "cells": "L___________________________________________________________",
+        "fidelity": "exact"
+      },
+      "pieces": {
+        "current": "T",
+        "hold": null,
+        "holdAvailable": true,
+        "known": [
+          "O"
+        ],
+        "queueModel": {
+          "type": "7-bag",
+          "bagRemaining": [
+            "S",
+            "Z",
+            "J"
+          ],
+          "seed": null,
+          "tail": "unknown"
+        },
+        "fidelity": "exact"
+      },
+      "chain": {
+        "combo": 1,
+        "b2b": 2,
+        "fidelity": "exact"
+      },
+      "garbage": {
+        "packets": [],
+        "generatorState": {
+          "rngState": 123456789,
+          "lastTankFrame": 12000,
+          "lastHoleColumn": -1,
+          "sentForOpener": 5,
+          "holeChanged": false,
+          "receivedCountSinceReset": 0
+        },
+        "capState": {
+          "consumedThisTick": 0
+        },
+        "fidelity": "exact"
+      },
+      "time": {
+        "logicalFrame": 12300,
+        "frameSemantics": "engine-frame",
+        "piecesPlaced": 63,
+        "fidelity": "exact"
+      },
+      "informationLoss": [],
+      "provenance": {
+        "sourcePath": "replay-ir",
+        "producedBy": "s2-analysis-engine-fixture"
+      }
+    }
+  },
+  "comparison": {
+    "mode": "exact",
+    "floatTolerance": 0
+  },
+  "generatedAt": "2026-08-13T00:00:00Z",
+  "hash": "sha256:b1a121c1de721a06f9e02489b81965bbcc89620e83a60fb91e616f62206d4aa0"
+}

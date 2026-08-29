@@ -1,0 +1,11 @@
+/target/
+/bot/cold-clear-2-s2/target/
+/node_modules/
+/dist/
+/_site/
+/AGENTS.local.md
+/reference-clones/
+/research/
+/third_party/reference-clones/
+*.log
+.DS_Store

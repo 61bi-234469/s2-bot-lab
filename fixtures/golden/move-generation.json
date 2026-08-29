@@ -1,0 +1,772 @@
+{
+  "schemaVersion": 1,
+  "component": "triangle-move-generation",
+  "evidenceLayer": "golden",
+  "source": {
+    "kind": "manual",
+    "primarySource": "@haelp/teto 4.2.7 Tetromino absoluteBlocks and legal()",
+    "rationale": "Fix the hard-drop reachable placement set, its deduplication across rotations that occupy identical cells, and the HOLD sources. Tucks, slides and spin placements are out of scope by construction and are recorded as absent, not as failures."
+  },
+  "rotationEvidence": {
+    "lastInputWasRotation": false,
+    "kickIndex": null
+  },
+  "cases": [
+    {
+      "id": "empty-board-current-and-hold",
+      "coverageCells": [
+        "movegen.hard-drop",
+        "movegen.hold"
+      ],
+      "note": "Empty hold takes the queue head, so both the current O and the queue head I are generated.",
+      "board": "____________________________________________________________",
+      "pieces": {
+        "current": "O",
+        "hold": null,
+        "holdAvailable": true,
+        "known": [
+          "I",
+          "T"
+        ]
+      },
+      "expected": {
+        "placements": [
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 0,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 1,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 2,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 3,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 4,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 5,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 6,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 7,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 8,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "I",
+            "rotation": "spawn",
+            "x": 0,
+            "y": -2,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "spawn",
+            "x": 1,
+            "y": -2,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "spawn",
+            "x": 2,
+            "y": -2,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "spawn",
+            "x": 3,
+            "y": -2,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "spawn",
+            "x": 4,
+            "y": -2,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "spawn",
+            "x": 5,
+            "y": -2,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "spawn",
+            "x": 6,
+            "y": -2,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "right",
+            "x": -2,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "right",
+            "x": -1,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "right",
+            "x": 0,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "right",
+            "x": 1,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "right",
+            "x": 2,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "right",
+            "x": 3,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "right",
+            "x": 4,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "right",
+            "x": 5,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "right",
+            "x": 6,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "right",
+            "x": 7,
+            "y": 0,
+            "usedHold": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "hold-unavailable-limits-to-current",
+      "coverageCells": [
+        "movegen.hold"
+      ],
+      "note": "A spent hold removes every usedHold placement without changing the current piece's set.",
+      "board": "____________________________________________________________",
+      "pieces": {
+        "current": "O",
+        "hold": "T",
+        "holdAvailable": false,
+        "known": [
+          "I",
+          "T"
+        ]
+      },
+      "expected": {
+        "placements": [
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 0,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 1,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 2,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 3,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 4,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 5,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 6,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 7,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 8,
+            "y": 0,
+            "usedHold": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "occupied-hold-swaps-the-held-piece",
+      "coverageCells": [
+        "movegen.hold"
+      ],
+      "note": "A filled hold offers the held piece, not the queue head.",
+      "board": "____________________________________________________________",
+      "pieces": {
+        "current": "O",
+        "hold": "T",
+        "holdAvailable": true,
+        "known": [
+          "I",
+          "T"
+        ]
+      },
+      "expected": {
+        "placements": [
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 0,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 1,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 2,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 3,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 4,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 5,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 6,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 7,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "O",
+            "rotation": "spawn",
+            "x": 8,
+            "y": 0,
+            "usedHold": false
+          },
+          {
+            "piece": "T",
+            "rotation": "spawn",
+            "x": 0,
+            "y": -1,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "spawn",
+            "x": 1,
+            "y": -1,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "spawn",
+            "x": 2,
+            "y": -1,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "spawn",
+            "x": 3,
+            "y": -1,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "spawn",
+            "x": 4,
+            "y": -1,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "spawn",
+            "x": 5,
+            "y": -1,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "spawn",
+            "x": 6,
+            "y": -1,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "spawn",
+            "x": 7,
+            "y": -1,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "right",
+            "x": -1,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "right",
+            "x": 0,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "right",
+            "x": 1,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "right",
+            "x": 2,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "right",
+            "x": 3,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "right",
+            "x": 4,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "right",
+            "x": 5,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "right",
+            "x": 6,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "right",
+            "x": 7,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "reverse",
+            "x": 0,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "reverse",
+            "x": 1,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "reverse",
+            "x": 2,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "reverse",
+            "x": 3,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "reverse",
+            "x": 4,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "reverse",
+            "x": 5,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "reverse",
+            "x": 6,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "reverse",
+            "x": 7,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "left",
+            "x": 0,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "left",
+            "x": 1,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "left",
+            "x": 2,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "left",
+            "x": 3,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "left",
+            "x": 4,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "left",
+            "x": 5,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "left",
+            "x": 6,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "left",
+            "x": 7,
+            "y": 0,
+            "usedHold": true
+          },
+          {
+            "piece": "T",
+            "rotation": "left",
+            "x": 8,
+            "y": 0,
+            "usedHold": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "well-reachable-only-by-drop",
+      "coverageCells": [
+        "movegen.hard-drop"
+      ],
+      "note": "A one-wide well accepts the vertical I by drop. The O cannot exist at the top of this stack, so nothing is generated for it rather than guessing a tuck.",
+      "board": "GGGGGGGGG_GGGGGGGGG_GGGGGGGGG_GGGGGGGGG_GGGGGGGGG___________",
+      "pieces": {
+        "current": "O",
+        "hold": null,
+        "holdAvailable": true,
+        "known": [
+          "I",
+          "T"
+        ]
+      },
+      "expected": {
+        "placements": [
+          {
+            "piece": "I",
+            "rotation": "spawn",
+            "x": 0,
+            "y": 3,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "spawn",
+            "x": 1,
+            "y": 3,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "spawn",
+            "x": 2,
+            "y": 3,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "spawn",
+            "x": 3,
+            "y": 3,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "spawn",
+            "x": 4,
+            "y": 3,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "spawn",
+            "x": 5,
+            "y": 3,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "spawn",
+            "x": 6,
+            "y": 3,
+            "usedHold": true
+          },
+          {
+            "piece": "I",
+            "rotation": "right",
+            "x": 7,
+            "y": 0,
+            "usedHold": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "covered-well-is-not-reachable",
+      "coverageCells": [
+        "movegen.hard-drop"
+      ],
+      "note": "The well under the full row is reachable only by a tuck, which this generator does not model. Only the placements resting on top of the stack are generated.",
+      "board": "GGGGGGGGG_GGGGGGGGG_GGGGGGGGG_GGGGGGGGG_GGGGGGGGGG__________",
+      "pieces": {
+        "current": "I",
+        "hold": "I",
+        "holdAvailable": false,
+        "known": [
+          "T"
+        ]
+      },
+      "expected": {
+        "placements": [
+          {
+            "piece": "I",
+            "rotation": "spawn",
+            "x": 0,
+            "y": 3,
+            "usedHold": false
+          },
+          {
+            "piece": "I",
+            "rotation": "spawn",
+            "x": 1,
+            "y": 3,
+            "usedHold": false
+          },
+          {
+            "piece": "I",
+            "rotation": "spawn",
+            "x": 2,
+            "y": 3,
+            "usedHold": false
+          },
+          {
+            "piece": "I",
+            "rotation": "spawn",
+            "x": 3,
+            "y": 3,
+            "usedHold": false
+          },
+          {
+            "piece": "I",
+            "rotation": "spawn",
+            "x": 4,
+            "y": 3,
+            "usedHold": false
+          },
+          {
+            "piece": "I",
+            "rotation": "spawn",
+            "x": 5,
+            "y": 3,
+            "usedHold": false
+          },
+          {
+            "piece": "I",
+            "rotation": "spawn",
+            "x": 6,
+            "y": 3,
+            "usedHold": false
+          }
+        ]
+      }
+    }
+  ]
+}

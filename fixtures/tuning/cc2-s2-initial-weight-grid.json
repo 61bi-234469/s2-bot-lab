@@ -1,0 +1,70 @@
+{
+  "weightProfiles": [
+    {
+      "id": "baseline",
+      "weights": {}
+    },
+    {
+      "id": "sparse-s2",
+      "weights": {
+        "aggregateHeight": -0.1,
+        "maxHeight": -0.4,
+        "holes": -1,
+        "bumpiness": -0.05,
+        "remainingIncoming": 0,
+        "deferredIncoming": -0.8,
+        "dueIncoming": 0,
+        "incomingNextLock": 0,
+        "confirmedIncoming": 0,
+        "tankedIncoming": -0.25,
+        "visibleTopOutMargin": 0,
+        "outgoingBeforeCancel": 0,
+        "outgoingAfterCancel": 1.0,
+        "cancelled": 0.8,
+        "combo": 0,
+        "b2b": 0.6,
+        "chargingLevel": 0,
+        "surgeSent": 0.25
+      }
+    },
+    {
+      "id": "ablate-deferred",
+      "weights": {
+        "deferredIncoming": -0.8
+      }
+    },
+    {
+      "id": "ablate-tanked",
+      "weights": {
+        "tankedIncoming": -0.25
+      }
+    },
+    {
+      "id": "ablate-outgoing-after-cancel",
+      "weights": {
+        "outgoingAfterCancel": 1.0
+      }
+    },
+    {
+      "id": "ablate-cancelled",
+      "weights": {
+        "cancelled": 0.8
+      }
+    },
+    {
+      "id": "ablate-b2b-only",
+      "weights": {
+        "b2b": 0.6,
+        "chargingLevel": 0
+      }
+    },
+    {
+      "id": "ablate-surge",
+      "weights": {
+        "surgeSent": 0.25
+      }
+    }
+  ],
+  "rankPenalties": [8, 12, 25, 50],
+  "candidateLimits": [16]
+}
