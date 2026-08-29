@@ -1,5 +1,6 @@
 /target/
 /bot/cold-clear-2-s2/target/
+/bot/*/target/
 /node_modules/
 /dist/
 /_site/

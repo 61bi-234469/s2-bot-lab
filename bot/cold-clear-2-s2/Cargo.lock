@@ -86,9 +86,9 @@ dependencies = [
 
 [[package]]
 name = "bumpalo"
-version = "3.8.0"
+version = "3.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f1e260c3a9040a7c19a12468758f4c16f31a81a1fe087482be9570ec864bb6c"
+checksum = "79296716171880943b8470b5f8d03aa55eb2e645a4874bdbb28adb49162e012c"
 
 [[package]]
 name = "bumpalo-herd"
@@ -160,7 +160,8 @@ dependencies = [
  "ordered-float",
  "ouroboros",
  "parking_lot",
- "puffin",
+ "puffin 0.10.1",
+ "puffin 0.10.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "puffin_http",
  "rand",
  "serde",
@@ -507,9 +508,7 @@ checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
 name = "instant"
-version = "0.1.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a5bbe824c507c5da5956355e86a746d82e0e1464f65d862cc5e71da70e94b2c"
+version = "0.1.13"
 dependencies = [
  "cfg-if",
 ]
@@ -790,6 +789,10 @@ dependencies = [
 [[package]]
 name = "puffin"
 version = "0.10.1"
+
+[[package]]
+name = "puffin"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d55aa42bdcc200394f970f3c386c31dae30dedcc0b2f1efebfddce249cbbbe9"
 dependencies = [
@@ -811,7 +814,7 @@ dependencies = [
  "anyhow",
  "crossbeam-channel",
  "log",
- "puffin",
+ "puffin 0.10.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

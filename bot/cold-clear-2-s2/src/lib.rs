@@ -1,4 +1,6 @@
 use std::convert::Infallible;
+#[cfg(target_arch = "wasm32")]
+extern crate puffin_noop as puffin;
 use std::sync::Arc;
 
 use bot::BotOptions;
@@ -8,6 +10,7 @@ use tbp::Randomizer;
 
 use crate::bot::Bot;
 use crate::data::GameState;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::sync::BotSyncronizer;
 use crate::tbp::{BotMessage, FrontendMessage};
 
@@ -18,10 +21,15 @@ mod tbp;
 pub mod data;
 mod map;
 pub mod movegen;
+#[cfg(not(target_arch = "wasm32"))]
 mod sync;
+
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;
 
 pub use bot::BotConfig;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn run(
     mut incoming: impl Stream<Item = FrontendMessage> + Unpin,
     mut outgoing: impl Sink<BotMessage, Error = Infallible> + Unpin,
@@ -118,6 +126,7 @@ fn create_bot(mut start: tbp::Start, config: Arc<BotConfig>) -> Bot {
     Bot::new(BotOptions { speculate, config }, state, &start.queue)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn spawn_workers(bot: &Arc<BotSyncronizer>) {
     for _ in 0..1 {
         let bot = bot.clone();

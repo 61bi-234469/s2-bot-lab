@@ -69,10 +69,6 @@ import {
   shiftedToEnd,
   spawnPlacement,
 } from "./human-play.mjs";
-import { installStaticTransport } from "./static-host.mjs";
-
-installStaticTransport();
-
 const elements = Object.fromEntries([...document.querySelectorAll("[id]")].map((node) => [node.id, node]));
 const BOT_SIDES = Object.freeze(["left", "right"]);
 // B2B charging as resolved by the server from the ruleset the GUI runs under.
@@ -260,6 +256,10 @@ async function loadBotCapabilities() {
     };
   }
   b2bCharging = capabilities.ruleset?.b2bCharging ?? false;
+  if (capabilities.runtime?.mode === "static-wasm") {
+    elements["think-ms"].disabled = true;
+    elements["think-ms"].title = `Static WASM uses exactly ${capabilities.runtime.selectionLimit} selections`;
+  }
   const byId = new Map(capabilities.bots.map((bot) => {
     const fallback = BOT_PARAMETER_DEFINITIONS[bot.id];
     return [bot.id, {
@@ -330,6 +330,10 @@ function openBotSettings(side) {
       input.title = fairComparisonEnabled()
         ? "Fair comparison fixes both bots at 1 PPS"
         : "Think-time pace derives PPS from THINK TIME";
+    }
+    if (parameter.disabled === true) {
+      input.disabled = true;
+      input.title = parameter.disabledReason ?? "Unavailable in this runtime";
     }
     control.append(input);
     if (parameter.suffix) {

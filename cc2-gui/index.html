@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b0b0b">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'self'">
   <title>s2-bot-lab · S2 Simulator</title>
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -24,7 +24,7 @@
 
      <section class="rule-boundary" aria-label="Static mode notice">
       <strong>CC2 PROPOSERS</strong>
-      <span>MinusKelvinのraw upstreamとchouhy forkは別Bot・別実行ファイルとして扱います。どちらも最終配置だけを提案し、S2 Simulatorでline clear・attack・B2B・combo・cancellation・garbageを再計算します。frame/subframe到達性とkick証拠は後段へ延期し、証拠のないspin主張は採用しません。</span>
+      <span>MinusKelvinのraw upstreamとchouhy forkは、探索順とseedを固定した決定性移植版です。別Botとして扱い、最終配置をS2 Simulatorで再検証します。公開WASM版は時間ではなく512 selection固定で動作します。</span>
        <em>STATIC MODE · BROWSER LOCAL</em>
     </section>
 
