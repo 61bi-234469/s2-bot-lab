@@ -1,0 +1,1944 @@
+import {
+  applyS2Transition,
+  clearLabel,
+  createGame,
+  placementCells,
+  toCc2State,
+  toS2GuiState,
+} from "./game.mjs";
+import {
+  advanceMatchPlaybackDeadline,
+  createMatchClock,
+  readMatchClock,
+  setMatchClockRunning,
+  synchronizeMatchClock,
+} from "./match-clock.mjs";
+import { calculatePlayerMetrics, formatGameClock } from "./player-metrics.mjs";
+import {
+  CONTROL_PREFERENCE_IDS,
+  GUI_MODES,
+  PREFERENCES_STORAGE_KEY,
+  TOGGLE_PREFERENCE_IDS,
+  emptyPreferences,
+  sanitizePreferences,
+} from "./preferences.mjs";
+import {
+  BOT_PARAMETER_DEFINITIONS,
+  defaultBotParameters,
+  normalizeBotParameters,
+} from "/shared/bot-parameters.mjs";
+import { ppsForThinkTime } from "/shared/bot-match-options.mjs";
+import {
+  canonicalPlacementToGuiMove,
+  simpleAnalysisToVerification,
+} from "./analysis-proposal.mjs";
+import {
+  HUMAN_ACTIONS,
+  HUMAN_HANDLING_FIELDS,
+  SDF_INFINITE,
+  SDF_MAX,
+  SDF_MIN,
+  actionForCode,
+  defaultHumanControls,
+  describeHumanControls,
+  formatKeyCode,
+  humanHandling,
+  sanitizeHumanControls,
+} from "./human-controls.mjs";
+import {
+  outerEdges,
+  renderChainCounter,
+  renderDetailMetrics,
+  renderFieldRateStats,
+  renderGarbageGauge,
+  renderMatchField,
+  renderMini,
+  renderNextList,
+  shownB2b,
+  shownCombo,
+} from "./field-render.mjs";
+import { initReplayView, setReplayActive } from "./replay-view.mjs";
+import { MATCH_REPLAY_SCHEMA } from "/shared/replay-ir-validation.mjs";
+import {
+  createPieceRepeat,
+  dropped,
+  lockSubmission,
+  pieceCells,
+  rotated,
+  shifted,
+  shiftedToEnd,
+  spawnPlacement,
+} from "./human-play.mjs";
+import { installStaticTransport } from "./static-host.mjs";
+
+installStaticTransport();
+
+const elements = Object.fromEntries([...document.querySelectorAll("[id]")].map((node) => [node.id, node]));
+const BOT_SIDES = Object.freeze(["left", "right"]);
+// B2B charging as resolved by the server from the ruleset the GUI runs under.
+// Until /api/bots answers there is no rule to read, so no counter claims to be
+// surge-ready; `false` is the ruleset's own value for charging being off.
+let b2bCharging = false;
+const botParameters = Object.fromEntries(BOT_SIDES.map((side) => [side, Object.fromEntries(
+  Object.keys(BOT_PARAMETER_DEFINITIONS).map((botType) => [botType, { ...defaultBotParameters(botType) }]),
+)]));
+let botCapabilities = new Map(Object.entries(BOT_PARAMETER_DEFINITIONS));
+let settingsSide = null;
+let game = createGame();
+let pendingMove = null;
+let pendingVerification = null;
+let pendingThinkElapsedMs = 0;
+let gameMetricElapsedMs = 0;
+let thinking = false;
+let autoplay = false;
+// Invalidates an in-flight analysis whenever RESET or a bot change replaces
+// the position it was asked to evaluate.
+let analysisGeneration = 0;
+let matchRunning = false;
+let matchAutoplay = false;
+/* Only true while a start request is in flight, which is the one moment the
+   single run button has nothing to toggle yet. */
+let matchStarting = false;
+let matchSeries = null;
+let matchRoundStatus = "";
+let matchRoundFinalization = null;
+let matchSaveInFlight = false;
+let matchClock = createMatchClock(performance.now());
+/* Bumped by every start and every RESET, so a reply from a discarded session
+   can be told apart from the one the arena currently shows. */
+let matchGeneration = 0;
+let lastRenderedMatchClock = "";
+let lastRenderedMatchElapsedMs = 0;
+let matchPlaybackDeadlineMs = 0;
+let matchPlaybackElapsedMs = 0;
+const preferences = loadPreferences();
+let mode = preferences.mode ?? "analysis";
+let humanControls = preferences.humanControls ?? defaultHumanControls();
+/* The block layout and kick table the server evaluates placements with. Fetched
+   once, before the first match a human plays. */
+let placementGeometry = null;
+/* The live 1P piece. `null` whenever nobody is playing by hand, so every input
+   path can be gated on one value. */
+let human = null;
+const pieceRepeat = createPieceRepeat();
+let humanRenderRequested = false;
+/* The opponent's next step in a match a human is playing: scheduled against the
+   shared clock rather than chained off the previous reply, because the player's
+   own locks advance that clock in between. */
+let humanBotStepTimer = null;
+/* A step is in flight. The STEP button used to carry this, but a human match
+   disables that button while still stepping its opponent. */
+let matchStepInFlight = false;
+let lastMatchView = null;
+
+applyStoredPreferences();
+render();
+initReplayView();
+for (const name of GUI_MODES) {
+  elements[`mode-tab-${name}`].addEventListener("click", () => selectMode(name));
+  elements[`mode-tab-${name}`].addEventListener("keydown", handleModeTabKeydown);
+}
+renderMode();
+for (const id of [...CONTROL_PREFERENCE_IDS, ...TOGGLE_PREFERENCE_IDS]) {
+  elements[id].addEventListener("change", savePreferences);
+}
+elements["analysis-bot"].addEventListener("change", () => {
+  clearAnalysisProposal();
+  renderAnalysisEngineIdentity();
+});
+elements["think-button"].addEventListener("click", think);
+elements["apply-button"].addEventListener("click", applyPending);
+elements["auto-button"].addEventListener("click", toggleAutoplay);
+elements["reset-button"].addEventListener("click", reset);
+elements["match-run"].addEventListener("click", toggleMatchRun);
+elements["match-step"].addEventListener("click", stepMatch);
+elements["match-reset"].addEventListener("click", resetMatch);
+elements["match-save-replay"].addEventListener("click", saveMatchReplay);
+elements["match-save-ttrm"].addEventListener("click", saveMatchTtrm);
+elements["match-unlimited-turns"].addEventListener("change", syncMaxTurnsControl);
+elements["match-random-seed"].addEventListener("change", syncRandomSeedControl);
+elements["match-fair-comparison"].addEventListener("change", syncFairComparisonControls);
+elements["match-think-time-pace"].addEventListener("change", syncThinkTimePaceControls);
+elements["match-ttrm-compatible"].addEventListener("click", confirmTtrmQueue);
+elements["ttrm-queue-confirm"].addEventListener("click", enableTtrmQueue);
+for (const side of BOT_SIDES) {
+  elements[`${side}-bot`].addEventListener("change", () => {
+    renderBotSettingsSummary(side);
+    syncHumanMatchControls();
+    syncFairComparisonControls();
+  });
+  elements[`${side}-bot-settings`].addEventListener("click", () => openBotSettings(side));
+}
+elements["bot-settings-form"].addEventListener("submit", saveBotSettings);
+window.addEventListener("keydown", handleHumanKeyDown);
+window.addEventListener("keyup", handleHumanKeyUp);
+/* A key released while the page is in the background never reports its keyup,
+   so every hold is dropped rather than repeating forever. */
+window.addEventListener("blur", () => pieceRepeat.endAll());
+syncMaxTurnsControl();
+syncRandomSeedControl();
+syncHumanMatchControls();
+syncFairComparisonControls();
+syncThinkTimePaceControls();
+/* The export buttons ship disabled in the markup, so their reason has to be
+   filled in once before the first match rather than only on the next render. */
+renderMatchSaveButton();
+renderMatchRunButton();
+for (const side of BOT_SIDES) renderBotSettingsSummary(side);
+renderAnalysisEngineIdentity();
+loadBotCapabilities();
+requestAnimationFrame(renderRealtimeMatchClock);
+elements["think-ms"].addEventListener("input", () => {
+  elements["think-value"].textContent = elements["think-ms"].value;
+});
+
+/* Preferences are a convenience, never a requirement: a browser that refuses
+   storage (private mode, quota) or a document written by another build simply
+   leaves the page on its markup defaults. */
+function loadPreferences() {
+  try {
+    const stored = localStorage.getItem(PREFERENCES_STORAGE_KEY);
+    return stored === null
+      ? emptyPreferences()
+      : sanitizePreferences(JSON.parse(stored), normalizeBotParameters, sanitizeHumanControls);
+  } catch {
+    return emptyPreferences();
+  }
+}
+
+function savePreferences() {
+  try {
+    localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify({
+      mode,
+      controls: Object.fromEntries(CONTROL_PREFERENCE_IDS.map((id) => [id, elements[id].value])),
+      toggles: Object.fromEntries(TOGGLE_PREFERENCE_IDS.map((id) => [id, elements[id].checked])),
+      botParameters,
+      humanControls,
+    }));
+  } catch {
+    // Nothing to recover: the session keeps running with unsaved settings.
+  }
+}
+
+function applyStoredPreferences() {
+  for (const id of CONTROL_PREFERENCE_IDS) applyStoredControl(id, preferences.controls[id]);
+  for (const id of TOGGLE_PREFERENCE_IDS) {
+    if (id in preferences.toggles) elements[id].checked = preferences.toggles[id];
+  }
+  for (const side of BOT_SIDES) {
+    for (const [botType, values] of Object.entries(preferences.botParameters[side])) {
+      if (botType in botParameters[side]) botParameters[side][botType] = { ...values };
+    }
+  }
+  elements["think-value"].textContent = elements["think-ms"].value;
+}
+
+/* A stored value only wins when this build still offers it, so a removed bot or
+   a narrowed numeric range leaves the control on its markup default instead of
+   blanking it or restoring a value the match API would reject. */
+function applyStoredControl(id, value) {
+  if (value === undefined) return;
+  const element = elements[id];
+  if (element.tagName === "SELECT") {
+    if (![...element.options].some((option) => option.value === value)) return;
+  } else {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric < Number(element.min) || numeric > Number(element.max)) return;
+  }
+  element.value = value;
+}
+
+async function loadBotCapabilities() {
+  let capabilities;
+  try {
+    const response = await fetch("/api/bots");
+    capabilities = await response.json();
+    if (!response.ok || !Array.isArray(capabilities.bots)) throw new Error("bot capability response is invalid");
+  } catch (error) {
+    capabilities = {
+      bots: [{ id: "s2-simple", label: "S2 placement bot", available: true }],
+    };
+  }
+  b2bCharging = capabilities.ruleset?.b2bCharging ?? false;
+  const byId = new Map(capabilities.bots.map((bot) => {
+    const fallback = BOT_PARAMETER_DEFINITIONS[bot.id];
+    return [bot.id, {
+      ...fallback,
+      ...bot,
+      parameters: bot.parameters ?? fallback?.parameters ?? [],
+    }];
+  }));
+  botCapabilities = byId;
+  for (const selectId of ["analysis-bot", "left-bot", "right-bot"]) {
+    const select = elements[selectId];
+    for (const option of select.options) {
+      const bot = byId.get(option.value);
+      if (!bot) continue;
+      option.disabled = bot.available === false;
+      option.textContent = bot.available === false ? `${bot.label} · unavailable` : bot.label;
+      option.title = bot.reason ?? "";
+    }
+    if (select.selectedOptions[0]?.disabled) {
+      select.value = [...select.options].find((option) => !option.disabled)?.value ?? "";
+    }
+  }
+  const unavailable = [...byId.values()].filter((bot) => bot.available === false);
+  if (unavailable.length > 0) {
+    elements["match-bot-note"].textContent += ` Unavailable: ${unavailable.map((bot) => `${bot.label}: ${bot.reason}`).join("; ")}`;
+  }
+  renderAnalysisEngineIdentity();
+  for (const side of BOT_SIDES) renderBotSettingsSummary(side);
+}
+
+function openBotSettings(side) {
+  const botType = elements[`${side}-bot`].value;
+  const capability = botCapabilities.get(botType) ?? BOT_PARAMETER_DEFINITIONS[botType];
+  const values = botParameters[side][botType];
+  settingsSide = side;
+  elements["bot-settings-side"].textContent = botType === "human" ? `${side.toUpperCase()} PLAYER` : `${side.toUpperCase()} BOT`;
+  elements["bot-settings-title"].textContent = capability.label ?? botType;
+  elements["bot-settings-description"].textContent = capability.description ?? "";
+  if (botType === "human") {
+    elements["bot-settings-fields"].replaceChildren(...humanSettingsFields());
+    elements["bot-settings-dialog"].showModal();
+    return;
+  }
+  elements["bot-settings-fields"].replaceChildren(...capability.parameters.map((parameter) => {
+    const row = document.createElement("div");
+    row.className = "bot-parameter";
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    const control = document.createElement("div");
+    control.className = "bot-parameter-control";
+    input.id = `bot-parameter-${parameter.key}`;
+    input.name = parameter.key;
+    label.htmlFor = input.id;
+    label.textContent = parameter.label;
+    if (parameter.type === "boolean") {
+      input.type = "checkbox";
+      input.checked = values[parameter.key];
+    } else {
+      input.type = "number";
+      input.min = parameter.minimum;
+      input.max = parameter.maximum;
+      input.step = parameter.step;
+      input.value = values[parameter.key];
+    }
+    if (parameter.key === "pps" && ppsIsOverridden()) {
+      input.value = effectivePps(values);
+      input.disabled = true;
+      input.title = fairComparisonEnabled()
+        ? "Fair comparison fixes both bots at 1 PPS"
+        : "Think-time pace derives PPS from THINK TIME";
+    }
+    control.append(input);
+    if (parameter.suffix) {
+      const suffix = document.createElement("span");
+      suffix.textContent = parameter.suffix;
+      control.append(suffix);
+    }
+    row.append(label, control);
+    return row;
+  }));
+  elements["bot-settings-dialog"].showModal();
+}
+
+/* The 1P settings are laid out like the `input` and `keys` tabs of the reference
+   fork: the handling values first, then one rebindable row per action. A key row
+   captures `KeyboardEvent.code`, so a binding follows the physical key rather
+   than whatever the current keyboard layout prints on it. */
+function humanSettingsFields() {
+  const rows = HUMAN_HANDLING_FIELDS.map((field) => {
+    const row = document.createElement("div");
+    row.className = "bot-parameter";
+    const label = document.createElement("label");
+    const control = document.createElement("div");
+    control.className = "bot-parameter-control";
+    let input;
+    if (field.type === "sdf") {
+      input = document.createElement("select");
+      for (const value of [...Array.from({ length: SDF_MAX - SDF_MIN + 1 }, (_, index) => String(SDF_MIN + index)), SDF_INFINITE]) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value === SDF_INFINITE ? "∞" : value;
+        input.append(option);
+      }
+      input.value = String(humanControls.handling[field.key]);
+    } else if (field.type === "boolean") {
+      input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = humanControls.handling[field.key] === true;
+    } else {
+      input = document.createElement("input");
+      input.type = "number";
+      input.min = field.minimum;
+      input.max = field.maximum;
+      input.step = field.step;
+      input.value = humanControls.handling[field.key];
+    }
+    input.id = `human-handling-${field.key}`;
+    input.name = `human-handling-${field.key}`;
+    label.htmlFor = input.id;
+    label.textContent = field.label;
+    control.append(input);
+    if (field.suffix) {
+      const suffix = document.createElement("span");
+      suffix.textContent = field.suffix;
+      control.append(suffix);
+    }
+    row.append(label, control);
+    if (field.description) {
+      const description = document.createElement("small");
+      description.className = "bot-parameter-description";
+      description.textContent = field.description;
+      row.append(description);
+    }
+    return row;
+  });
+
+  const heading = document.createElement("p");
+  heading.className = "deck-label";
+  heading.textContent = "KEY BINDINGS";
+  rows.push(heading);
+
+  for (const action of HUMAN_ACTIONS) {
+    const row = document.createElement("div");
+    row.className = "bot-parameter";
+    const label = document.createElement("label");
+    const control = document.createElement("div");
+    control.className = "bot-parameter-control";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.readOnly = true;
+    input.className = "key-binding";
+    input.id = `human-key-${action.key}`;
+    input.name = input.id;
+    input.dataset.code = humanControls.keys[action.key];
+    input.value = formatKeyCode(humanControls.keys[action.key]);
+    input.addEventListener("keydown", captureKeyBinding);
+    label.htmlFor = input.id;
+    label.textContent = action.label;
+    control.append(input);
+    row.append(label, control);
+    rows.push(row);
+  }
+  return rows;
+}
+
+/* A rebind consumes the key itself: the dialog's own Escape-to-close and the
+   space that would activate the focused control must not fire while the field
+   is waiting for the key it is about to be bound to. */
+function captureKeyBinding(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.code === "") return;
+  event.currentTarget.dataset.code = event.code;
+  event.currentTarget.value = formatKeyCode(event.code);
+}
+
+function saveHumanSettings() {
+  const form = elements["bot-settings-form"];
+  if (!form.reportValidity()) return false;
+  const handling = Object.fromEntries(HUMAN_HANDLING_FIELDS.map((field) => {
+    const input = form.elements.namedItem(`human-handling-${field.key}`);
+    if (field.type === "boolean") return [field.key, input.checked];
+    if (field.type === "sdf") {
+      return [field.key, input.value === SDF_INFINITE ? SDF_INFINITE : Number(input.value)];
+    }
+    return [field.key, Number(input.value)];
+  }));
+  const keys = Object.fromEntries(HUMAN_ACTIONS.map((action) => [
+    action.key,
+    form.elements.namedItem(`human-key-${action.key}`).dataset.code,
+  ]));
+  humanControls = sanitizeHumanControls({ handling, keys });
+  return true;
+}
+
+function saveBotSettings(event) {
+  if (event.submitter?.value !== "save" || settingsSide === null) return;
+  event.preventDefault();
+  const side = settingsSide;
+  const botType = elements[`${side}-bot`].value;
+  if (botType === "human") {
+    if (!saveHumanSettings()) return;
+    renderBotSettingsSummary(side);
+    savePreferences();
+    elements["bot-settings-dialog"].close("save");
+    settingsSide = null;
+    return;
+  }
+  const capability = botCapabilities.get(botType) ?? BOT_PARAMETER_DEFINITIONS[botType];
+  const values = botParameters[side][botType];
+  const form = elements["bot-settings-form"];
+  if (!form.reportValidity()) return;
+  const candidate = Object.fromEntries(capability.parameters.map((parameter) => {
+    const input = form.elements.namedItem(parameter.key);
+    if (parameter.key === "pps" && ppsIsOverridden()) return [parameter.key, values[parameter.key]];
+    return [parameter.key, parameter.type === "boolean" ? input.checked : Number(input.value)];
+  }));
+  try {
+    botParameters[side][botType] = { ...normalizeBotParameters(botType, candidate) };
+  } catch (error) {
+    elements["bot-settings-description"].textContent = error instanceof Error ? error.message : String(error);
+    return;
+  }
+  renderBotSettingsSummary(side);
+  savePreferences();
+  elements["bot-settings-dialog"].close("save");
+  settingsSide = null;
+}
+
+function renderBotSettingsSummary(side) {
+  const botType = elements[`${side}-bot`].value;
+  const capability = botCapabilities.get(botType) ?? BOT_PARAMETER_DEFINITIONS[botType];
+  const values = botParameters[side][botType];
+  if (botType === "human") {
+    elements[`${side}-bot-settings-summary`].textContent = describeHumanControls(humanControls);
+    return;
+  }
+  elements[`${side}-bot-settings-summary`].textContent = capability.parameters.map((parameter) => {
+    const overriddenPps = parameter.key === "pps" && ppsIsOverridden();
+    const value = overriddenPps ? effectivePps(values) : values[parameter.key];
+    if (parameter.type === "boolean") return `${parameter.label} ${value ? "ON" : "OFF"}`;
+    const source = fairComparisonEnabled() ? " (FAIR)" : thinkTimePaceEnabled() ? " (THINK TIME)" : "";
+    return `${parameter.label} ${value}${parameter.suffix ? ` ${parameter.suffix}` : ""}${overriddenPps ? source : ""}`;
+  }).join(" · ");
+}
+
+async function think() {
+  if (thinking || game.toppedOut) return;
+  const generation = analysisGeneration;
+  const engine = elements["analysis-bot"].value;
+  // Both proposers and the verifier receive clones of this one position. Never
+  // read the mutable live game again after the first request has started.
+  const cc2Snapshot = toCc2State(game);
+  const s2Snapshot = toS2GuiState(game);
+  thinking = true;
+  pendingMove = null;
+  pendingVerification = null;
+  pendingThinkElapsedMs = 0;
+  resetComparison();
+  setStatus("thinking", "THINKING");
+  elements["think-button"].disabled = true;
+  elements["apply-button"].disabled = true;
+  try {
+    const suggestionStartedAt = performance.now();
+    const simpleRequest = fetch("/api/simple-s2", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        state: s2Snapshot,
+        n: 5,
+      }),
+    });
+    const suggestionRequest = engine === "s2-simple"
+      ? null
+      : fetch("/api/suggest", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            engine,
+            thinkMs: Number(elements["think-ms"].value),
+            state: cc2Snapshot,
+          }),
+        });
+    const [simpleResponse, response] = await Promise.all([simpleRequest, suggestionRequest]);
+    const s2 = await simpleResponse.json();
+    const body = response === null ? null : await response.json();
+    if (generation !== analysisGeneration) return;
+    if (!simpleResponse.ok || !Array.isArray(s2.moves) || s2.moves.length === 0) {
+      throw new Error(s2.error ?? "S2 simple placement analysis unavailable");
+    }
+    if (response !== null && !response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
+    const suggestionElapsedMs = Math.max(1, performance.now() - suggestionStartedAt);
+    pendingThinkElapsedMs = suggestionElapsedMs;
+
+    let verification;
+    if (engine === "s2-simple") {
+      verification = simpleAnalysisToVerification(s2);
+      pendingMove = canonicalPlacementToGuiMove(
+        s2.moves[0].placement,
+        verification.transition.lockResult.spin,
+      );
+    } else {
+      pendingMove = body.suggestion.moves[0];
+      const verificationResponse = await fetch("/api/apply-s2", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          engine,
+          state: s2Snapshot,
+          move: pendingMove,
+          moves: engine.startsWith("cc2-s2") ? body.suggestion.moves : undefined,
+        }),
+      });
+      verification = await verificationResponse.json();
+      if (generation !== analysisGeneration) return;
+      if (!verificationResponse.ok) {
+        throw new Error(verification.reasons?.join(", ") ?? verification.error ?? "S2 verification failed");
+      }
+      if (engine.startsWith("cc2-s2")) pendingMove = verification.move;
+    }
+    pendingVerification = verification;
+    const comparisonResponse = await fetch("/api/compare-simple", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseline: verification.comparison, challenger: s2 }),
+    });
+    const comparison = await comparisonResponse.json();
+    if (generation !== analysisGeneration) return;
+    if (!comparisonResponse.ok) throw new Error(comparison.error ?? "comparison refused");
+    renderComparison(verification, comparison);
+
+    const lock = verification.transition.lockResult;
+    const attack = verification.transition.attackStages.outgoingBeforeCancel;
+    const clear = clearLabel(lock.spin, lock.lines, lock.perfectClear) || "NO CLEAR";
+    const cc2Diagnostic = engine === "s2-simple" ? "" : ` · CC2 label ${pendingMove.spin}`;
+    if (engine === "s2-simple") {
+      elements["engine-version"].textContent = "S2 placement bot · final-placement depth 1";
+      elements["nodes-value"].textContent = compact(s2.generatedMoves);
+      elements["nps-value"].textContent = "—";
+    } else {
+      const info = body.suggestion.move_info;
+      elements["engine-version"].textContent = `${body.engine.label} · ${body.info.version} · ${body.engine.commit.slice(0, 7)}`;
+      elements["nodes-value"].textContent = compact(info.nodes);
+      elements["nps-value"].textContent = compact(Math.round(info.nps));
+    }
+    elements["suggestion-move"].textContent = formatMove(pendingMove);
+    elements["suggestion-detail"].textContent = `S2: ${clear} · ${attack} attack${cc2Diagnostic}`;
+    setStatus("ready", "SUGGESTED");
+    elements["apply-button"].disabled = false;
+    renderField();
+    renderPlacingStrip();
+    if (autoplay) setTimeout(applyPending, 180);
+  } catch (error) {
+    if (generation !== analysisGeneration) return;
+    autoplay = false;
+    elements["auto-button"].setAttribute("aria-pressed", "false");
+    elements["suggestion-detail"].textContent = error instanceof Error ? error.message : String(error);
+    setStatus("error", "ERROR");
+  } finally {
+    if (generation === analysisGeneration) {
+      thinking = false;
+      elements["think-button"].disabled = game.toppedOut;
+    }
+  }
+}
+
+async function applyPending() {
+  if (pendingMove === null || thinking) return;
+  try {
+    const body = pendingVerification;
+    if (body === null) throw new Error("S2 verification is missing or stale");
+    const transition = applyS2Transition(game, pendingMove, body);
+    gameMetricElapsedMs += pendingThinkElapsedMs;
+    pendingMove = null;
+    pendingVerification = null;
+    pendingThinkElapsedMs = 0;
+    elements["apply-button"].disabled = true;
+    elements["suggestion-move"].textContent = "—";
+    const lock = transition.lockResult;
+    const clear = clearLabel(lock.spin, lock.lines, lock.perfectClear) || "NO CLEAR";
+    elements["suggestion-detail"].textContent = game.toppedOut
+      ? "TOP OUT"
+      : `S2 Simulator: ${clear} · ${transition.attackStages.outgoingBeforeCancel} attack · B2B ${transition.chain.b2bAfter} · combo ${transition.chain.comboAfter} · ${transition.cancelResult.outgoingAfterCancel} garbage · score ${body.comparison.score.toFixed(2)} (${body.status})`;
+    setStatus(game.toppedOut ? "error" : "idle", game.toppedOut ? "TOP OUT" : "READY");
+    render();
+    if (autoplay && !game.toppedOut) setTimeout(think, 220);
+  } catch (error) {
+    autoplay = false;
+    elements["suggestion-detail"].textContent = error instanceof Error ? error.message : String(error);
+    setStatus("error", "DESYNC");
+  }
+}
+
+function toggleAutoplay() {
+  autoplay = !autoplay;
+  elements["auto-button"].setAttribute("aria-pressed", String(autoplay));
+  elements["auto-button"].textContent = autoplay ? "停止" : "自動再生";
+  if (autoplay && !thinking) pendingMove === null ? think() : applyPending();
+}
+
+/* Switching modes hides a panel, so whichever loop the leaving mode was running
+   is paused first: nothing advances while it is off screen. Both modes keep
+   their state, and the pause is the same one the AUTO buttons perform. */
+function selectMode(next) {
+  if (!GUI_MODES.includes(next) || next === mode) return;
+  if (mode === "analysis") stopAutoplay();
+  else if (mode === "match") pauseMatchAutoplay();
+  mode = next;
+  renderMode();
+  savePreferences();
+}
+
+function renderMode() {
+  for (const name of GUI_MODES) {
+    const selected = name === mode;
+    const tab = elements[`mode-tab-${name}`];
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+    elements[`mode-panel-${name}`].hidden = !selected;
+  }
+  // Replay playback owns its own clock, so it is told when it leaves the screen.
+  setReplayActive(mode === "replay");
+}
+
+function handleModeTabKeydown(event) {
+  const index = GUI_MODES.indexOf(mode);
+  let next = null;
+  if (event.key === "ArrowRight") next = GUI_MODES[(index + 1) % GUI_MODES.length];
+  else if (event.key === "ArrowLeft") next = GUI_MODES[(index - 1 + GUI_MODES.length) % GUI_MODES.length];
+  else if (event.key === "Home") next = GUI_MODES[0];
+  else if (event.key === "End") next = GUI_MODES.at(-1);
+  if (next === null) return;
+  event.preventDefault();
+  selectMode(next);
+  elements[`mode-tab-${next}`].focus();
+}
+
+function stopAutoplay() {
+  autoplay = false;
+  elements["auto-button"].setAttribute("aria-pressed", "false");
+  elements["auto-button"].textContent = "自動再生";
+}
+
+function reset() {
+  gameMetricElapsedMs = 0;
+  game = createGame();
+  clearAnalysisProposal();
+}
+
+// Changing proposer must not change the position being compared. It only
+// invalidates the old asynchronous reply and its preview; board, queue and
+// HOLD remain available for the next bot to evaluate.
+function clearAnalysisProposal() {
+  analysisGeneration += 1;
+  thinking = false;
+  stopAutoplay();
+  pendingMove = null;
+  pendingVerification = null;
+  pendingThinkElapsedMs = 0;
+  elements["suggestion-move"].textContent = "—";
+  elements["suggestion-detail"].textContent = "「考える」で探索を開始";
+  elements["nodes-value"].textContent = "—";
+  elements["nps-value"].textContent = "—";
+  resetComparison();
+  elements["apply-button"].disabled = true;
+  elements["think-button"].disabled = game.toppedOut;
+  setStatus("idle", "READY");
+  render();
+}
+
+function renderAnalysisEngineIdentity() {
+  const botType = elements["analysis-bot"].value;
+  const capability = botCapabilities.get(botType);
+  const label = capability?.label ?? elements["analysis-bot"].selectedOptions[0]?.textContent ?? botType;
+  elements["suggestion-engine-label"].textContent = `${label.toUpperCase()} SUGGESTION`;
+  elements["comparison-engine-label"].textContent = `${label.toUpperCase()} · S2 VERIFIED`;
+}
+
+async function startMatch() {
+  matchAutoplay = false;
+  matchRunning = false;
+  matchSeries = null;
+  matchGeneration += 1;
+  cancelHumanMatchBotStep();
+  stopHumanPlay();
+  matchClock = createMatchClock(performance.now());
+  matchRoundStatus = "";
+  setMatchExportMessage(null, "");
+  elements["match-step"].disabled = true;
+  elements["match-reset"].disabled = false;
+  elements["match-status"].textContent = "STARTING";
+  try {
+    if (selectedHumanSide() !== null) await ensurePlacementGeometry();
+    matchSeries = createMatchSeries();
+    setMatchSettingsDisabled(true);
+    renderMatchSummary();
+    matchAutoplay = true;
+    await beginSeriesGame();
+  } catch (error) {
+    elements["match-status"].textContent = `START FAILED · ${error instanceof Error ? error.message : String(error)}`;
+    matchAutoplay = false;
+    matchClock = setMatchClockRunning(matchClock, false, performance.now());
+    matchSeries = null;
+    setMatchSettingsDisabled(false);
+    renderMatchRunButton();
+  }
+}
+
+/* The run button stays inert while a start request is in flight: pausing and
+   resuming across it would otherwise open a second session for one game. */
+async function beginSeriesGame() {
+  if (matchRoundFinalization !== null) return;
+  matchStarting = true;
+  renderMatchRunButton();
+  try {
+    await startSeriesGame();
+  } finally {
+    matchStarting = false;
+    renderMatchRunButton();
+  }
+}
+
+function selectedHumanSide() {
+  return BOT_SIDES.find((side) => elements[`${side}-bot`].value === "human") ?? null;
+}
+
+/* The placement geometry is the contract between what the player moves on
+   screen and what the server will accept, so a match cannot start by hand until
+   it has been fetched. */
+async function ensurePlacementGeometry() {
+  if (placementGeometry !== null) return placementGeometry;
+  const response = await fetch("/api/placement-geometry");
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error ?? "placement geometry unavailable");
+  placementGeometry = body;
+  return placementGeometry;
+}
+
+function startHumanGame(view) {
+  /* The button that started the match keeps focus, and Space is both its
+     activation key and the default hard drop. Handing focus back to the page
+     lets the deck's own buttons stay keyboard-reachable between matches. */
+  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  const player = view.bots.find((bot) => bot.id === view.humanSide);
+  human = {
+    side: view.humanSide,
+    board: player.board,
+    queue: [player.current, ...player.next],
+    hold: player.hold,
+    active: null,
+    holdUsed: false,
+    pending: false,
+  };
+  spawnHumanPiece();
+}
+
+/* Adopts the position the server confirmed after the player's own lock. Nothing
+   else can move that board: incoming garbage is only tanked by the lock itself,
+   so an opponent's step never invalidates the piece being moved. */
+function adoptHumanView(view) {
+  if (human === null) return;
+  const player = view.bots.find((bot) => bot.id === human.side);
+  human.board = player.board;
+  human.queue = [player.current, ...player.next];
+  human.hold = player.hold;
+  human.pending = false;
+  human.active = null;
+  if (view.outcome.complete) requestHumanRender();
+  else spawnHumanPiece();
+}
+
+function spawnHumanPiece() {
+  const piece = human.queue[0] ?? null;
+  human.holdUsed = false;
+  human.active = piece === null ? null : spawnPlacement(placementGeometry, human.board, piece, false);
+  if (human.active !== null) pieceRepeat.activateDasCut(humanHandling(humanControls).dcdFrames);
+  requestHumanRender();
+}
+
+function humanCanAct() {
+  return human !== null && human.active !== null && !human.pending && matchRunning && matchAutoplay;
+}
+
+function humanMoveBy(dx) {
+  if (!humanCanAct()) return;
+  const moved = shifted(placementGeometry, human.board, human.active, dx, 0);
+  if (moved === null) return;
+  human.active = moved;
+  requestHumanRender();
+}
+
+function humanMoveToEnd(dx) {
+  if (!humanCanAct()) return;
+  const moved = shiftedToEnd(placementGeometry, human.board, human.active, dx);
+  if (moved === human.active) return;
+  human.active = moved;
+  requestHumanRender();
+}
+
+function humanSoftDropStep() {
+  if (!humanCanAct()) return;
+  const moved = shifted(placementGeometry, human.board, human.active, 0, -1);
+  if (moved === null) return;
+  human.active = moved;
+  requestHumanRender();
+}
+
+function humanSoftDropToFloor() {
+  if (!humanCanAct()) return;
+  const landed = dropped(placementGeometry, human.board, human.active);
+  if (landed === human.active) return;
+  human.active = landed;
+  requestHumanRender();
+}
+
+function humanRotate(amount) {
+  if (!humanCanAct()) return;
+  const turned = rotated(placementGeometry, human.board, human.active, amount);
+  if (turned === null) return;
+  human.active = turned;
+  pieceRepeat.cutDas(humanHandling(humanControls).dcdFrames);
+  requestHumanRender();
+}
+
+/* One swap per piece, matching the canonical placement's single HOLD flag: a
+   lock either came from the queue or from HOLD, and there is no way to express
+   a second swap within the same placement. */
+function humanHold() {
+  if (!humanCanAct() || human.holdUsed) return;
+  const current = human.queue[0];
+  const incoming = human.hold ?? human.queue[1] ?? null;
+  if (incoming === null) return;
+  const placement = spawnPlacement(placementGeometry, human.board, incoming, true);
+  if (placement === null) return;
+  human.queue = human.hold === null
+    ? human.queue.slice(1)
+    : [incoming, ...human.queue.slice(1)];
+  human.hold = current;
+  human.active = placement;
+  human.holdUsed = true;
+  pieceRepeat.cutDas(humanHandling(humanControls).dcdFrames);
+  requestHumanRender();
+}
+
+/* The player's lock frame is their own reading of the shared match clock. The
+   server clamps it into the window that keeps that clock monotone, so this is a
+   request rather than an assertion about when the lock happened. */
+function currentHumanLockFrame() {
+  return Math.max(0, Math.round(readMatchClock(matchClock, performance.now()) * 60 / 1000));
+}
+
+async function humanHardDrop() {
+  if (!humanCanAct()) return;
+  const landed = dropped(placementGeometry, human.board, human.active);
+  human.active = landed;
+  human.pending = true;
+  requestHumanRender();
+  const generation = matchGeneration;
+  try {
+    const response = await fetch("/api/match/human-lock", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        placement: lockSubmission(landed),
+        lockFrame: currentHumanLockFrame(),
+      }),
+    });
+    const body = await response.json();
+    // The opponent's step can top this board out first, in which case the game
+    // is already over and this lock was never going to be played.
+    if (!response.ok && body.error === "match-complete") return;
+    if (!response.ok) throw new Error(body.error ?? "player lock rejected");
+    if (generation !== matchGeneration) return;
+    if (body.outcome.complete && !matchRunning) return;
+    renderMatch(body);
+    adoptHumanView(body);
+    if (body.outcome.complete) finishSeriesGame(body);
+  } catch (error) {
+    if (generation === matchGeneration) handleMatchError(error);
+  }
+}
+
+/* Coalesces the repaints of one input burst. A timer rather than an animation
+   frame: auto-shift already runs on the same kind of timer, and an animation
+   frame never arrives while the tab is hidden, which would leave the field
+   showing a piece that has since moved or locked. */
+function requestHumanRender() {
+  if (humanRenderRequested || human === null) return;
+  humanRenderRequested = true;
+  setTimeout(() => {
+    humanRenderRequested = false;
+    renderHumanField();
+  }, 0);
+}
+
+function renderHumanField() {
+  if (human === null) return;
+  const overlay = new Map();
+  if (human.active !== null) {
+    const piece = human.active.piece;
+    if (humanHandling(humanControls).ghost) {
+      const landing = pieceCells(placementGeometry, dropped(placementGeometry, human.board, human.active));
+      addOverlayPiece(overlay, landing, piece, true);
+    }
+    addOverlayPiece(overlay, pieceCells(placementGeometry, human.active), piece, false);
+  }
+  renderMatchField(elements[`match-${human.side}-field`], human.board, [], overlay);
+  renderMini(elements[`match-${human.side}-hold`], human.hold);
+  renderNextList(elements[`match-${human.side}-next`], human.queue.slice(1, 6));
+}
+
+/* Only the cells inside the visible field are drawn, but the rim of a piece
+   half above it is still computed from all four cells, so the part that is on
+   screen keeps the outline of the whole tetromino. */
+function addOverlayPiece(overlay, cells, piece, ghost) {
+  const keys = new Set(cells.map(([x, y]) => `${x}:${y}`));
+  for (const [x, y] of cells) {
+    overlay.set(`${x}:${y}`, { piece, ghost, edges: outerEdges(keys, x, y) });
+  }
+}
+
+/* Hands the field back to the server view. Until the player stops, that side is
+   drawn from the live piece state, so the last confirmed position has to be
+   painted once by whoever ends the game. */
+function stopHumanPlay(view = null) {
+  pieceRepeat.endAll();
+  const side = human?.side ?? null;
+  human = null;
+  if (side === null || view === null) return;
+  const player = view.bots.find((bot) => bot.id === side);
+  if (player === undefined) return;
+  renderMatchField(elements[`match-${side}-field`], player.board, player.lastPlaced);
+  renderMini(elements[`match-${side}-hold`], player.hold);
+  renderNextList(elements[`match-${side}-next`], player.next.slice(0, 5));
+}
+
+/* Keyboard input belongs to the player only while their own match is running.
+   Settings fields remain editable, but a configured game key never falls
+   through to the browser (for example, Space must not scroll the page). */
+function humanInputEnabled() {
+  return human !== null && mode === "match" && matchRunning &&
+    !elements["bot-settings-dialog"].open && !elements["ttrm-queue-dialog"].open;
+}
+
+function isKeyboardEditingTarget(target) {
+  return target instanceof Element && target.closest("input, select, textarea, [contenteditable='true']") !== null;
+}
+
+function handleHumanKeyDown(event) {
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  const action = actionForCode(humanControls, event.code);
+  if (action === null) return;
+  // Key-binding capture and numeric/text settings keep their native input
+  // behavior. Everywhere else, reserve configured keys for the game only.
+  if (isKeyboardEditingTarget(event.target)) return;
+  event.preventDefault();
+  if (!humanInputEnabled()) return;
+  if (event.repeat) return;
+  const handling = humanHandling(humanControls);
+  switch (action) {
+    case "MoveLeft":
+    case "MoveRight": {
+      const direction = action === "MoveLeft" ? -1 : 1;
+      pieceRepeat.startShift(action, {
+        move: () => humanMoveBy(direction),
+        moveToEnd: () => humanMoveToEnd(direction),
+        dasFrames: handling.dasFrames,
+        arrFrames: handling.arrFrames,
+        softDropPriority: handling.softDropPriority,
+      });
+      return;
+    }
+    case "SoftDrop":
+      pieceRepeat.startSoftDrop(
+        action,
+        handling.sdf === Infinity ? humanSoftDropToFloor : humanSoftDropStep,
+        handling.sdf,
+      );
+      return;
+    case "HardDrop":
+      humanHardDrop();
+      return;
+    case "RotateLeft":
+      humanRotate(-1);
+      return;
+    case "RotateRight":
+      humanRotate(1);
+      return;
+    case "Rotate180":
+      humanRotate(2);
+      return;
+    case "Hold":
+      humanHold();
+      return;
+    case "Reset":
+      resetMatch();
+      return;
+    default:
+  }
+}
+
+function handleHumanKeyUp(event) {
+  if (human === null) return;
+  const action = actionForCode(humanControls, event.code);
+  if (action !== null) pieceRepeat.end(action);
+}
+
+function createMatchSeries() {
+  const fairComparison = fairComparisonEnabled();
+  const leftParameters = { ...botParameters.left[elements["left-bot"].value] };
+  const rightParameters = { ...botParameters.right[elements["right-bot"].value] };
+  const thinkTimePace = thinkTimePaceEnabled();
+  if (fairComparison) {
+    leftParameters.pps = 1;
+    rightParameters.pps = 1;
+  } else if (thinkTimePace) {
+    for (const parameters of [leftParameters, rightParameters]) {
+      if (Number.isSafeInteger(parameters.thinkMs)) parameters.pps = ppsForThinkTime(parameters.thinkMs);
+    }
+  }
+  return {
+    config: {
+      left: elements["left-bot"].value,
+      right: elements["right-bot"].value,
+      leftParameters,
+      rightParameters,
+      fairComparison,
+      thinkTimePace,
+      seed: elements["match-random-seed"].checked
+        ? randomUint32()
+        : readBoundedInteger("match-seed", 0, 0xffff_ffff),
+      maxTurns: elements["match-unlimited-turns"].checked
+        ? null
+        : readBoundedInteger("match-max-turns", 1, 10_000),
+      firstTo: readBoundedInteger("match-count", 1, 100),
+      ttrmCompatible: elements["match-ttrm-compatible"].checked,
+      preLockPreview: elements["match-pre-lock-preview"].checked,
+    },
+    completed: 0,
+    leftWins: 0,
+    rightWins: 0,
+    draws: 0,
+    totalTurns: 0,
+    rounds: [],
+    replayMeta: null,
+  };
+}
+
+async function startSeriesGame() {
+  if (matchRoundFinalization !== null || matchSeries === null || matchSeriesWinner() !== null) return;
+  const generation = matchGeneration;
+  const gameNumber = matchSeries.completed + 1;
+  const config = matchSeries.config;
+  const seed = (config.seed + matchSeries.completed) >>> 0;
+  elements["match-status"].textContent = `GAME ${gameNumber} · FT${config.firstTo} · STARTING · SEED ${seed}`;
+  const response = await fetch("/api/match/start", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      left: config.left,
+      right: config.right,
+      leftParameters: config.leftParameters,
+      rightParameters: config.rightParameters,
+      fairComparison: config.fairComparison,
+      thinkTimePace: config.thinkTimePace,
+      seed,
+      maxTurns: config.maxTurns,
+      firstTo: config.firstTo,
+      ttrmCompatible: config.ttrmCompatible,
+    }),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error ?? "match start failed");
+  if (generation !== matchGeneration) return;
+  if (matchSeries.replayMeta === null && body.replayMeta !== null && body.replayMeta !== undefined) {
+    matchSeries.replayMeta = structuredClone(body.replayMeta);
+  }
+  matchClock = createMatchClock(performance.now());
+  lastRenderedMatchClock = "";
+  lastRenderedMatchElapsedMs = 0;
+  matchPlaybackDeadlineMs = performance.now();
+  matchPlaybackElapsedMs = body.metricElapsedMs;
+  matchRunning = true;
+  elements["match-step"].disabled = body.humanSide !== null;
+  if (body.humanSide !== null) startHumanGame(body);
+  renderMatch(body);
+  matchClock = setMatchClockRunning(matchClock, matchAutoplay, performance.now());
+  if (!matchAutoplay) return;
+  // A match against a bot alone replays as fast as its playback deadline
+  // allows. A match a human is playing runs on the shared clock instead, so the
+  // opponent's first lock waits for the real time that lock frame stands for.
+  if (human === null) setTimeout(stepMatch, 0);
+  else scheduleHumanMatchBotStep(body);
+}
+
+function scheduleHumanMatchBotStep(view) {
+  cancelHumanMatchBotStep();
+  if (human === null || !matchRunning || !matchAutoplay) return;
+  if (!Number.isFinite(view.nextStepFrames)) return;
+  const targetElapsedMs = (view.clock.logicalFrame + view.nextStepFrames) * 1000 / 60;
+  const delayMs = Math.max(0, targetElapsedMs - readMatchClock(matchClock, performance.now())) / matchClock.rate;
+  humanBotStepTimer = setTimeout(stepMatch, delayMs);
+}
+
+function cancelHumanMatchBotStep() {
+  if (humanBotStepTimer === null) return;
+  clearTimeout(humanBotStepTimer);
+  humanBotStepTimer = null;
+}
+
+async function stepMatch() {
+  if (!matchRunning || matchStepInFlight) return;
+  const generation = matchGeneration;
+  matchStepInFlight = true;
+  matchClock = setMatchClockRunning(matchClock, true, performance.now());
+  elements["match-step"].disabled = true;
+  if (human === null) elements["match-status"].textContent = "THINKING";
+  try {
+    const response = await fetch("/api/match/step", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const body = await response.json();
+    /* The player's own lock can finish the game while this step is on its way
+       out. Whoever received that lock has already reported the result, so the
+       step simply has nothing left to do. */
+    if (!response.ok && body.error === "match-complete") return;
+    if (!response.ok) throw new Error(body.error ?? "match step failed");
+    /* RESET while this step was in flight: the reply belongs to a session the
+       page no longer shows, so it must not repaint the cleared arena. */
+    if (generation !== matchGeneration) return;
+    if (body.outcome.complete && !matchRunning) return;
+    advanceCurrentMatchPlaybackDeadline(body);
+    if (!await presentMatchCommit(body, generation)) return;
+    if (body.outcome.complete) finishSeriesGame(body);
+    else if (human !== null && matchAutoplay && matchRunning) scheduleHumanMatchBotStep(body);
+  } catch (error) {
+    if (generation === matchGeneration) handleMatchError(error);
+  } finally {
+    matchStepInFlight = false;
+    if (generation === matchGeneration) {
+      if (!matchAutoplay) matchClock = setMatchClockRunning(matchClock, false, performance.now());
+      elements["match-step"].disabled = !matchRunning || human !== null;
+      if (matchAutoplay && matchRunning && human === null) {
+        setTimeout(stepMatch, currentMatchPlaybackDelay());
+      }
+    }
+  }
+}
+
+async function finishSeriesGame(view) {
+  // A player lock can finish the game while the opponent's scheduled proposal
+  // is in flight. Both replies carry the same completed view, but only the
+  // first one may count the game and begin or conclude the series.
+  if (!matchRunning || matchRoundFinalization !== null) return;
+  matchClock = setMatchClockRunning(matchClock, false, performance.now());
+  matchRunning = false;
+  cancelHumanMatchBotStep();
+  stopHumanPlay(view);
+  if (view.outcome.proposalResult?.status === "failure" ||
+      view.outcome.reason === "proposal-failure") {
+    matchAutoplay = false;
+    setMatchSettingsDisabled(false);
+    const code = view.outcome.proposalResult?.failure?.code ?? "proposal-failure";
+    elements["match-status"].textContent = `SERIES STOPPED · ${code}`;
+    renderMatchRunButton();
+    renderMatchSaveButton();
+    return;
+  }
+  if (matchSeries === null) return;
+  const generation = matchGeneration;
+  elements["match-status"].textContent = "SAVING ROUND";
+  matchRoundFinalization = finalizeCurrentRound().then((round) => {
+    if (round === null || generation !== matchGeneration || matchSeries === null) return;
+    matchSeries.rounds.push({ ...round, index: matchSeries.rounds.length });
+    matchSeries.completed += 1;
+    matchSeries.totalTurns += view.turnNumber;
+    if (view.outcome.winnerBotId === "left") matchSeries.leftWins += 1;
+    else if (view.outcome.winnerBotId === "right") matchSeries.rightWins += 1;
+    else matchSeries.draws += 1;
+    const result = view.outcome.winnerBotId === null
+      ? `DRAW (${view.outcome.reason})`
+      : `${view.outcome.winnerBotId.toUpperCase()} WINS`;
+    elements["match-status"].textContent = `GAME ${matchSeries.completed} · ${result} · TURN ${view.turnNumber}`;
+    renderMatchSummary();
+    if (matchSeriesWinner() !== null) {
+      matchAutoplay = false;
+      setMatchSettingsDisabled(false);
+      renderMatchRunButton();
+      return;
+    }
+    renderMatchRunButton();
+    if (matchAutoplay) setTimeout(
+      () => { if (matchAutoplay) beginSeriesGame().catch(handleMatchError); },
+      0,
+    );
+  }).catch((error) => {
+    if (generation === matchGeneration) handleMatchError(error);
+  }).finally(() => {
+    if (generation === matchGeneration) {
+      matchRoundFinalization = null;
+      renderMatchRunButton();
+      renderMatchSaveButton();
+    }
+  });
+  renderMatchRunButton();
+  renderMatchSaveButton();
+}
+
+async function finalizeCurrentRound() {
+  const response = await fetch("/api/match/round");
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error ?? "match round export failed");
+  return body;
+}
+
+function advanceCurrentMatchPlaybackDeadline(view) {
+  const config = matchSeries?.config;
+  if (config === undefined || !Number.isFinite(view.metricElapsedMs)) return;
+  matchPlaybackDeadlineMs = advanceMatchPlaybackDeadline({
+    deadlineMs: matchPlaybackDeadlineMs,
+    previousElapsedMs: matchPlaybackElapsedMs,
+    elapsedMs: view.metricElapsedMs,
+  });
+  matchPlaybackElapsedMs = view.metricElapsedMs;
+}
+
+function currentMatchPlaybackDelay() {
+  return matchSeries === null
+    ? 100
+    : Math.max(0, matchPlaybackDeadlineMs - performance.now());
+}
+
+/* The server has already committed this lock. This is presentation only: it
+   paints the verified pre-lock board for a slice of the existing cadence, then
+   restores the committed view without delaying the next scheduled request. */
+async function presentMatchCommit(view, generation) {
+  const durationMs = preLockPreviewDuration(view);
+  if (durationMs <= 0) {
+    renderMatch(view);
+    return true;
+  }
+  renderMatchPreLockPreview(view);
+  await new Promise((resolve) => setTimeout(resolve, durationMs));
+  if (generation !== matchGeneration) return false;
+  renderMatch(view);
+  return true;
+}
+
+function preLockPreviewDuration(view) {
+  const config = matchSeries?.config;
+  const previewed = view.bots.filter((bot) => bot.preLockPreview !== null);
+  if (config?.preLockPreview !== true || previewed.length === 0) return 0;
+  const fastestPps = Math.max(...previewed.map((bot) => config[`${bot.id}Parameters`].pps));
+  const cadenceMs = 1000 / fastestPps;
+  const desiredMs = Math.round(Math.max(80, Math.min(300, cadenceMs * 0.22)));
+  // Consume only time already reserved for the next visual lock, so preview ON
+  // and OFF retain the same game clock and request cadence.
+  return Math.min(desiredMs, currentMatchPlaybackDelay());
+}
+
+function renderMatchPreLockPreview(view) {
+  for (const bot of view.bots) {
+    const preview = bot.preLockPreview;
+    if (preview === null) continue;
+    const move = canonicalPlacementToGuiMove(preview.placement);
+    const overlay = new Map();
+    addOverlayPiece(overlay, placementCells(move), move.location.type, true);
+    renderMatchField(elements[`match-${bot.id}-field`], preview.board, [], overlay);
+  }
+}
+
+function handleMatchError(error) {
+  matchClock = setMatchClockRunning(matchClock, false, performance.now());
+  matchAutoplay = false;
+  matchRunning = false;
+  matchStarting = false;
+  matchSeries = null;
+  cancelHumanMatchBotStep();
+  stopHumanPlay(lastMatchView);
+  elements["match-step"].disabled = true;
+  elements["match-status"].textContent = error instanceof Error ? error.message : String(error);
+  setMatchSettingsDisabled(false);
+  renderMatchRunButton();
+}
+
+/* Clears the arena back to its pre-match state and hands the settings back.
+   The server keeps its last session until the next START MATCH replaces it;
+   nothing here depends on it, because a discarded generation is ignored. */
+async function resetMatch() {
+  if (matchRoundFinalization !== null) {
+    elements["match-status"].textContent = "WAITING FOR ROUND SAVE";
+    try {
+      await matchRoundFinalization;
+    } catch {
+      return;
+    }
+  }
+  pauseMatchAutoplay();
+  matchRunning = false;
+  matchStarting = false;
+  matchSeries = null;
+  matchRoundStatus = "";
+  matchGeneration += 1;
+  cancelHumanMatchBotStep();
+  stopHumanPlay();
+  lastMatchView = null;
+  matchClock = createMatchClock(performance.now());
+  lastRenderedMatchClock = "";
+  lastRenderedMatchElapsedMs = 0;
+  matchPlaybackDeadlineMs = 0;
+  matchPlaybackElapsedMs = 0;
+  paintMatchClock(performance.now());
+  clearMatchArena();
+  renderMatchSummary();
+  renderMatchSaveButton();
+  setMatchExportMessage(null, "");
+  elements["match-status"].textContent = "NOT STARTED";
+  elements["match-step"].disabled = true;
+  elements["match-reset"].disabled = true;
+  setMatchSettingsDisabled(false);
+  renderMatchRunButton();
+}
+
+function clearMatchArena() {
+  for (const side of BOT_SIDES) {
+    elements[`match-${side}-name`].textContent = side.toUpperCase();
+    elements[`match-${side}-stats`].textContent = "0 ATK · 0 LINES";
+    elements[`match-${side}-score`].textContent = "—";
+    renderClearInfo(`match-${side}`, 0, 0, "");
+    renderGarbageGauge(elements[`match-${side}-gauge`], [], `${side} bot`);
+    for (const id of ["field", "hold", "next", "metrics", "rate-left", "rate-right"]) {
+      elements[`match-${side}-${id}`].replaceChildren();
+    }
+  }
+}
+
+function pauseMatchAutoplay() {
+  if (!matchAutoplay) return;
+  matchAutoplay = false;
+  cancelHumanMatchBotStep();
+  pieceRepeat.endAll();
+  matchClock = setMatchClockRunning(matchClock, false, performance.now());
+  renderMatchRunButton();
+}
+
+/* A series is over once either side reaches the configured FT score: the run
+   button then goes back to offering a fresh START MATCH rather than a resume. */
+function matchSeriesActive() {
+  return matchSeries !== null && matchSeriesWinner() === null;
+}
+
+/* One button covers the whole match lifecycle: start, pause, resume. An
+   in-flight step is left to finish; it simply does not schedule a successor. */
+function toggleMatchRun() {
+  if (matchStarting || matchRoundFinalization !== null) return;
+  if (!matchSeriesActive()) {
+    startMatch();
+    return;
+  }
+  if (matchAutoplay) {
+    pauseMatchAutoplay();
+    renderMatchStatus();
+    return;
+  }
+  matchAutoplay = true;
+  matchPlaybackDeadlineMs = performance.now();
+  matchClock = setMatchClockRunning(matchClock, true, performance.now());
+  renderMatchRunButton();
+  if (!matchRunning) {
+    beginSeriesGame().catch(handleMatchError);
+    return;
+  }
+  if (human === null) stepMatch();
+  else scheduleHumanMatchBotStep(lastMatchView);
+}
+
+/* The round line survives a pause: a trailing step still lands after the press,
+   so PAUSED is a suffix on it rather than a message that step would overwrite. */
+function renderMatchStatus() {
+  const paused = matchSeriesActive() && !matchAutoplay && !matchStarting;
+  const parts = [matchRoundStatus, paused ? "PAUSED" : ""].filter((part) => part !== "");
+  elements["match-status"].textContent = parts.join(" · ");
+}
+
+function renderMatchRunButton() {
+  const button = elements["match-run"];
+  const active = matchSeriesActive();
+  const state = !active ? "start" : matchAutoplay ? "running" : "paused";
+  button.dataset.state = state;
+  button.textContent = { start: "START MATCH", running: "PAUSE", paused: "RESUME" }[state];
+  button.setAttribute("aria-pressed", String(state === "running"));
+  button.disabled = matchStarting || matchRoundFinalization !== null;
+}
+
+function renderMatchSummary() {
+  if (matchSeries === null) {
+    elements["match-summary"].textContent = "NO SERIES RESULTS";
+    renderMatchSaveButton();
+    return;
+  }
+  const average = matchSeries.completed === 0 ? 0 : matchSeries.totalTurns / matchSeries.completed;
+  elements["match-summary"].textContent = `FT${matchSeries.config.firstTo} · PLAYED ${matchSeries.completed} · LEFT ${matchSeries.leftWins} · RIGHT ${matchSeries.rightWins} · DRAW ${matchSeries.draws} · AVG ${average.toFixed(1)} TURNS`;
+  renderMatchSaveButton();
+}
+
+/* Both exports spend most of their life disabled, and the reason is never local
+   to the button: .ttrm depends on QUEUE MODEL, a match setting chosen before
+   START that setMatchSettingsDisabled then locks for the duration of the match.
+   A player who forgot it cannot recover without a RESET, so the reason rides on
+   the button as a title rather than leaving a dead control unexplained. */
+function renderMatchSaveButton() {
+  const hasCurrent = matchRunning && (lastMatchView?.turnNumber ?? 0) > 0;
+  const hasCompleted = (matchSeries?.rounds?.length ?? 0) > 0;
+  const blocked = matchSaveInFlight ? "保存中です"
+    : matchRoundFinalization !== null ? "ラウンドの確定を待っています"
+    : !(hasCurrent || hasCompleted) ? "保存できる手番がまだありません。START MATCH で対局を進めてください"
+    : "";
+  setMatchExportButton("match-save-replay", blocked, "この対局を S2 内部形式 (.json) で保存します");
+  setMatchExportButton(
+    "match-save-ttrm",
+    blocked !== "" ? blocked
+      : matchSeries?.config?.ttrmCompatible === true ? ""
+      : "QUEUE MODEL を TTRM QUEUE にして開始した対局だけが .ttrm を出力できます",
+    "サーバで検証した TETR.IO リプレイ (.ttrm) を保存します",
+  );
+}
+
+function setMatchExportButton(id, blockedReason, enabledTitle) {
+  const button = elements[id];
+  button.disabled = blockedReason !== "";
+  button.title = blockedReason !== "" ? blockedReason : enabledTitle;
+}
+
+/* Export results report next to the export buttons, not in match-status: that
+   line carries the round state and renderMatchStatus overwrites it on the next
+   step, which would silently erase the record of a save. */
+function setMatchExportMessage(state, text) {
+  const message = elements["match-export-message"];
+  message.textContent = text;
+  message.hidden = text === "";
+  if (state === null) delete message.dataset.state;
+  else message.dataset.state = state;
+}
+
+async function saveMatchReplay() {
+  if (matchSaveInFlight || matchSeries === null) return;
+  matchSaveInFlight = true;
+  setMatchExportMessage(null, "EXPORTING .json …");
+  renderMatchSaveButton();
+  try {
+    if (matchRoundFinalization !== null) await matchRoundFinalization;
+    if (matchSeries === null) { setMatchExportMessage(null, ""); return; }
+    const rounds = [...matchSeries.rounds];
+    if (matchRunning && (lastMatchView?.turnNumber ?? 0) > 0) {
+      rounds.push({ ...(await finalizeCurrentRound()), index: rounds.length });
+    }
+    if (rounds.length === 0) { setMatchExportMessage(null, ""); return; }
+    const meta = {
+      origin: "s2-bot-match/1",
+      gamemode: "s2-bot-match",
+      version: 1,
+      parseMs: 0,
+      ...(structuredClone(matchSeries.replayMeta ?? {})),
+    };
+    const text = JSON.stringify({ $schema: MATCH_REPLAY_SCHEMA, meta, rounds }, null, 2);
+    const seed = meta.match?.seed ?? matchSeries.config.seed;
+    const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+    const name = `s2-match-${seed}-${stamp}.json`;
+    const blob = new Blob([text], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+    setMatchExportMessage("saved", `SAVED ${name} · ${rounds.length} ROUND(S)`);
+  } catch (error) {
+    handleMatchError(error);
+  } finally {
+    matchSaveInFlight = false;
+    renderMatchSaveButton();
+  }
+}
+
+async function saveMatchTtrm() {
+  if (matchSaveInFlight || matchSeries === null || !matchSeries.config.ttrmCompatible) return;
+  matchSaveInFlight = true;
+  setMatchExportMessage(null, "EXPORTING .ttrm …");
+  renderMatchSaveButton();
+  try {
+    if (matchRoundFinalization !== null) await matchRoundFinalization;
+    const response = await fetch("/api/match/ttrm");
+    if (!response.ok) {
+      let body = null;
+      try { body = await response.json(); } catch { /* the server may have closed without JSON */ }
+      throw new Error(body?.message ?? body?.error ?? "TTRM export failed");
+    }
+    const text = await response.text();
+    const seed = matchSeries.replayMeta?.match?.seed ?? matchSeries.config.seed;
+    const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+    const name = `s2-match-${seed}-${stamp}.ttrm`;
+    const blob = new Blob([text], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+    setMatchExportMessage("saved", `SAVED ${name} · SERVER VERIFIED`);
+  } catch (error) {
+    setMatchExportMessage("failed", `TTRM EXPORT FAILED · ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    matchSaveInFlight = false;
+    renderMatchSaveButton();
+  }
+}
+
+function matchSeriesWinner() {
+  if (matchSeries === null) return null;
+  const { firstTo } = matchSeries.config;
+  if (matchSeries.leftWins >= firstTo) return "left";
+  if (matchSeries.rightWins >= firstTo) return "right";
+  return null;
+}
+
+function setMatchSettingsDisabled(disabled) {
+  for (const id of [
+    "left-bot", "right-bot", "left-bot-settings", "right-bot-settings",
+    "match-fair-comparison", "match-think-time-pace", "match-pre-lock-preview", "match-seed", "match-max-turns", "match-unlimited-turns", "match-count",
+    "match-ttrm-compatible",
+  ]) elements[id].disabled = disabled;
+  elements["match-max-turns"].disabled = disabled || elements["match-unlimited-turns"].checked;
+  syncRandomSeedControl(disabled);
+  syncHumanMatchControls(disabled);
+}
+
+/* FAIR COMPARISON has no meaning once a person is playing one of the sides:
+   it removes CPU contention between two timed searches by fixing both sides at
+   1 PPS. Pin it off rather than silently ignoring it. */
+function syncHumanMatchControls(matchSettingsDisabled = false) {
+  const playing = selectedHumanSide() !== null;
+  if (playing) {
+    elements["match-fair-comparison"].checked = false;
+  }
+  elements["match-fair-comparison"].disabled = matchSettingsDisabled || playing;
+  elements["match-step"].title = playing
+    ? "1P対戦では自分のハードドロップが手番を進めます"
+    : "";
+}
+
+function syncMaxTurnsControl() {
+  elements["match-max-turns"].disabled = elements["match-unlimited-turns"].checked;
+}
+
+function syncRandomSeedControl(matchSettingsDisabled = false) {
+  const random = elements["match-random-seed"].checked;
+  elements["match-seed"].disabled = matchSettingsDisabled || random;
+}
+
+function fairComparisonEnabled() {
+  return elements["match-fair-comparison"].checked;
+}
+
+function thinkTimePaceEnabled() {
+  return elements["match-think-time-pace"].checked;
+}
+
+function ppsIsOverridden() {
+  return fairComparisonEnabled() || thinkTimePaceEnabled();
+}
+
+function effectivePps(parameters) {
+  if (fairComparisonEnabled()) return 1;
+  return Number.isSafeInteger(parameters.thinkMs) ? ppsForThinkTime(parameters.thinkMs) : parameters.pps;
+}
+
+function syncFairComparisonControls() {
+  if (fairComparisonEnabled()) elements["match-think-time-pace"].checked = false;
+  const ppsInput = elements["bot-settings-form"].elements.namedItem("pps");
+  if (ppsInput !== null) {
+    ppsInput.disabled = ppsIsOverridden();
+    if (fairComparisonEnabled()) ppsInput.value = 1;
+  }
+  elements["match-think-time-pace"].disabled = fairComparisonEnabled();
+  for (const side of BOT_SIDES) renderBotSettingsSummary(side);
+}
+
+function syncThinkTimePaceControls() {
+  if (thinkTimePaceEnabled()) elements["match-fair-comparison"].checked = false;
+  syncFairComparisonControls();
+}
+
+/* TTRM QUEUE reads like an export format switch, but it also replaces the
+   placement of every engine that is not the S2 placement bot with the
+   deterministic no-HOLD controller the server needs to emit a real input log.
+   Two CC2 engines under that controller play the same game from the same seed,
+   which looks like the wrong bot was selected. The confirmation spells out what
+   the current selection turns into before the box stays ticked. */
+function confirmTtrmQueue(event) {
+  // Turning the mode off needs no warning, and neither does the confirmation
+  // ticking the box itself.
+  if (!elements["match-ttrm-compatible"].checked) return;
+  /* The box stays off while the warning is open rather than being reverted
+     afterwards: dismissing the dialog by Escape or by the close button then
+     needs no undo path of its own. */
+  event.preventDefault();
+  elements["ttrm-queue-effects"].replaceChildren(...ttrmQueueEffects().map((effect) => {
+    const item = document.createElement("li");
+    if (effect.warning) item.className = "warning";
+    item.textContent = effect.text;
+    return item;
+  }));
+  elements["ttrm-queue-dialog"].showModal();
+}
+
+function enableTtrmQueue() {
+  elements["match-ttrm-compatible"].checked = true;
+  elements["match-ttrm-compatible"].dispatchEvent(new Event("change"));
+}
+
+function ttrmQueueEffects() {
+  const overridden = BOT_SIDES.filter((side) => ttrmQueueOverridesPlacement(elements[`${side}-bot`].value));
+  const effects = [
+    { text: "ピース生成が legacy LCG から 7-bag (triangle-7-bag) に変わります。" },
+    { text: "対局終了後に SAVE .ttrm が使えるようになり、サーバ検証済みの TETR.IO リプレイを出力できます。" },
+  ];
+  if (overridden.length === 0) {
+    effects.push({ text: "選択中のプレイヤーはどちらも着手を置き換えられません。S2 placement bot と 1P は自分の着手のまま打ちます。" });
+    return effects;
+  }
+  const names = overridden
+    .map((side) => `${side.toUpperCase()} (${botLabelFor(elements[`${side}-bot`].value)})`)
+    .join(" と ");
+  effects.push({
+    warning: true,
+    text: `${names} は、エンジンが返した着手を破棄し、決定論的な no-HOLD コントローラ (s2-simple-no-hold/1) の着手に置き換えられます。HOLD を使う最終配置は入力列に復元できないためです。`,
+  });
+  if (overridden.length === 2) {
+    effects.push({
+      warning: true,
+      text: "その結果、左右は同じ着手選択器と同じキューで打つことになり、盤面も指標も完全に一致します。Bot同士の強さ比較には使えません。比較したい場合はこの設定を OFF のままにしてください。",
+    });
+  }
+  return effects;
+}
+
+/** Mirrors the server's TTRM placement override (`scripts/cc2-gui-server.mjs`). */
+function ttrmQueueOverridesPlacement(botType) {
+  return botType !== "s2-simple" && botType !== "human";
+}
+
+function botLabelFor(botType) {
+  return botCapabilities.get(botType)?.label ?? botType;
+}
+
+function readBoundedInteger(id, minimum, maximum) {
+  const value = Number(elements[id].value);
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${id} must be an integer from ${minimum} to ${maximum}`);
+  }
+  return value;
+}
+
+function randomUint32() {
+  const values = new Uint32Array(1);
+  if (globalThis.crypto?.getRandomValues) return globalThis.crypto.getRandomValues(values)[0];
+  return Math.floor(Math.random() * 0x1_0000_0000) >>> 0;
+}
+
+function renderMatch(view) {
+  lastMatchView = view;
+  /* A match a human is playing keeps one free-running clock from the moment it
+     started: that clock is what their own lock frames are read from, so it must
+     not be pulled back to the last confirmed lock or held at the opponent's
+     next one. Bot-only matches stay on the step-by-step projection. */
+  if (human !== null) paintMatchClock(performance.now());
+  else if (Number.isFinite(view.metricElapsedMs)) {
+    const nextElapsedMs = Number.isFinite(view.nextStepFrames) && view.nextStepFrames > 0
+      ? view.metricElapsedMs + view.nextStepFrames * 1000 / 60
+      : view.metricElapsedMs;
+    matchClock = synchronizeMatchClock(
+      matchClock,
+      view.metricElapsedMs,
+      performance.now(),
+      nextElapsedMs,
+    );
+    paintMatchClock(performance.now());
+  }
+  matchRoundStatus = `ROUND ${view.turnNumber} · ${view.clock.logicalFrame}f`;
+  renderMatchStatus();
+  for (const bot of view.bots) {
+    const side = bot.id;
+    const botLabel = botLabelFor(bot.type);
+    elements[`match-${side}-name`].textContent = `${side.toUpperCase()} · ${botLabel}`;
+    elements[`match-${side}-stats`].textContent = `${bot.stats.attack} ATK · ${bot.stats.garbageCancelled} CNL · ${bot.stats.garbageSent} SENT · ${bot.stats.garbageReceived} RECV`;
+    const clear = bot.lastClear;
+    renderClearInfo(`match-${side}`, bot.b2b, bot.combo, clear === null
+      ? ""
+      : clearLabel(clear.spin, clear.lines, clear.perfectClear));
+    elements[`match-${side}-score`].textContent = Number.isFinite(bot.score)
+      ? `SCORE ${bot.score.toFixed(2)}`
+      : "—";
+    // A human side's board, HOLD and NEXT are drawn from the live piece state
+    // instead, so a bot's step does not repaint over the piece being moved.
+    if (human === null || human.side !== side) {
+      renderMatchField(elements[`match-${side}-field`], bot.board, bot.lastPlaced);
+      renderMini(elements[`match-${side}-hold`], bot.hold);
+      renderNextList(elements[`match-${side}-next`], bot.next.slice(0, 5));
+    }
+    renderGarbageGauge(elements[`match-${side}-gauge`], bot.garbage.packets, `${side} bot`);
+    renderMatchMetrics(side, bot.metrics, bot.stats.turns);
+  }
+  renderMatchSaveButton();
+}
+
+function renderRealtimeMatchClock(nowMs) {
+  paintMatchClock(nowMs);
+  requestAnimationFrame(renderRealtimeMatchClock);
+}
+
+function paintMatchClock(nowMs) {
+  const elapsedMs = Math.max(lastRenderedMatchElapsedMs, readMatchClock(matchClock, nowMs));
+  lastRenderedMatchElapsedMs = elapsedMs;
+  const text = formatGameClock(elapsedMs / 1000);
+  if (text === lastRenderedMatchClock) return;
+  lastRenderedMatchClock = text;
+  elements["match-left-clock"].textContent = text;
+  elements["match-right-clock"].textContent = text;
+}
+
+// The placement count leads the field-edge column so the rate figures below it
+// can be read against the number of pieces they were computed from.
+function renderMatchMetrics(side, metrics, pieces) {
+  renderFieldRateStats(elements[`match-${side}-rate-left`], { ...metrics, pieces }, [
+    ["PCS", "pieces", 0],
+    ["PPS", "pps", 2],
+    ["APM", "apm", 2],
+    ["APP", "app", 3],
+  ]);
+  renderFieldRateStats(elements[`match-${side}-rate-right`], metrics, [
+    ["VS", "vs", 2],
+    ["AREA", "area", 2],
+  ]);
+
+  renderDetailMetrics(elements[`match-${side}-metrics`], metrics);
+}
+
+function render() {
+  renderField();
+  renderPlacingStrip();
+  renderGameMetrics();
+  renderMini(elements["hold-piece"], game.hold);
+  elements["next-pieces"].replaceChildren(...game.queue.slice(1, 6).map((piece) => {
+    const item = document.createElement("div");
+    item.className = "next-item";
+    renderMini(item, piece);
+    return item;
+  }));
+  elements["current-piece"].textContent = game.queue[0] ?? "—";
+  elements["move-number"].textContent = String(game.pieces + 1).padStart(3, "0");
+  elements["pieces-count"].textContent = game.pieces;
+  elements["lines-count"].textContent = game.lines;
+  renderClearInfo("hold", game.s2.b2b, game.combo, game.lastClear);
+}
+
+// B2B, REN and the latest clear name sit under the HOLD box, as in the
+// `fumen-mobile-fork` replay screen. Both counters stay muted until the chain is
+// live, so a running B2B or REN is what draws the eye.
+function renderClearInfo(prefix, b2b, ren, clear) {
+  const b2bNode = elements[`${prefix}-b2b`];
+  renderChainCounter(b2bNode, "B2B", shownB2b(b2b), b2b > 0);
+  b2bNode.dataset.surge = String(isSurgeReady(b2b));
+  renderChainCounter(elements[`${prefix}-ren`], "COMBO", shownCombo(ren), ren > 1);
+  elements[`${prefix}-clear`].textContent = clear;
+}
+
+// Breaking the chain now would release a Surge. calculateSurge() charges once
+// the broken count is past the threshold, and the broken count is the canonical
+// counter, so `b2b > at` is the engine's own `stats.b2b + 1 > charging.at`:
+// with at = 4 the counter lights up at a shown B2B of 4.
+function isSurgeReady(b2b) {
+  return b2bCharging !== false && b2b > b2bCharging.at;
+}
+
+function renderGameMetrics() {
+  const metrics = calculatePlayerMetrics({
+    pieces: game.pieces,
+    attack: game.attack,
+    garbageCleared: game.garbageCleared,
+    elapsedFrames: gameMetricElapsedMs * 60 / 1000,
+  });
+  elements["game-clock"].textContent = formatGameClock(metrics.seconds);
+  renderFieldRateStats(elements["field-rate-left"], metrics, [
+    ["PPS", "pps", 2],
+    ["APM", "apm", 2],
+    ["APP", "app", 3],
+  ]);
+  renderFieldRateStats(elements["field-rate-right"], metrics, [
+    ["VS", "vs", 2],
+    ["AREA", "area", 2],
+  ]);
+}
+
+function renderField() {
+  const overlay = new Map();
+  if (pendingMove !== null) {
+    addOverlayPiece(
+      overlay,
+      placementCells(pendingMove),
+      pendingMove.location.type,
+      true,
+    );
+  }
+  renderMatchField(elements.field, game.board, game.lastPlaced, overlay);
+}
+
+// Names the mino the field is currently highlighting. CC2 may propose the HOLD
+// piece, in which case the highlighted mino is not the CURRENT one, so where it
+// came from is spelled out rather than left to be inferred from the colour.
+function renderPlacingStrip() {
+  if (pendingMove !== null) {
+    const piece = pendingMove.location.type;
+    elements["placing-label"].textContent = "配置中";
+    elements["placing-piece"].textContent = piece === game.queue[0] ? piece : `${piece} ← HOLD`;
+    return;
+  }
+  if (game.lastPlaced.length > 0 && game.lastPlacedPiece !== null) {
+    elements["placing-label"].textContent = "最新";
+    elements["placing-piece"].textContent = game.lastPlacedFromHold
+      ? `${game.lastPlacedPiece} ← HOLD`
+      : game.lastPlacedPiece;
+    return;
+  }
+  elements["placing-label"].textContent = "配置中";
+  elements["placing-piece"].textContent = "—";
+}
+
+function setStatus(state, text) {
+  elements["engine-status"].dataset.state = state;
+  elements["status-text"].textContent = text;
+}
+
+function formatMove(move) {
+  const { type, orientation, x, y } = move.location;
+  return `${type} · ${orientation.toUpperCase()} · (${x}, ${y})`;
+}
+
+function compact(value) {
+  return Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 2 }).format(value);
+}
+
+function renderComparison(raw, comparison) {
+  const best = comparison.challenger;
+  const gap = comparison.scoreGap;
+  elements["raw-score"].textContent = raw.comparison.score.toFixed(2);
+  elements["raw-comparison-status"].textContent = raw.status;
+  elements["s2-best-move"].textContent = formatCanonicalPlacement(best.placement);
+  elements["s2-score"].textContent = `${best.score.toFixed(2)} · ${comparison.status}`;
+  elements["score-gap"].textContent = `${gap >= 0 ? "+" : ""}${gap.toFixed(2)}`;
+}
+
+function renderUnavailableComparison(raw, s2) {
+  elements["raw-score"].textContent = raw.comparison.score.toFixed(2);
+  elements["raw-comparison-status"].textContent = raw.status;
+  elements["s2-best-move"].textContent = "未対応: engine-frame到達性";
+  elements["s2-score"].textContent = s2.degraded?.join(", ") ?? s2.status;
+  elements["score-gap"].textContent = "比較保留";
+}
+
+function resetComparison() {
+  elements["raw-score"].textContent = "—";
+  elements["raw-comparison-status"].textContent = "未評価";
+  elements["s2-best-move"].textContent = "—";
+  elements["s2-score"].textContent = "未評価";
+  elements["score-gap"].textContent = "—";
+}
+
+function formatCanonicalPlacement(placement) {
+  return `${placement.piece} · ${placement.rotation.toUpperCase()} · (${placement.x}, ${placement.y})`;
+}

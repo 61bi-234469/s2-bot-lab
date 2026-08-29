@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "s2-analysis-engine/schema/canonical-transition-request/1",
+  "title": "Canonical S2 transition request",
+  "type": "object",
+  "required": ["$schema", "apiVersion", "schemaVersion", "state", "action"],
+  "properties": {
+    "$schema": { "const": "s2-analysis-engine/schema/canonical-transition-request/1" },
+    "apiVersion": { "const": 1 },
+    "schemaVersion": { "const": 1 },
+    "state": { "$ref": "canonical-state.schema.json" },
+    "action": { "$ref": "#/$defs/action" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "piece": { "enum": ["I", "J", "L", "O", "S", "T", "Z"] },
+    "rotationEvidence": {
+      "type": "object",
+      "required": ["lastInputWasRotation", "kickIndex"],
+      "properties": {
+        "lastInputWasRotation": { "type": "boolean" },
+        "kickIndex": { "type": ["integer", "null"], "minimum": 0 },
+        "kickId": { "type": "string", "pattern": "^[0-3][0-3]$" },
+        "kickOffset": {
+          "type": "array",
+          "prefixItems": [{ "type": "integer" }, { "type": "integer" }],
+          "minItems": 2,
+          "maxItems": 2
+        }
+      },
+      "additionalProperties": false
+    },
+    "placement": {
+      "type": "object",
+      "required": ["piece", "rotation", "x", "y", "usedHold"],
+      "properties": {
+        "piece": { "$ref": "#/$defs/piece" },
+        "rotation": { "enum": ["spawn", "right", "reverse", "left"] },
+        "x": { "type": "integer" },
+        "y": { "type": "integer" },
+        "usedHold": { "type": "boolean" },
+        "rotationEvidence": { "$ref": "#/$defs/rotationEvidence" }
+      },
+      "additionalProperties": false
+    },
+    "packet": {
+      "type": "object",
+      "required": ["packetId", "sourceGameId", "amount", "holeSize", "arrivalFrame", "confirmed", "order"],
+      "properties": {
+        "packetId": { "type": "integer", "minimum": 0 },
+        "sourceGameId": { "type": "integer", "minimum": 0 },
+        "amount": { "type": "integer", "minimum": 1 },
+        "holeSize": { "type": "integer", "minimum": 1 },
+        "arrivalFrame": { "type": "integer", "minimum": 0 },
+        "confirmed": { "type": "boolean" },
+        "order": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "action": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "placement"],
+          "properties": { "kind": { "const": "placement" }, "placement": { "$ref": "#/$defs/placement" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "packet"],
+          "properties": { "kind": { "const": "garbage-receive" }, "packet": { "$ref": "#/$defs/packet" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "packetId", "sourceGameId", "arrivalFrame"],
+          "properties": {
+            "kind": { "const": "garbage-confirm" },
+            "packetId": { "type": "integer", "minimum": 0 },
+            "sourceGameId": { "type": "integer", "minimum": 0 },
+            "arrivalFrame": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "fromFrame", "toFrame"],
+          "properties": {
+            "kind": { "const": "tick" },
+            "fromFrame": { "type": "integer", "minimum": 0 },
+            "toFrame": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,209 @@
+{
+  "$schema": "s2-analysis-engine/schema/fixture/1",
+  "schemaVersion": 1,
+  "id": "placement-rounding-rng",
+  "rulesetId": "tetrio-s2-v19-rounding-rng0000000000000000000000000000000000000000000000000000-beta-1-5-0",
+  "evidenceLayer": "golden",
+  "coverageCells": [
+    "rounding.mode",
+    "combo.multiplier",
+    "attack.total",
+    "garbage.packet-model"
+  ],
+  "source": {
+    "kind": "manual",
+    "manual": {
+      "author": "Claude Opus 5",
+      "primarySource": "@haelp/teto 4.2.7 GarbageQueue#round and RNG",
+      "rationale": "Fix the second rounding mode: a fractional attack consumes one draw from the garbage RNG, so the rounding decision and the generator state it leaves behind are both part of the transition."
+    }
+  },
+  "input": {
+    "state": {
+      "$schema": "s2-analysis-engine/schema/canonical-state/1",
+      "schemaVersion": 1,
+      "rulesetId": "tetrio-s2-v19-rounding-rng0000000000000000000000000000000000000000000000000000-beta-1-5-0",
+      "board": {
+        "width": 10,
+        "height": 6,
+        "cells": "GGGG__GGGGGGGG__GGGGG_______________________________________",
+        "fidelity": "exact"
+      },
+      "pieces": {
+        "current": "O",
+        "hold": null,
+        "holdAvailable": true,
+        "known": [
+          "I",
+          "T"
+        ],
+        "queueModel": {
+          "type": "7-bag",
+          "bagRemaining": [
+            "S",
+            "Z",
+            "J",
+            "L"
+          ],
+          "seed": null,
+          "tail": "unknown"
+        },
+        "fidelity": "exact"
+      },
+      "chain": {
+        "combo": 3,
+        "b2b": 0,
+        "fidelity": "exact"
+      },
+      "garbage": {
+        "packets": [],
+        "generatorState": {
+          "rngState": 123456789,
+          "lastTankFrame": 90,
+          "lastHoleColumn": -1,
+          "sentForOpener": 0,
+          "holeChanged": false,
+          "receivedCountSinceReset": 0
+        },
+        "capState": {
+          "consumedThisTick": 0
+        },
+        "fidelity": "exact"
+      },
+      "time": {
+        "logicalFrame": 101,
+        "frameSemantics": "virtual-tank-only",
+        "piecesPlaced": 20,
+        "fidelity": "exact"
+      },
+      "informationLoss": [],
+      "provenance": {
+        "sourcePath": "editor-session",
+        "producedBy": "s2-analysis-engine-fixture"
+      }
+    },
+    "action": {
+      "kind": "placement",
+      "placement": {
+        "piece": "O",
+        "rotation": "spawn",
+        "x": 4,
+        "y": 0,
+        "usedHold": false,
+        "rotationEvidence": {
+          "lastInputWasRotation": false,
+          "kickIndex": null
+        }
+      }
+    }
+  },
+  "expected": {
+    "legality": {
+      "legal": true,
+      "reason": null
+    },
+    "lockResult": {
+      "clearedRows": [
+        0,
+        1
+      ],
+      "lines": 2,
+      "spin": "none",
+      "perfectClear": false
+    },
+    "chain": {
+      "comboBefore": 3,
+      "comboAfter": 4,
+      "b2bBefore": 0,
+      "b2bAfter": 0,
+      "brokeB2b": false
+    },
+    "attackStages": {
+      "raw": 1.75,
+      "afterMultiplier": 1.75,
+      "afterRounding": 2,
+      "specialBonus": 0,
+      "perfectClearBonus": 0,
+      "surgeChunks": [],
+      "outgoingBeforeCancel": 2
+    },
+    "cancelResult": {
+      "cancelled": 0,
+      "remainingIncoming": [],
+      "outgoingAfterCancel": 2
+    },
+    "tankResult": {
+      "inserted": [],
+      "deferred": [],
+      "toppedOut": false
+    },
+    "nextState": {
+      "$schema": "s2-analysis-engine/schema/canonical-state/1",
+      "schemaVersion": 1,
+      "rulesetId": "tetrio-s2-v19-rounding-rng0000000000000000000000000000000000000000000000000000-beta-1-5-0",
+      "board": {
+        "width": 10,
+        "height": 6,
+        "cells": "G___________________________________________________________",
+        "fidelity": "exact"
+      },
+      "pieces": {
+        "current": "I",
+        "hold": null,
+        "holdAvailable": true,
+        "known": [
+          "T"
+        ],
+        "queueModel": {
+          "type": "7-bag",
+          "bagRemaining": [
+            "S",
+            "Z",
+            "J",
+            "L"
+          ],
+          "seed": null,
+          "tail": "unknown"
+        },
+        "fidelity": "exact"
+      },
+      "chain": {
+        "combo": 4,
+        "b2b": 0,
+        "fidelity": "exact"
+      },
+      "garbage": {
+        "packets": [],
+        "generatorState": {
+          "rngState": 469049721,
+          "lastTankFrame": 90,
+          "lastHoleColumn": -1,
+          "sentForOpener": 2,
+          "holeChanged": false,
+          "receivedCountSinceReset": 0
+        },
+        "capState": {
+          "consumedThisTick": 0
+        },
+        "fidelity": "exact"
+      },
+      "time": {
+        "logicalFrame": 101,
+        "frameSemantics": "virtual-tank-only",
+        "piecesPlaced": 21,
+        "fidelity": "exact"
+      },
+      "informationLoss": [],
+      "provenance": {
+        "sourcePath": "editor-session",
+        "producedBy": "s2-analysis-engine-fixture"
+      }
+    }
+  },
+  "comparison": {
+    "mode": "exact",
+    "floatTolerance": 0
+  },
+  "generatedAt": "2026-08-13T00:00:00Z",
+  "hash": "sha256:b59b3ae7e89b9f26ab5e85ae2dd72f42bb2b2e20463afb789a90dc3cd643afae"
+}

@@ -1,0 +1,27 @@
+{
+  "name": "s2-bot-lab",
+  "version": "0.1.0",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@haelp/teto": "4.2.7",
+    "ajv": "6.15.0"
+  },
+  "devDependencies": {
+    "@noble/hashes": "1.8.0",
+    "esbuild": "0.25.9"
+  },
+  "scripts": {
+    "build": "npm run build:wasm",
+    "build-pages": "node scripts/build-pages.mjs",
+    "build:bot:s2-cc2": "cargo build --release --manifest-path bot/cold-clear-2-s2/Cargo.toml",
+    "benchmark:search": "node scripts/benchmark-search.mjs --check",
+    "gui:cc2": "node scripts/cc2-gui-server.mjs",
+    "prestart": "node scripts/stop-port.mjs --port=4173",
+    "start": "npm run build && npm run gui:cc2",
+    "test": "node --test tests-js/*.test.mjs",
+    "test:cs1": "node scripts/cs1.mjs --check fixtures/cross-runtime/cs1.json",
+    "build:wasm": "node scripts/wasm-engine.mjs"
+  }
+}

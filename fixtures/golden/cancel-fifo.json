@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "component": "triangle-cancel-adapter",
+  "evidenceLayer": "golden",
+  "coverageCells": ["cancel.fifo", "garbage.packet-model"],
+  "source": {
+    "kind": "manual",
+    "primarySource": "@haelp/teto 4.2.7 GarbageQueue.cancel",
+    "rationale": "Verify FIFO cancellation across packet and outgoing chunk boundaries."
+  },
+  "initialPackets": [
+    { "packetId": 10, "sourceGameId": 1, "amount": 2, "holeSize": 1, "arrivalFrame": 100, "confirmed": true, "order": 0 },
+    { "packetId": 11, "sourceGameId": 2, "amount": 3, "holeSize": 1, "arrivalFrame": 101, "confirmed": true, "order": 1 }
+  ],
+  "cases": [
+    { "id": "partial-second-packet", "outgoingChunks": [4], "expected": { "cancelled": 4, "remainingAmounts": [1], "remainingPacketIds": [11], "outgoingChunks": [], "outgoingAfterCancel": 0 } },
+    { "id": "outgoing-remainder", "outgoingChunks": [6], "expected": { "cancelled": 5, "remainingAmounts": [], "remainingPacketIds": [], "outgoingChunks": [1], "outgoingAfterCancel": 1 } },
+    { "id": "surge-chunk-order", "outgoingChunks": [1, 1, 2], "expected": { "cancelled": 4, "remainingAmounts": [1], "remainingPacketIds": [11], "outgoingChunks": [], "outgoingAfterCancel": 0 } }
+  ]
+}
+

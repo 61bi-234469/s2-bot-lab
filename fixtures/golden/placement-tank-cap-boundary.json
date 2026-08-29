@@ -1,0 +1,283 @@
+{
+  "$schema": "s2-analysis-engine/schema/fixture/1",
+  "schemaVersion": 1,
+  "id": "placement-tank-cap-boundary",
+  "rulesetId": "tetrio-s2-v19-tank-cap-2000000000000000000000000000000000000000000000000000000-beta-1-5-0",
+  "evidenceLayer": "golden",
+  "coverageCells": [
+    "clear.lines",
+    "tank.cap",
+    "tank.hole",
+    "garbage.packet-model"
+  ],
+  "source": {
+    "kind": "manual",
+    "manual": {
+      "author": "Claude Opus 5",
+      "primarySource": "@haelp/teto 4.2.7 GarbageQueue.tank cap branch",
+      "rationale": "Fix the tank cap boundary on a board-derived no-clear placement. The Foundation cap of 100 never binds, so no complete fixture shows a placement tanking less than it owes and carrying the remainder forward."
+    }
+  },
+  "input": {
+    "state": {
+      "$schema": "s2-analysis-engine/schema/canonical-state/1",
+      "schemaVersion": 1,
+      "rulesetId": "tetrio-s2-v19-tank-cap-2000000000000000000000000000000000000000000000000000000-beta-1-5-0",
+      "board": {
+        "width": 10,
+        "height": 6,
+        "cells": "____________________________________________________________",
+        "fidelity": "exact"
+      },
+      "pieces": {
+        "current": "O",
+        "hold": null,
+        "holdAvailable": true,
+        "known": [
+          "I",
+          "T"
+        ],
+        "queueModel": {
+          "type": "7-bag",
+          "bagRemaining": [
+            "S",
+            "Z",
+            "J",
+            "L"
+          ],
+          "seed": null,
+          "tail": "unknown"
+        },
+        "fidelity": "exact"
+      },
+      "chain": {
+        "combo": 0,
+        "b2b": 0,
+        "fidelity": "exact"
+      },
+      "garbage": {
+        "packets": [
+          {
+            "packetId": 40,
+            "sourceGameId": 4401,
+            "amount": 1,
+            "holeSize": 1,
+            "arrivalFrame": 100,
+            "confirmed": true,
+            "order": 0
+          },
+          {
+            "packetId": 41,
+            "sourceGameId": 4402,
+            "amount": 3,
+            "holeSize": 1,
+            "arrivalFrame": 100,
+            "confirmed": true,
+            "order": 1
+          }
+        ],
+        "generatorState": {
+          "rngState": 123456789,
+          "lastTankFrame": 90,
+          "lastHoleColumn": -1,
+          "sentForOpener": 0,
+          "holeChanged": false,
+          "receivedCountSinceReset": 0
+        },
+        "capState": {
+          "consumedThisTick": 0
+        },
+        "fidelity": "exact"
+      },
+      "time": {
+        "logicalFrame": 101,
+        "frameSemantics": "virtual-tank-only",
+        "piecesPlaced": 20,
+        "fidelity": "exact"
+      },
+      "informationLoss": [],
+      "provenance": {
+        "sourcePath": "editor-session",
+        "producedBy": "s2-analysis-engine-fixture"
+      }
+    },
+    "action": {
+      "kind": "placement",
+      "placement": {
+        "piece": "O",
+        "rotation": "spawn",
+        "x": 4,
+        "y": 0,
+        "usedHold": false,
+        "rotationEvidence": {
+          "lastInputWasRotation": false,
+          "kickIndex": null
+        }
+      }
+    }
+  },
+  "expected": {
+    "legality": {
+      "legal": true,
+      "reason": null
+    },
+    "lockResult": {
+      "clearedRows": [],
+      "lines": 0,
+      "spin": "none",
+      "perfectClear": false
+    },
+    "chain": {
+      "comboBefore": 0,
+      "comboAfter": 0,
+      "b2bBefore": 0,
+      "b2bAfter": 0,
+      "brokeB2b": false
+    },
+    "attackStages": {
+      "raw": 0,
+      "afterMultiplier": 0,
+      "afterRounding": 0,
+      "specialBonus": 0,
+      "perfectClearBonus": 0,
+      "surgeChunks": [],
+      "outgoingBeforeCancel": 0
+    },
+    "cancelResult": {
+      "cancelled": 0,
+      "remainingIncoming": [
+        {
+          "packetId": 40,
+          "sourceGameId": 4401,
+          "amount": 1,
+          "holeSize": 1,
+          "arrivalFrame": 100,
+          "confirmed": true,
+          "order": 0
+        },
+        {
+          "packetId": 41,
+          "sourceGameId": 4402,
+          "amount": 3,
+          "holeSize": 1,
+          "arrivalFrame": 100,
+          "confirmed": true,
+          "order": 1
+        }
+      ],
+      "outgoingAfterCancel": 0
+    },
+    "tankResult": {
+      "inserted": [
+        {
+          "packetId": 40,
+          "sourceGameId": 4401,
+          "amount": 1,
+          "holeSize": 1,
+          "arrivalFrame": 100,
+          "confirmed": true,
+          "holeColumn": 2
+        },
+        {
+          "packetId": 41,
+          "sourceGameId": 4402,
+          "amount": 1,
+          "holeSize": 1,
+          "arrivalFrame": 100,
+          "confirmed": true,
+          "holeColumn": 2
+        }
+      ],
+      "deferred": [
+        {
+          "packetId": 41,
+          "sourceGameId": 4402,
+          "amount": 2,
+          "holeSize": 1,
+          "arrivalFrame": 100,
+          "confirmed": true,
+          "order": 0
+        }
+      ],
+      "toppedOut": false
+    },
+    "nextState": {
+      "$schema": "s2-analysis-engine/schema/canonical-state/1",
+      "schemaVersion": 1,
+      "rulesetId": "tetrio-s2-v19-tank-cap-2000000000000000000000000000000000000000000000000000000-beta-1-5-0",
+      "board": {
+        "width": 10,
+        "height": 6,
+        "cells": "GG_GGGGGGGGG_GGGGGGG____OO________OO________________________",
+        "fidelity": "exact"
+      },
+      "pieces": {
+        "current": "I",
+        "hold": null,
+        "holdAvailable": true,
+        "known": [
+          "T"
+        ],
+        "queueModel": {
+          "type": "7-bag",
+          "bagRemaining": [
+            "S",
+            "Z",
+            "J",
+            "L"
+          ],
+          "seed": null,
+          "tail": "unknown"
+        },
+        "fidelity": "exact"
+      },
+      "chain": {
+        "combo": 0,
+        "b2b": 0,
+        "fidelity": "exact"
+      },
+      "garbage": {
+        "packets": [
+          {
+            "packetId": 41,
+            "sourceGameId": 4402,
+            "amount": 2,
+            "holeSize": 1,
+            "arrivalFrame": 100,
+            "confirmed": true,
+            "order": 0
+          }
+        ],
+        "generatorState": {
+          "rngState": 1781357515,
+          "lastTankFrame": 90,
+          "lastHoleColumn": 2,
+          "sentForOpener": 0,
+          "holeChanged": false,
+          "receivedCountSinceReset": 2
+        },
+        "capState": {
+          "consumedThisTick": 2
+        },
+        "fidelity": "exact"
+      },
+      "time": {
+        "logicalFrame": 102,
+        "frameSemantics": "virtual-tank-only",
+        "piecesPlaced": 21,
+        "fidelity": "exact"
+      },
+      "informationLoss": [],
+      "provenance": {
+        "sourcePath": "editor-session",
+        "producedBy": "s2-analysis-engine-fixture"
+      }
+    }
+  },
+  "comparison": {
+    "mode": "exact",
+    "floatTolerance": 0
+  },
+  "generatedAt": "2026-08-13T00:00:00Z",
+  "hash": "sha256:542c68ad4793bdf4059830e076de929801018fa60ce4714db5309d961698d890"
+}

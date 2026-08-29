@@ -1,0 +1,41 @@
+{
+  "$schema": "s2-analysis-engine/proposal-outcome-cases/1",
+  "cases": [
+    {
+      "id": "f1-legitimate-post-lock-terminal",
+      "message": "CC2 returned no suggested move",
+      "locksPlayed": 252,
+      "requestToSuggestionMs": 5.5,
+      "engineId": "control",
+      "side": "right",
+      "lockNumber": 253,
+      "expectedStatus": "terminal",
+      "expectedCode": "no-legal-move",
+      "scorable": true
+    },
+    {
+      "id": "stale-post-lock-empty-response",
+      "message": "CC2 returned no suggested move",
+      "locksPlayed": 252,
+      "requestToSuggestionMs": 0.106,
+      "engineId": "control",
+      "side": "right",
+      "lockNumber": 253,
+      "expectedStatus": "failure",
+      "expectedCode": "no-legal-move-below-latency-floor",
+      "scorable": false
+    },
+    {
+      "id": "tbp-version-mismatch",
+      "message": "chouhy TBP version mismatch: expected 0.1.0, received 0.1.0 b20a92b+det2",
+      "locksPlayed": 0,
+      "requestToSuggestionMs": 0.2,
+      "engineId": "reference",
+      "side": "left",
+      "lockNumber": 1,
+      "expectedStatus": "failure",
+      "expectedCode": "proposal-error",
+      "scorable": false
+    }
+  ]
+}

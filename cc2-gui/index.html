@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b0b0b">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self';">
+  <title>s2-bot-lab · S2 Simulator</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="masthead">
+      <div>
+        <p class="eyebrow">S2 RULESET (OBSERVED) · STATIC DEMO</p>
+        <h1>s2-bot-lab</h1>
+        <p class="subtitle">Browser-local S2 Simulator and bot viewer</p>
+      </div>
+      <div class="engine-status" id="engine-status" data-state="idle">
+        <span class="status-light"></span>
+        <span id="status-text">READY</span>
+      </div>
+    </header>
+
+     <section class="rule-boundary" aria-label="Static mode notice">
+      <strong>CC2 PROPOSERS</strong>
+      <span>MinusKelvinのraw upstreamとchouhy forkは別Bot・別実行ファイルとして扱います。どちらも最終配置だけを提案し、S2 Simulatorでline clear・attack・B2B・combo・cancellation・garbageを再計算します。frame/subframe到達性とkick証拠は後段へ延期し、証拠のないspin主張は採用しません。</span>
+       <em>STATIC MODE · BROWSER LOCAL</em>
+    </section>
+
+    <nav class="mode-tabs" aria-label="表示モード">
+      <div class="mode-tablist" role="tablist">
+        <button class="mode-tab" id="mode-tab-analysis" type="button" role="tab" aria-selected="true" aria-controls="mode-panel-analysis">
+          <span class="mode-tab-label">SINGLE ANALYSIS</span>
+          <small>1体のbotを1手ずつ解析</small>
+        </button>
+        <button class="mode-tab" id="mode-tab-match" type="button" role="tab" aria-selected="false" aria-controls="mode-panel-match" tabindex="-1">
+          <span class="mode-tab-label">BOT vs BOT / 1P</span>
+          <small>2体を対戦させて比較・自分でも戦える</small>
+        </button>
+        <button class="mode-tab" id="mode-tab-replay" type="button" role="tab" aria-selected="false" aria-controls="mode-panel-replay" tabindex="-1">
+          <span class="mode-tab-label">REPLAY (.ttrm)</span>
+          <small>実戦リプレイを同じ盤面で再生</small>
+        </button>
+      </div>
+    </nav>
+
+    <div class="mode-panel" id="mode-panel-analysis" role="tabpanel" aria-labelledby="mode-tab-analysis" tabindex="0">
+      <section class="play-layout" aria-label="Cold Clear 2 game viewer">
+        <aside class="side-column left-column">
+          <section class="panel piece-panel">
+            <h2>HOLD</h2>
+            <div class="piece-preview" id="hold-piece" aria-label="Hold piece"></div>
+            <div class="clear-info" aria-label="B2B, REN and latest line clear">
+              <span id="hold-b2b" data-active="false">B2B —</span>
+              <span id="hold-ren" data-active="false">REN 0</span>
+              <span class="clear-name" id="hold-clear"></span>
+            </div>
+          </section>
+          <section class="panel stat-panel">
+            <div><span>PIECES</span><strong id="pieces-count">0</strong></div>
+            <div><span>LINES</span><strong id="lines-count">0</strong></div>
+            <div><span>TIME</span><time id="game-clock">00:00.000</time></div>
+          </section>
+        </aside>
+
+        <section class="field-column">
+          <div class="main-field-stage">
+            <div class="field-rate-stats field-rate-left" id="field-rate-left" aria-label="PPS, APM and APP"></div>
+            <div class="field-frame">
+              <div class="field" id="field" role="img" aria-label="10 by 20 playfield"></div>
+            </div>
+            <div class="field-rate-stats field-rate-right" id="field-rate-right" aria-label="VS and Area"></div>
+          </div>
+          <div class="current-strip">
+            <span>CURRENT</span>
+            <strong id="current-piece">T</strong>
+            <span class="separator">/</span>
+            <span id="placing-label">配置中</span>
+            <strong id="placing-piece" class="placing">—</strong>
+            <span class="separator">/</span>
+            <span>MOVE</span>
+            <strong id="move-number">001</strong>
+          </div>
+        </section>
+
+        <aside class="side-column right-column">
+          <section class="panel next-panel">
+            <h2>NEXT</h2>
+            <div id="next-pieces" class="next-list"></div>
+          </section>
+        </aside>
+      </section>
+
+      <section class="control-deck">
+        <div class="suggestion-copy">
+          <p class="deck-label" id="suggestion-engine-label">RAW CC2 (MINUSKELVIN) SUGGESTION</p>
+          <div class="suggestion-main">
+            <strong id="suggestion-move">—</strong>
+            <span id="suggestion-detail">「考える」で探索を開始</span>
+          </div>
+          <div class="metrics">
+            <span>NODES <strong id="nodes-value">—</strong></span>
+            <span>NPS <strong id="nps-value">—</strong></span>
+            <span>THINK <strong><span id="think-value">500</span>ms</strong></span>
+          </div>
+          <div class="comparison-grid" aria-label="Same-position AI comparison">
+            <div>
+              <span id="comparison-engine-label">RAW CC2 (MINUSKELVIN) · S2 VERIFIED</span>
+              <strong id="raw-score">—</strong>
+              <small id="raw-comparison-status">未評価</small>
+            </div>
+            <div>
+              <span>S2 SEARCH REFERENCE</span>
+              <strong id="s2-best-move">—</strong>
+              <small id="s2-score">未評価</small>
+            </div>
+            <div>
+              <span>SCORE GAP</span>
+              <strong id="score-gap">—</strong>
+              <small>同一局面内のみ比較可</small>
+            </div>
+          </div>
+        </div>
+        <div class="buttons">
+          <button class="primary" id="think-button">考える</button>
+          <button id="apply-button" disabled>提案を適用</button>
+          <button id="auto-button" aria-pressed="false">自動再生</button>
+          <button class="quiet" id="reset-button">リセット</button>
+        </div>
+        <label class="think-control">
+          ANALYSIS BOT
+          <select id="analysis-bot">
+            <option value="cc2-raw" selected>Raw CC2 — MinusKelvin upstream</option>
+            <option value="cc2-chouhy">CC2 — chouhy fork (b20a92b)</option>
+            <option value="cc2-s2">CC2 S2 — Gen 008/009 rank-25 champion (512, development)</option>
+            <option value="cc2-s2-gen017">CC2 S2 — Gen 017 aligned mini-spin value (512, development)</option>
+            <option value="cc2-s2-f11">CC2 S2 — F11 REN quality (development)</option>
+            <option value="cc2-s2-f12">CC2 S2 — F12 Conversion-Qualified REN Finisher (development)</option>
+            <option value="cc2-s2-f14">CC2 S2 — F14 post-tank solvency rescue (development)</option>
+            <option value="s2-simple">S2 placement bot — canonical simulator baseline</option>
+          </select>
+        </label>
+        <label class="think-control">
+          探索時間
+          <input id="think-ms" type="range" min="100" max="2000" step="100" value="500">
+        </label>
+      </section>
+    </div>
+
+    <div class="mode-panel" id="mode-panel-match" role="tabpanel" aria-labelledby="mode-tab-match" tabindex="0" hidden>
+      <section class="match-deck" aria-label="Bot versus Bot arena">
+        <div class="match-heading">
+          <div>
+            <p class="deck-label">SIMPLIFIED S2 MATCH</p>
+            <h2>BOT vs BOT</h2>
+          </div>
+          <span id="match-status">NOT STARTED</span>
+        </div>
+        <div class="match-controls">
+          <div class="bot-picker">
+            <label for="left-bot">LEFT BOT</label>
+            <div class="bot-picker-row">
+              <select id="left-bot">
+                <option value="cc2-raw">Raw CC2 — MinusKelvin upstream</option>
+                <option value="cc2-chouhy">CC2 — chouhy fork (b20a92b)</option>
+                <option value="cc2-s2">CC2 S2 — Gen 008/009 rank-25 champion (512, development)</option>
+                <option value="cc2-s2-gen017">CC2 S2 — Gen 017 aligned mini-spin value (512, development)</option>
+                <option value="cc2-s2-f11">CC2 S2 — F11 REN quality (development)</option>
+                <option value="cc2-s2-f12">CC2 S2 — F12 Conversion-Qualified REN Finisher (development)</option>
+                <option value="cc2-s2-f14">CC2 S2 — F14 post-tank solvency rescue (development)</option>
+                <option value="cc2-s2-f25">CC2 S2 — F25 threshold-imminent B2B retention (development)</option>
+                <option value="s2-simple">S2 placement bot — canonical simulator baseline</option>
+                <option value="human">You (1P)</option>
+              </select>
+              <button class="bot-settings-button" id="left-bot-settings" type="button" aria-label="左Botの個別設定">SETTINGS</button>
+            </div>
+            <small id="left-bot-settings-summary"></small>
+          </div>
+          <div class="bot-picker">
+            <label for="right-bot">RIGHT BOT</label>
+            <div class="bot-picker-row">
+              <select id="right-bot">
+                <option value="cc2-chouhy">CC2 — chouhy fork (b20a92b)</option>
+                <option value="cc2-s2">CC2 S2 — Gen 008/009 rank-25 champion (512, development)</option>
+                <option value="cc2-s2-gen017">CC2 S2 — Gen 017 aligned mini-spin value (512, development)</option>
+                <option value="cc2-s2-f11">CC2 S2 — F11 REN quality (development)</option>
+                <option value="cc2-s2-f12">CC2 S2 — F12 Conversion-Qualified REN Finisher (development)</option>
+                <option value="cc2-s2-f14">CC2 S2 — F14 post-tank solvency rescue (development)</option>
+                <option value="cc2-s2-f25">CC2 S2 — F25 threshold-imminent B2B retention (development)</option>
+                <option value="cc2-raw">Raw CC2 — MinusKelvin upstream</option>
+                <option value="s2-simple">S2 placement bot — canonical simulator baseline</option>
+                <option value="human">You (1P)</option>
+              </select>
+              <button class="bot-settings-button" id="right-bot-settings" type="button" aria-label="右Botの個別設定">SETTINGS</button>
+            </div>
+            <small id="right-bot-settings-summary"></small>
+          </div>
+          <button id="match-run" class="match-run-button" type="button" data-state="start" aria-pressed="false">START MATCH</button>
+          <button id="match-step" type="button" disabled>STEP</button>
+          <button id="match-reset" class="quiet" type="button" disabled>RESET</button>
+        </div>
+        <div class="match-settings" aria-label="Match settings">
+          <label class="fair-comparison-setting">FAIR COMPARISON
+            <span><input id="match-fair-comparison" type="checkbox"> SERIAL · 1 PPS</span>
+          </label>
+          <label class="fair-comparison-setting">THINK TIME PACE
+            <span><input id="match-think-time-pace" type="checkbox"> 1000 ms = 1 PPS</span>
+          </label>
+          <label class="pre-lock-preview-setting">PRE-LOCK PREVIEW
+            <span><input id="match-pre-lock-preview" type="checkbox"> GHOST</span>
+          </label>
+          <label class="ttrm-compatible-setting" title="外すとlegacy LCGキューになります。TTRM QUEUEでは実入力に復元できるno-HOLDコントローラを使い、.ttrm を検証して出力できます。">
+            <span>QUEUE MODEL</span>
+            <span><input id="match-ttrm-compatible" type="checkbox"> TTRM QUEUE</span>
+          </label>
+          <div class="match-setting">
+            <label for="match-seed">SEED</label>
+            <div class="match-limit-control">
+              <input id="match-seed" type="number" min="0" max="4294967295" step="1" value="1506">
+              <label class="random-seed-toggle"><input id="match-random-seed" type="checkbox">RND</label>
+            </div>
+          </div>
+          <div class="match-setting">
+            <label for="match-max-turns">MAX TURNS</label>
+            <div class="match-limit-control">
+              <input id="match-max-turns" type="number" min="1" max="10000" step="1" value="500" disabled>
+              <label class="infinity-toggle"><input id="match-unlimited-turns" type="checkbox">∞</label>
+            </div>
+          </div>
+          <label>FIRST TO
+            <input id="match-count" type="number" min="1" max="100" step="1" value="1">
+          </label>
+        </div>
+        <div class="match-outcome">
+          <output id="match-summary" class="match-summary">NO SERIES RESULTS</output>
+          <div class="match-exports" role="group" aria-label="対局の保存">
+            <span class="export-label">EXPORT</span>
+            <button id="match-save-replay" class="quiet" type="button" disabled>SAVE .json</button>
+            <button id="match-save-ttrm" class="quiet" type="button" disabled>SAVE .ttrm</button>
+          </div>
+        </div>
+        <output id="match-export-message" class="match-export-message" hidden></output>
+        <div class="match-fields">
+          <article class="match-player">
+            <header><strong id="match-left-name">LEFT</strong><span id="match-left-stats">0 ATK · 0 LINES</span></header>
+            <div class="match-body">
+              <div class="match-rail">
+                <span class="rail-label">HOLD</span>
+                <div class="mini-box" id="match-left-hold" aria-label="Left bot hold piece"></div>
+                <div class="clear-info" aria-label="Left bot B2B, REN and latest line clear">
+                  <span id="match-left-b2b" data-active="false">B2B —</span>
+                  <span id="match-left-ren" data-active="false">REN 0</span>
+                  <span class="clear-name" id="match-left-clear"></span>
+                </div>
+              </div>
+              <div class="garbage-gauge" id="match-left-gauge" data-pending="0" role="img" aria-label="Left bot incoming garbage: 0 rows"></div>
+              <div class="match-field-wrap">
+                <div class="field-rate-stats field-rate-left" id="match-left-rate-left" aria-label="Left bot pieces placed, PPS, APM and APP"></div>
+                <div class="match-field" id="match-left-field" role="img" aria-label="Left bot field"></div>
+                <div class="field-rate-stats field-rate-right" id="match-left-rate-right" aria-label="Left bot VS and Area"></div>
+              </div>
+              <div class="match-rail">
+                <span class="rail-label">NEXT</span>
+                <div class="mini-next" id="match-left-next" aria-label="Left bot next queue"></div>
+              </div>
+            </div>
+            <footer><span id="match-left-score">—</span><time id="match-left-clock">00:00.000</time></footer>
+            <dl class="match-metrics" id="match-left-metrics" aria-label="Left bot detailed metrics"></dl>
+          </article>
+          <div class="versus-mark">VS</div>
+          <article class="match-player">
+            <header><strong id="match-right-name">RIGHT</strong><span id="match-right-stats">0 ATK · 0 LINES</span></header>
+            <div class="match-body">
+              <div class="match-rail">
+                <span class="rail-label">HOLD</span>
+                <div class="mini-box" id="match-right-hold" aria-label="Right bot hold piece"></div>
+                <div class="clear-info" aria-label="Right bot B2B, REN and latest line clear">
+                  <span id="match-right-b2b" data-active="false">B2B —</span>
+                  <span id="match-right-ren" data-active="false">REN 0</span>
+                  <span class="clear-name" id="match-right-clear"></span>
+                </div>
+              </div>
+              <div class="garbage-gauge" id="match-right-gauge" data-pending="0" role="img" aria-label="Right bot incoming garbage: 0 rows"></div>
+              <div class="match-field-wrap">
+                <div class="field-rate-stats field-rate-left" id="match-right-rate-left" aria-label="Right bot pieces placed, PPS, APM and APP"></div>
+                <div class="match-field" id="match-right-field" role="img" aria-label="Right bot field"></div>
+                <div class="field-rate-stats field-rate-right" id="match-right-rate-right" aria-label="Right bot VS and Area"></div>
+              </div>
+              <div class="match-rail">
+                <span class="rail-label">NEXT</span>
+                <div class="mini-next" id="match-right-next" aria-label="Right bot next queue"></div>
+              </div>
+            </div>
+            <footer><span id="match-right-score">—</span><time id="match-right-clock">00:00.000</time></footer>
+            <dl class="match-metrics" id="match-right-metrics" aria-label="Right bot detailed metrics"></dl>
+          </article>
+        </div>
+        <p class="match-note" id="match-human-note">LEFT/RIGHT BOTのどちらかに <strong>You (1P)</strong> を選ぶと自分で対戦できます。既定の操作は ← → 移動、↓ ソフトドロップ、Space ハードドロップ、Z/X 回転、A 180度回転、C HOLD、Esc リセット。DAS・ARR・DCD・SDF とキー割り当ては SETTINGS で変更できます。自然落下はありません。ハードドロップした瞬間の共有クロックがそのミノのロック時刻になるので、置くのが遅いほど自分のPPSが下がります。</p>
+        <p class="match-note" id="match-bot-note">START MATCH begins the series; pressing the same button again pauses it, and once more resumes. Both bots share one game clock. THINK TIME PACE derives each CC2 bot's PPS from its configured THINK TIME (1000 ms = 1 PPS) and gives that full time to the search. FAIR COMPARISON instead fixes both bots at 1 PPS and runs simultaneous searches serially to avoid direct CPU contention; it cannot be combined with THINK TIME PACE. Bot-specific parameters are configured independently from each SETTINGS button. QUEUE MODEL is a match setting, not an output one: TTRM QUEUE generates pieces with the 7-bag randomiser and, for non-simple bots, uses the deterministic no-HOLD input controller so each lock can be emitted as a verified TETR.IO input log. Therefore a TTRM QUEUE match is replay-compatible rather than a byte-for-byte CC2 final-placement match. EXPORT becomes available once a round has advanced — SAVE .json writes this engine's own match record, and SAVE .ttrm writes a server-verified TETR.IO replay.</p>
+      </section>
+    </div>
+
+    <div class="mode-panel" id="mode-panel-replay" role="tabpanel" aria-labelledby="mode-tab-replay" tabindex="0" hidden>
+      <section class="match-deck replay-deck" aria-label="TETR.IO replay playback">
+        <div class="match-heading">
+          <div>
+            <p class="deck-label">TETR.IO .ttrm REPLAY</p>
+            <h2>REPLAY</h2>
+          </div>
+          <span id="replay-status">NO FILE</span>
+        </div>
+        <div class="match-controls replay-source">
+          <label class="replay-file-control">
+            <span>.ttrm ファイル</span>
+            <input id="replay-file" type="file" accept=".ttrm,.json,application/json">
+          </label>
+          <div class="bot-picker">
+            <label for="replay-round">ROUND</label>
+            <select id="replay-round" disabled></select>
+          </div>
+          <div class="bot-picker">
+            <label for="replay-self">LEFT PLAYER</label>
+            <select id="replay-self" disabled></select>
+          </div>
+          <button id="replay-swap" type="button" disabled>SWAP</button>
+          <button id="replay-clear" class="quiet" type="button" disabled>CLEAR</button>
+        </div>
+        <output id="replay-summary" class="match-summary">NO REPLAY LOADED</output>
+        <div class="replay-transport">
+          <input id="replay-seek" class="replay-seek" type="range" min="0" max="1" step="1" value="0" aria-label="再生位置" disabled>
+          <canvas id="replay-markers" class="replay-markers" width="1000" height="6" aria-hidden="true"></canvas>
+          <div class="replay-time">
+            <span id="replay-time-current">0:00.0</span>
+            <span id="replay-turn">TURN 0 / 0</span>
+            <span id="replay-time-total">0:00.0</span>
+          </div>
+          <div class="replay-buttons">
+            <button id="replay-first" type="button" disabled aria-label="開始位置へ">|◀</button>
+            <button id="replay-prev" type="button" disabled aria-label="前の手番へ">◀◀</button>
+            <button id="replay-play" class="primary" type="button" disabled aria-pressed="false">PLAY</button>
+            <button id="replay-next" type="button" disabled aria-label="次の手番へ">▶▶</button>
+            <button id="replay-last" type="button" disabled aria-label="終端へ">▶|</button>
+            <label class="replay-speed-control">SPEED
+              <select id="replay-speed">
+                <option value="0.25">x0.25</option>
+                <option value="0.5">x0.5</option>
+                <option value="1" selected>x1</option>
+                <option value="2">x2</option>
+                <option value="4">x4</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="match-fields">
+          <article class="match-player">
+            <header><strong id="replay-left-name">LEFT</strong><span id="replay-left-stats">0 ATK · 0 LINES</span></header>
+            <div class="match-body">
+              <div class="match-rail">
+                <span class="rail-label">HOLD</span>
+                <div class="mini-box" id="replay-left-hold" aria-label="Left player hold piece"></div>
+                <div class="clear-info" aria-label="Left player B2B, REN and latest line clear">
+                  <span id="replay-left-b2b" data-active="false">B2B —</span>
+                  <span id="replay-left-ren" data-active="false">COMBO —</span>
+                  <span class="clear-name" id="replay-left-clear"></span>
+                </div>
+              </div>
+              <div class="garbage-gauge" id="replay-left-gauge" data-pending="0" role="img" aria-label="Left player incoming garbage: 0 rows"></div>
+              <div class="match-field-wrap">
+                <div class="field-rate-stats field-rate-left" id="replay-left-rate-left" aria-label="Left player pieces placed, PPS, APM and APP"></div>
+                <div class="match-field" id="replay-left-field" role="img" aria-label="Left player field"></div>
+                <div class="field-rate-stats field-rate-right" id="replay-left-rate-right" aria-label="Left player VS and Area"></div>
+              </div>
+              <div class="match-rail">
+                <span class="rail-label">NEXT</span>
+                <div class="mini-next" id="replay-left-next" aria-label="Left player next queue"></div>
+              </div>
+            </div>
+            <footer><span id="replay-left-score">—</span><time id="replay-left-clock">0:00.0</time></footer>
+            <dl class="match-metrics" id="replay-left-metrics" aria-label="Left player detailed metrics"></dl>
+          </article>
+          <div class="versus-mark">VS</div>
+          <article class="match-player">
+            <header><strong id="replay-right-name">RIGHT</strong><span id="replay-right-stats">0 ATK · 0 LINES</span></header>
+            <div class="match-body">
+              <div class="match-rail">
+                <span class="rail-label">HOLD</span>
+                <div class="mini-box" id="replay-right-hold" aria-label="Right player hold piece"></div>
+                <div class="clear-info" aria-label="Right player B2B, REN and latest line clear">
+                  <span id="replay-right-b2b" data-active="false">B2B —</span>
+                  <span id="replay-right-ren" data-active="false">COMBO —</span>
+                  <span class="clear-name" id="replay-right-clear"></span>
+                </div>
+              </div>
+              <div class="garbage-gauge" id="replay-right-gauge" data-pending="0" role="img" aria-label="Right player incoming garbage: 0 rows"></div>
+              <div class="match-field-wrap">
+                <div class="field-rate-stats field-rate-left" id="replay-right-rate-left" aria-label="Right player pieces placed, PPS, APM and APP"></div>
+                <div class="match-field" id="replay-right-field" role="img" aria-label="Right player field"></div>
+                <div class="field-rate-stats field-rate-right" id="replay-right-rate-right" aria-label="Right player VS and Area"></div>
+              </div>
+              <div class="match-rail">
+                <span class="rail-label">NEXT</span>
+                <div class="mini-next" id="replay-right-next" aria-label="Right player next queue"></div>
+              </div>
+            </div>
+            <footer><span id="replay-right-score">—</span><time id="replay-right-clock">0:00.0</time></footer>
+            <dl class="match-metrics" id="replay-right-metrics" aria-label="Right player detailed metrics"></dl>
+          </article>
+        </div>
+        <p class="match-note" id="replay-note">.ttrm を読み込むと、記録された入力を固定版Triangle Engineで再生してReplayIRを作り、その盤面をここに描画します。タイムラインは共通フレーム軸で、赤＝被弾・緑＝相殺のマーカーは左プレイヤーのものです。◀◀ / ▶▶ は左プレイヤーの手番送りで、接地直前の姿勢で止まります。Space で再生/一時停止、←→ で手番送り。ガベージ量とゲージはEngine基準の値で、TETR.IO集計の received は復元できないため表示しません。</p>
+      </section>
+    </div>
+
+    <dialog id="bot-settings-dialog" class="bot-settings-dialog" aria-labelledby="bot-settings-title">
+      <form id="bot-settings-form" method="dialog">
+        <header>
+          <div>
+            <p class="deck-label" id="bot-settings-side">LEFT BOT</p>
+            <h2 id="bot-settings-title">BOT SETTINGS</h2>
+          </div>
+          <button class="dialog-close" value="cancel" formmethod="dialog" aria-label="設定を閉じる">×</button>
+        </header>
+        <p class="bot-settings-description" id="bot-settings-description"></p>
+        <div class="bot-settings-fields" id="bot-settings-fields"></div>
+        <div class="dialog-actions">
+          <button value="cancel" formmethod="dialog">CANCEL</button>
+          <button class="primary" id="bot-settings-save" value="save">SAVE</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="ttrm-queue-dialog" class="bot-settings-dialog" aria-labelledby="ttrm-queue-title">
+      <form id="ttrm-queue-form" method="dialog">
+        <header>
+          <div>
+            <p class="deck-label">QUEUE MODEL</p>
+            <h2 id="ttrm-queue-title">TTRM QUEUE を有効にします</h2>
+          </div>
+          <button class="dialog-close" value="cancel" formmethod="dialog" aria-label="閉じる">×</button>
+        </header>
+        <p class="bot-settings-description">TTRM QUEUE は出力形式の設定ではなく、対局そのものを変える設定です。有効にすると次が起こります。</p>
+        <ul class="dialog-effects" id="ttrm-queue-effects"></ul>
+        <div class="dialog-actions">
+          <button value="cancel" formmethod="dialog">CANCEL</button>
+          <button class="primary" id="ttrm-queue-confirm" value="confirm">TTRM QUEUE を有効にする</button>
+        </div>
+      </form>
+    </dialog>
+
+    <footer>
+      <span id="engine-version">Cold Clear 2 · waiting for handshake</span>
+      <span>↑ 20 visible rows / 40-row state</span>
+    </footer>
+  </main>
+  <script type="module" src="app.bundle.js"></script>
+</body>
+</html>

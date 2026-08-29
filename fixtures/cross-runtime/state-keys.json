@@ -1,0 +1,8 @@
+{
+  "sourceFixture": "fixtures/golden/placement-no-clear-tank.json",
+  "expected": {
+    "fullState": "s2-full-state/1:sha256:73d6464c493cef62124263592a66bc5d4ade60e7dc9d243a88ab7e28669b2975",
+    "currentPiece": "s2-current-piece/1:sha256:425d09151346301c364fb74700cf1813924666bc30f9c4f5fa539d5faa55c238",
+    "holdAware": "s2-hold-aware/1:sha256:702e5246b107abb72cc82c2f42673730fab425a2490cfbf05403a95b0c1c64f6"
+  }
+}

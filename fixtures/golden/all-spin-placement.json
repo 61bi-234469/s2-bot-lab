@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "component": "triangle-placement-all-spin",
+  "evidenceLayer": "golden",
+  "source": {
+    "kind": "manual",
+    "primarySource": "@haelp/teto 4.2.7 Engine #detectSpin and Tetromino.isAllSpinPosition",
+    "rationale": "Fix non-T immobility classification and mode precedence independently of attack arithmetic."
+  },
+  "immobileBoardRows": [
+    "____G_____",
+    "___G__G___",
+    "__________",
+    "____G_____",
+    "__________",
+    "__________"
+  ],
+  "tImmobileWithoutCornersBoardRows": [
+    "____G_____",
+    "__G___G___",
+    "__________",
+    "____G_____",
+    "__________",
+    "__________"
+  ],
+  "cases": [
+    { "id": "all-normal", "spinBonuses": "all", "expectedSpin": "normal" },
+    { "id": "all-mini", "spinBonuses": "all-mini", "expectedSpin": "mini" },
+    { "id": "all-plus-non-t-normal", "spinBonuses": "all+", "expectedSpin": "normal" },
+    { "id": "all-mini-plus", "spinBonuses": "all-mini+", "expectedSpin": "mini" },
+    { "id": "t-spins-plus-rejects-o", "spinBonuses": "T-spins+", "expectedSpin": "none" },
+    { "id": "mini-only", "spinBonuses": "mini-only", "expectedSpin": "mini" },
+    { "id": "stupid-grounded", "spinBonuses": "stupid", "expectedSpin": "normal" },
+    { "id": "none-disabled", "spinBonuses": "none", "expectedSpin": "none" },
+    { "id": "handheld-fails-closed", "spinBonuses": "handheld", "expectedError": "unsupported spin bonus mode handheld" }
+  ],
+  "tPrecedenceCases": [
+    { "id": "all-does-not-fallback-for-t", "spinBonuses": "all", "expectedSpin": "none" },
+    { "id": "all-mini-does-not-fallback-for-t", "spinBonuses": "all-mini", "expectedSpin": "none" },
+    { "id": "all-plus-combines-t-and-immobility", "spinBonuses": "all+", "expectedSpin": "mini" },
+    { "id": "all-mini-plus-combines-t-and-immobility", "spinBonuses": "all-mini+", "expectedSpin": "mini" },
+    { "id": "t-spins-plus-adds-immobility-mini", "spinBonuses": "T-spins+", "expectedSpin": "mini" }
+  ]
+}

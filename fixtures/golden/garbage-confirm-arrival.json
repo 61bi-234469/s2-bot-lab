@@ -1,0 +1,63 @@
+{
+  "$schema": "s2-analysis-engine/schema/fixture/1",
+  "schemaVersion": 1,
+  "id": "garbage-confirm-arrival",
+  "rulesetId": "tetrio-s2-v19-foundation000000000000000000000000000000000000000000000000000000-beta-1-5-0",
+  "evidenceLayer": "golden",
+  "coverageCells": ["garbage.packet-model"],
+  "source": {
+    "kind": "manual",
+    "manual": {
+      "author": "Claude Opus 5",
+      "primarySource": "@haelp/teto 4.2.7 GarbageQueue.confirm",
+      "rationale": "Fix the confirm action the fixture schema declares: confirmation replaces the arrival frame and clears the unconfirmed flag in place, and does not reorder the queue even when the confirmed frame moves behind a later packet."
+    }
+  },
+  "input": {
+    "state": {
+      "$schema": "s2-analysis-engine/schema/canonical-state/1",
+      "schemaVersion": 1,
+      "rulesetId": "tetrio-s2-v19-foundation000000000000000000000000000000000000000000000000000000-beta-1-5-0",
+      "garbage": {
+        "packets": [
+          { "packetId": 10, "sourceGameId": 4401, "amount": 2, "holeSize": 1, "arrivalFrame": 100, "confirmed": false, "order": 0 },
+          { "packetId": 11, "sourceGameId": 4402, "amount": 4, "holeSize": 1, "arrivalFrame": 101, "confirmed": true, "order": 1 }
+        ],
+        "generatorState": { "rngState": 123456789, "lastTankFrame": 90, "lastHoleColumn": 3, "sentForOpener": 2, "holeChanged": false, "receivedCountSinceReset": 1 },
+        "capState": { "consumedThisTick": 0 },
+        "fidelity": "exact"
+      }
+    },
+    "action": {
+      "kind": "garbage-confirm",
+      "packetId": 10,
+      "sourceGameId": 4401,
+      "arrivalFrame": 104
+    }
+  },
+  "expected": {
+    "legality": { "legal": true, "reason": null },
+    "lockResult": null,
+    "chain": null,
+    "attackStages": null,
+    "cancelResult": null,
+    "tankResult": null,
+    "nextState": {
+      "$schema": "s2-analysis-engine/schema/canonical-state/1",
+      "schemaVersion": 1,
+      "rulesetId": "tetrio-s2-v19-foundation000000000000000000000000000000000000000000000000000000-beta-1-5-0",
+      "garbage": {
+        "packets": [
+          { "packetId": 10, "sourceGameId": 4401, "amount": 2, "holeSize": 1, "arrivalFrame": 104, "confirmed": true, "order": 0 },
+          { "packetId": 11, "sourceGameId": 4402, "amount": 4, "holeSize": 1, "arrivalFrame": 101, "confirmed": true, "order": 1 }
+        ],
+        "generatorState": { "rngState": 123456789, "lastTankFrame": 90, "lastHoleColumn": 3, "sentForOpener": 2, "holeChanged": false, "receivedCountSinceReset": 1 },
+        "capState": { "consumedThisTick": 0 },
+        "fidelity": "exact"
+      }
+    }
+  },
+  "comparison": { "mode": "exact", "floatTolerance": 0 },
+  "generatedAt": "2026-08-13T00:00:00Z",
+  "hash": "sha256:1ef2a1138909e093ce96c256aa71dced34f75535afb238bdf5ec886804fe8592"
+}

@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "component": "triangle-garbage-tank-adapter",
+  "evidenceLayer": "golden",
+  "source": {
+    "kind": "manual",
+    "primarySource": "@haelp/teto 4.2.7 GarbageQueue.tank",
+    "rationale": "Verify FIFO tanking across packet boundaries and lossless generator-state continuation."
+  },
+  "cases": [
+    {
+      "id": "fifo-across-packet-boundary",
+      "coverageCells": ["garbage.tank", "garbage.hole-generation", "garbage.packet-model"],
+      "input": {
+        "garbage": {
+          "packets": [
+            { "packetId": 10, "sourceGameId": 4401, "amount": 2, "holeSize": 1, "arrivalFrame": 100, "confirmed": true, "order": 0 },
+            { "packetId": 11, "sourceGameId": 4402, "amount": 2, "holeSize": 1, "arrivalFrame": 100, "confirmed": true, "order": 1 }
+          ],
+          "generatorState": { "rngState": 123456789, "lastTankFrame": 90, "lastHoleColumn": -1, "sentForOpener": 2, "holeChanged": false, "receivedCountSinceReset": 1 },
+          "capState": { "consumedThisTick": 0 },
+          "fidelity": "exact"
+        },
+        "action": { "frame": 101, "cap": 3, "hard": false }
+      },
+      "expected": {
+        "tankResult": {
+          "inserted": [
+            { "packetId": 10, "sourceGameId": 4401, "amount": 1, "holeSize": 1, "arrivalFrame": 100, "confirmed": true, "holeColumn": 2 },
+            { "packetId": 10, "sourceGameId": 4401, "amount": 1, "holeSize": 1, "arrivalFrame": 100, "confirmed": true, "holeColumn": 2 },
+            { "packetId": 11, "sourceGameId": 4402, "amount": 1, "holeSize": 1, "arrivalFrame": 100, "confirmed": true, "holeColumn": 2 }
+          ],
+          "deferred": [
+            { "packetId": 11, "sourceGameId": 4402, "amount": 1, "holeSize": 1, "arrivalFrame": 100, "confirmed": true, "order": 0 }
+          ],
+          "toppedOut": false
+        },
+        "nextGarbage": {
+          "packets": [
+            { "packetId": 11, "sourceGameId": 4402, "amount": 1, "holeSize": 1, "arrivalFrame": 100, "confirmed": true, "order": 0 }
+          ],
+          "generatorState": { "rngState": 1206231778, "lastTankFrame": 90, "lastHoleColumn": 2, "sentForOpener": 2, "holeChanged": false, "receivedCountSinceReset": 4 },
+          "capState": { "consumedThisTick": 3 },
+          "fidelity": "exact"
+        }
+      }
+    }
+  ]
+}

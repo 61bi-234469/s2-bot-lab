@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "component": "triangle-reachable-move-generation",
+  "evidenceLayer": "golden",
+  "source": {
+    "kind": "manual",
+    "primarySource": "@haelp/teto 4.2.7 Tetromino movement and SRS performKick",
+    "rationale": "Fix a placement that requires lateral/down movement followed by a final rotation, plus an I-specific SRS kick whose evidence must validate against i_kicks rather than the generic table."
+  },
+  "cases": [
+    {
+      "id": "reachable-t-spin-mini-not-hard-drop-reachable",
+      "board": "____GG_G_____G____G___GGG__GGG_GG____G_G____________________",
+      "pieces": {
+        "current": "T",
+        "hold": null,
+        "holdAvailable": false,
+        "known": ["I"]
+      },
+      "expectedPlacement": {
+        "piece": "T",
+        "rotation": "spawn",
+        "x": 5,
+        "y": 0,
+        "usedHold": false,
+        "rotationEvidence": {
+          "lastInputWasRotation": true,
+          "kickIndex": 1,
+          "kickId": "10",
+          "kickOffset": [1, -1]
+        }
+      },
+      "expectedSpin": "mini"
+    },
+    {
+      "id": "i-piece-specific-kick-evidence",
+      "board": "____________________________________________________________",
+      "pieces": {
+        "current": "I",
+        "hold": null,
+        "holdAvailable": false,
+        "known": ["O"]
+      },
+      "expectedPlacement": {
+        "piece": "I",
+        "rotation": "right",
+        "x": -2,
+        "y": 0,
+        "usedHold": false,
+        "rotationEvidence": {
+          "lastInputWasRotation": true,
+          "kickIndex": 3,
+          "kickId": "21",
+          "kickOffset": [-2, 1]
+        }
+      },
+      "expectedSpin": "none"
+    }
+  ]
+}

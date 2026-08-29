@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "s2-analysis-engine/schema/canonical-transition-response/1",
+  "title": "Canonical S2 transition response",
+  "type": "object",
+  "required": ["$schema", "apiVersion", "schemaVersion", "positionFingerprint", "rulesetId", "status", "degraded", "warnings", "transition"],
+  "properties": {
+    "$schema": { "const": "s2-analysis-engine/schema/canonical-transition-response/1" },
+    "apiVersion": { "const": 1 },
+    "schemaVersion": { "const": 1 },
+    "positionFingerprint": { "type": "string", "pattern": "^s2-full-state/1:sha256:[0-9a-f]{64}$" },
+    "rulesetId": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["ok", "degraded", "illegal"] },
+    "degraded": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "enum": ["spin-evidence-unavailable"] }
+    },
+    "warnings": { "type": "array", "items": { "type": "string" } },
+    "transition": { "$ref": "#/$defs/transition" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "uint": { "type": "integer", "minimum": 0 },
+    "packet": {
+      "type": "object",
+      "required": ["packetId", "sourceGameId", "amount", "holeSize", "arrivalFrame", "confirmed", "order"],
+      "properties": {
+        "packetId": { "$ref": "#/$defs/uint" },
+        "sourceGameId": { "$ref": "#/$defs/uint" },
+        "amount": { "type": "integer", "minimum": 1 },
+        "holeSize": { "type": "integer", "minimum": 1 },
+        "arrivalFrame": { "$ref": "#/$defs/uint" },
+        "confirmed": { "type": "boolean" },
+        "order": { "$ref": "#/$defs/uint" }
+      },
+      "additionalProperties": false
+    },
+    "insertedRow": {
+      "type": "object",
+      "required": ["packetId", "sourceGameId", "amount", "holeSize", "arrivalFrame", "confirmed", "holeColumn"],
+      "properties": {
+        "packetId": { "$ref": "#/$defs/uint" },
+        "sourceGameId": { "$ref": "#/$defs/uint" },
+        "amount": { "type": "integer", "minimum": 1 },
+        "holeSize": { "type": "integer", "minimum": 1 },
+        "arrivalFrame": { "$ref": "#/$defs/uint" },
+        "confirmed": { "type": "boolean" },
+        "holeColumn": { "$ref": "#/$defs/uint" }
+      },
+      "additionalProperties": false
+    },
+    "legality": {
+      "type": "object",
+      "required": ["legal", "reason"],
+      "properties": { "legal": { "type": "boolean" }, "reason": { "type": ["string", "null"] } },
+      "additionalProperties": false
+    },
+    "lockResult": {
+      "type": "object",
+      "required": ["clearedRows", "lines", "spin", "perfectClear"],
+      "properties": {
+        "clearedRows": { "type": "array", "items": { "$ref": "#/$defs/uint" } },
+        "lines": { "$ref": "#/$defs/uint" },
+        "spin": { "enum": ["none", "mini", "normal"] },
+        "perfectClear": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "chain": {
+      "type": "object",
+      "required": ["comboBefore", "comboAfter", "b2bBefore", "b2bAfter", "brokeB2b"],
+      "properties": {
+        "comboBefore": { "$ref": "#/$defs/uint" },
+        "comboAfter": { "$ref": "#/$defs/uint" },
+        "b2bBefore": { "$ref": "#/$defs/uint" },
+        "b2bAfter": { "$ref": "#/$defs/uint" },
+        "brokeB2b": { "type": "boolean" },
+        "brokenB2bCount": { "$ref": "#/$defs/uint" }
+      },
+      "additionalProperties": false
+    },
+    "attackStages": {
+      "type": "object",
+      "required": ["raw", "afterMultiplier", "afterRounding", "specialBonus", "perfectClearBonus", "surgeChunks", "outgoingBeforeCancel"],
+      "properties": {
+        "raw": { "type": "number", "minimum": 0 },
+        "afterMultiplier": { "type": "number", "minimum": 0 },
+        "afterRounding": { "type": "number", "minimum": 0 },
+        "specialBonus": { "type": "number", "minimum": 0 },
+        "perfectClearBonus": { "type": "number", "minimum": 0 },
+        "surgeChunks": { "type": "array", "items": { "type": "number", "minimum": 0 } },
+        "outgoingBeforeCancel": { "type": "number", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "cancelResult": {
+      "type": "object",
+      "required": ["cancelled", "remainingIncoming", "outgoingAfterCancel"],
+      "properties": {
+        "cancelled": { "type": "number", "minimum": 0 },
+        "remainingIncoming": { "type": "array", "items": { "$ref": "#/$defs/packet" } },
+        "outgoingAfterCancel": { "type": "number", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "tankResult": {
+      "type": "object",
+      "required": ["inserted", "deferred", "toppedOut"],
+      "properties": {
+        "inserted": { "type": "array", "items": { "$ref": "#/$defs/insertedRow" } },
+        "deferred": { "type": "array", "items": { "$ref": "#/$defs/packet" } },
+        "toppedOut": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "transition": {
+      "type": "object",
+      "required": ["legality", "lockResult", "chain", "attackStages", "cancelResult", "tankResult", "nextState"],
+      "properties": {
+        "legality": { "$ref": "#/$defs/legality" },
+        "lockResult": { "anyOf": [{ "$ref": "#/$defs/lockResult" }, { "type": "null" }] },
+        "chain": { "anyOf": [{ "$ref": "#/$defs/chain" }, { "type": "null" }] },
+        "attackStages": { "anyOf": [{ "$ref": "#/$defs/attackStages" }, { "type": "null" }] },
+        "cancelResult": { "anyOf": [{ "$ref": "#/$defs/cancelResult" }, { "type": "null" }] },
+        "tankResult": { "anyOf": [{ "$ref": "#/$defs/tankResult" }, { "type": "null" }] },
+        "nextState": { "anyOf": [{ "$ref": "canonical-state.schema.json" }, { "type": "null" }] }
+      },
+      "additionalProperties": false
+    }
+  }
+}

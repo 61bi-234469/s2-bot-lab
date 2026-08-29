@@ -1,0 +1,189 @@
+{
+  "$schema": "s2-analysis-engine/schema/fixture/1",
+  "schemaVersion": 1,
+  "id": "tick-does-not-tank",
+  "rulesetId": "tetrio-s2-v19-foundation000000000000000000000000000000000000000000000000000000-beta-1-5-0",
+  "evidenceLayer": "golden",
+  "coverageCells": [
+    "time.dynamic-value",
+    "garbage.packet-model"
+  ],
+  "source": {
+    "kind": "manual",
+    "manual": {
+      "author": "Claude Opus 5",
+      "primarySource": "@haelp/teto 4.2.7 Engine lock handler (garbageQueue.tank is called only from the non-clear lock branch)",
+      "rationale": "Fix that advancing logical time does not tank. The incoming packet is already eligible at the starting frame and stays untouched across the tick, so tanking remains a lock-time consequence and cannot be charged twice."
+    }
+  },
+  "input": {
+    "state": {
+      "$schema": "s2-analysis-engine/schema/canonical-state/1",
+      "schemaVersion": 1,
+      "rulesetId": "tetrio-s2-v19-foundation000000000000000000000000000000000000000000000000000000-beta-1-5-0",
+      "board": {
+        "width": 10,
+        "height": 6,
+        "cells": "____________________________________________________________",
+        "fidelity": "exact"
+      },
+      "pieces": {
+        "current": "O",
+        "hold": null,
+        "holdAvailable": true,
+        "known": [
+          "I",
+          "T"
+        ],
+        "queueModel": {
+          "type": "7-bag",
+          "bagRemaining": [
+            "S",
+            "Z",
+            "J",
+            "L"
+          ],
+          "seed": null,
+          "tail": "unknown"
+        },
+        "fidelity": "exact"
+      },
+      "chain": {
+        "combo": 0,
+        "b2b": 0,
+        "fidelity": "exact"
+      },
+      "garbage": {
+        "packets": [
+          {
+            "packetId": 50,
+            "sourceGameId": 4401,
+            "amount": 2,
+            "holeSize": 1,
+            "arrivalFrame": 100,
+            "confirmed": true,
+            "order": 0
+          }
+        ],
+        "generatorState": {
+          "rngState": 123456789,
+          "lastTankFrame": 90,
+          "lastHoleColumn": -1,
+          "sentForOpener": 0,
+          "holeChanged": false,
+          "receivedCountSinceReset": 0
+        },
+        "capState": {
+          "consumedThisTick": 0
+        },
+        "fidelity": "exact"
+      },
+      "time": {
+        "logicalFrame": 101,
+        "frameSemantics": "virtual-tank-only",
+        "piecesPlaced": 5,
+        "fidelity": "exact"
+      },
+      "informationLoss": [],
+      "provenance": {
+        "sourcePath": "editor-session",
+        "producedBy": "s2-analysis-engine-fixture"
+      }
+    },
+    "action": {
+      "kind": "tick",
+      "fromFrame": 101,
+      "toFrame": 108
+    }
+  },
+  "expected": {
+    "legality": {
+      "legal": true,
+      "reason": null
+    },
+    "lockResult": null,
+    "chain": null,
+    "attackStages": null,
+    "cancelResult": null,
+    "tankResult": null,
+    "nextState": {
+      "$schema": "s2-analysis-engine/schema/canonical-state/1",
+      "schemaVersion": 1,
+      "rulesetId": "tetrio-s2-v19-foundation000000000000000000000000000000000000000000000000000000-beta-1-5-0",
+      "board": {
+        "width": 10,
+        "height": 6,
+        "cells": "____________________________________________________________",
+        "fidelity": "exact"
+      },
+      "pieces": {
+        "current": "O",
+        "hold": null,
+        "holdAvailable": true,
+        "known": [
+          "I",
+          "T"
+        ],
+        "queueModel": {
+          "type": "7-bag",
+          "bagRemaining": [
+            "S",
+            "Z",
+            "J",
+            "L"
+          ],
+          "seed": null,
+          "tail": "unknown"
+        },
+        "fidelity": "exact"
+      },
+      "chain": {
+        "combo": 0,
+        "b2b": 0,
+        "fidelity": "exact"
+      },
+      "garbage": {
+        "packets": [
+          {
+            "packetId": 50,
+            "sourceGameId": 4401,
+            "amount": 2,
+            "holeSize": 1,
+            "arrivalFrame": 100,
+            "confirmed": true,
+            "order": 0
+          }
+        ],
+        "generatorState": {
+          "rngState": 123456789,
+          "lastTankFrame": 90,
+          "lastHoleColumn": -1,
+          "sentForOpener": 0,
+          "holeChanged": false,
+          "receivedCountSinceReset": 0
+        },
+        "capState": {
+          "consumedThisTick": 0
+        },
+        "fidelity": "exact"
+      },
+      "time": {
+        "logicalFrame": 108,
+        "frameSemantics": "virtual-tank-only",
+        "piecesPlaced": 5,
+        "fidelity": "exact"
+      },
+      "informationLoss": [],
+      "provenance": {
+        "sourcePath": "editor-session",
+        "producedBy": "s2-analysis-engine-fixture"
+      }
+    }
+  },
+  "comparison": {
+    "mode": "exact",
+    "floatTolerance": 0
+  },
+  "generatedAt": "2026-08-13T00:00:00Z",
+  "hash": "sha256:7542cfc1cc70a2addb9c7275ce82c06cd4a8c83f04bd75071f72fffcd92dac9c"
+}
