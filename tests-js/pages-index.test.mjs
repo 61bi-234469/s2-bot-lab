@@ -16,3 +16,9 @@ test("Pages HTML build preserves an already transformed public entry", () => {
   const index = '<main></main><script type="module" src="app.bundle.js"></script>';
   assert.equal(preparePagesIndex(index), index);
 });
+
+test("Pages HTML cache-busts the generated browser bundle with its content digest", () => {
+  const index = '<main></main><script type="module" src="app.bundle.js"></script>';
+  assert.match(preparePagesIndex(index, "0123456789ab"), /src="app\.bundle\.js\?v=0123456789ab"/);
+  assert.throws(() => preparePagesIndex(index, "not-a-digest"), /12-character hex digest/);
+});

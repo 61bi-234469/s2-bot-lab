@@ -27,7 +27,9 @@ export function installStaticTransport() {
 async function proposeCc2({ engine, state }) {
   if (typeof Worker !== "function" || typeof WebAssembly !== "object") throw new Error("CC2 WASM is unavailable in this browser");
   const wasm = engine === "cc2-raw" ? "./cold_clear_2_upstream.wasm" : engine === "cc2-chouhy" ? "./cold_clear_2_chouhy.wasm" : "./cold_clear_2_s2.wasm";
-  const worker = new Worker(new URL("./cc2-worker.bundle.js", import.meta.url), { type: "module" });
+  const workerUrl = new URL("./cc2-worker.bundle.js", import.meta.url);
+  workerUrl.searchParams.set("v", globalThis.__CC2_WORKER_VERSION__ ?? "dev");
+  const worker = new Worker(workerUrl, { type: "module" });
   let nextId = 1;
   let workerFailure = null;
   const pending = new Map();

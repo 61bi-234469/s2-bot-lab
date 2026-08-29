@@ -18,14 +18,30 @@ const shared = new Map([
 ]);
 
 await mkdir(site, { recursive: true });
+const workerPath = resolve(site, "cc2-worker.bundle.js");
+await build({
+  entryPoints: [resolve(repo, "cc2-gui/cc2-worker.mjs")],
+  bundle: true,
+  platform: "browser",
+  format: "esm",
+  outfile: workerPath,
+  minify: true,
+  plugins: [{ name: "worker-browser-boundary", setup(buildApi) { buildApi.onResolve({ filter: /.*/ }, (args) => {
+    if (forbidden.test(args.path)) throw new Error(`worker bundle cannot resolve Node dependency ${args.path}`);
+    return undefined;
+  }); } }],
+});
+const workerVersion = createHash("sha256").update(await readFile(workerPath)).digest("hex").slice(0, 12);
+const appPath = resolve(site, "app.bundle.js");
 const result = await build({
   entryPoints: [resolve(repo, "cc2-gui/static-entry.mjs")],
   bundle: true,
   platform: "browser",
   format: "esm",
-  outfile: resolve(site, "app.bundle.js"),
+  outfile: appPath,
   metafile: true,
   minify: true,
+  define: { "globalThis.__CC2_WORKER_VERSION__": JSON.stringify(workerVersion) },
   plugins: [{
     name: "pages-browser-boundary",
     setup(buildApi) {
@@ -41,18 +57,7 @@ const result = await build({
     },
   }],
 });
-await build({
-  entryPoints: [resolve(repo, "cc2-gui/cc2-worker.mjs")],
-  bundle: true,
-  platform: "browser",
-  format: "esm",
-  outfile: resolve(site, "cc2-worker.bundle.js"),
-  minify: true,
-  plugins: [{ name: "worker-browser-boundary", setup(buildApi) { buildApi.onResolve({ filter: /.*/ }, (args) => {
-    if (forbidden.test(args.path)) throw new Error(`worker bundle cannot resolve Node dependency ${args.path}`);
-    return undefined;
-  }); } }],
-});
+const appVersion = createHash("sha256").update(await readFile(appPath)).digest("hex").slice(0, 12);
 
 const nodeModulePackages = new Set();
 for (const input of Object.keys(result.metafile.inputs)) {
@@ -67,7 +72,7 @@ for (const packageName of nodeModulePackages) {
   if (!licenses.includes(packageName)) throw new Error(`missing third-party notice for bundled package ${packageName}`);
 }
 const index = await readFile(resolve(repo, "cc2-gui/index.html"), "utf8");
-await writeFile(resolve(site, "index.html"), preparePagesIndex(index));
+await writeFile(resolve(site, "index.html"), preparePagesIndex(index, appVersion));
 await cp(resolve(repo, "cc2-gui/styles.css"), resolve(site, "styles.css"));
 await cp(resolve(repo, "fixtures/tuning/cc2-s2-spin-value-aligned.json"), resolve(site, "cc2-s2-spin-value-aligned.json"));
 const wasmArtifacts = ["cold_clear_2_s2", "cold_clear_2_upstream", "cold_clear_2_chouhy"];
