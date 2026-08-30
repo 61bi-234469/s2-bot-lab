@@ -12,6 +12,12 @@ import {
   externalLockFrameWindow,
 } from "./bot-match-controller.mjs";
 import { applyHumanFinalPlacementUnderObservedS2 } from "./human-s2-adapter.mjs";
+import { applyCc2FinalPlacementUnderObservedS2 } from "./cc2-s2-adapter.mjs";
+import { selectCc2S2HybridPlacement } from "./cc2-s2-hybrid.mjs";
+import { selectS2RenQualityPlacement } from "./s2-ren-quality-selector.mjs";
+import { selectS2ConversionQualifiedRenFinisherPlacement } from "./s2-conversion-qualified-ren-finisher-selector.mjs";
+import { selectS2F12PostTankSolvencyRescuePlacement } from "./s2-f12-post-tank-solvency-rescue-selector.mjs";
+import { selectS2ThresholdImminentB2bRetentionPlacement } from "./s2-threshold-imminent-b2b-retention-selector.mjs";
 import { calculatePlayerMetrics } from "../cc2-gui/player-metrics.mjs";
 import {
   createMatchRecording,
@@ -34,27 +40,32 @@ const SIMPLE_BOT = Object.freeze({
   ...botParameterCapability("s2-simple"),
 });
 const HUMAN_BOT = Object.freeze({ id: "human", label: "You (1P)", available: true, ...botParameterCapability("human") });
+const CC2_LABELS = Object.freeze({
+  "cc2-raw": "Raw CC2 — MinusKelvin upstream (deterministic port)",
+  "cc2-chouhy": "CC2 — chouhy fork b20a92b (deterministic port)",
+  "cc2-s2": "CC2 S2 — development hybrid",
+  "cc2-s2-gen017": "CC2 S2 — Gen 017 aligned",
+  "cc2-s2-f11": "CC2 S2 — F11 REN quality",
+  "cc2-s2-f12": "CC2 S2 — F12 REN finisher",
+  "cc2-s2-f14": "CC2 S2 — F14 post-tank rescue",
+  "cc2-s2-f25": "CC2 S2 — F25 B2B retention",
+});
+const SPARSE_S2_WEIGHTS = Object.freeze({ aggregateHeight:-.1,maxHeight:-.4,holes:-1,bumpiness:-.05,remainingIncoming:0,deferredIncoming:-.8,dueIncoming:0,incomingNextLock:0,confirmedIncoming:0,tankedIncoming:-.25,visibleTopOutMargin:0,outgoingBeforeCancel:0,outgoingAfterCancel:1,cancelled:.8,combo:0,b2b:.6,chargingLevel:0,surgeSent:.25 });
 
 /**
  * Transport-neutral browser API. Native CC2 engines are deliberately absent;
  * callers get a stable capability response instead of an import-time failure.
  */
-export function createGuiRequestHandlers() {
+export function createGuiRequestHandlers({ proposeCc2 = null } = {}) {
   let session = null;
 
   return Object.freeze({
     async handle({ method, path, body = null }) {
       if (method === "GET" && path === "/api/bots") return ok({
+        runtime: { mode: "static-wasm", selectionLimit: 512, searchSeed: "5994928009864282113" },
         ruleset: { id: RULESET_IDS.s2Observed, b2bCharging: resolvePlacementRules(RULESET_IDS.s2Observed).b2bCharging },
         bots: [
-          unavailable("cc2-raw", "Raw CC2 — MinusKelvin upstream"),
-          unavailable("cc2-chouhy", "CC2 — chouhy fork (b20a92b)"),
-          unavailable("cc2-s2", "CC2 S2 — development hybrid"),
-          unavailable("cc2-s2-gen017", "CC2 S2 — Gen 017 aligned"),
-          unavailable("cc2-s2-f11", "CC2 S2 — F11 REN quality"),
-          unavailable("cc2-s2-f12", "CC2 S2 — F12 REN finisher"),
-          unavailable("cc2-s2-f14", "CC2 S2 — F14 post-tank rescue"),
-          unavailable("cc2-s2-f25", "CC2 S2 — F25 B2B retention"),
+          ...Object.entries(CC2_LABELS).map(([id, label]) => proposeCc2 === null ? unavailable(id, label) : ({ id, label, available: true, ...staticCc2Capability(id) })),
           SIMPLE_BOT,
           HUMAN_BOT,
         ],
@@ -66,9 +77,19 @@ export function createGuiRequestHandlers() {
       if (method === "POST" && path === "/api/simple-s2") {
         return ok(analyzeSimpleS2FinalPlacements(guiStateToCanonical(body.state), { topN: body.n ?? 5 }));
       }
+      if (method === "POST" && path === "/api/suggest") {
+        if (proposeCc2 === null) return fail(503, { error: "CC2 WASM is unavailable" });
+        const engine = requireCc2Type(body.engine ?? "cc2-raw");
+        try { return ok({ ...(await proposeCc2({ engine, state: body.state })), info: { version: "deterministic-wasm-512" }, engine: publicEngine(engine) }); }
+        catch (error) { return fail(422, { error: messageOf(error) }); }
+      }
       if (method === "POST" && path === "/api/apply-s2") {
-        if (body.engine !== "s2-simple") return fail(422, { error: "native CC2 engines require the local server" });
-        return ok(applyHumanFinalPlacementUnderObservedS2(guiStateToCanonical(body.state), body.move));
+        if (body.engine === "s2-simple") return ok(applyHumanFinalPlacementUnderObservedS2(guiStateToCanonical(body.state), body.move));
+        try {
+          const engine = requireCc2Type(body.engine);
+          const result = isS2(engine) ? selectS2(body.state, body.moves ?? [body.move], engine) : applyCc2FinalPlacementUnderObservedS2(body.state, body.move, publicEngine(engine));
+          return result.status === "unsupported" ? fail(422, result) : ok(result);
+        } catch (error) { return fail(422, { error: messageOf(error) }); }
       }
       if (method === "POST" && path === "/api/s2/transition") {
         const result = canonicalTransitionHttpResponse(body);
@@ -138,10 +159,20 @@ export function createGuiRequestHandlers() {
     for (const botId of ids) {
       if (session.types[botId] === "human") continue;
       const bot = session.match.bots.find((candidate) => candidate.id === botId);
-      const analysis = analyzeSimpleS2FinalPlacements(bot.state, { topN: 1, allowHold: session.botParameters[botId].allowHold });
-      const best = analysis.moves[0];
-      if (!best) return fail(422, { error: `${botId} has no legal final placement` });
-      submissions.push(submissionFor(bot, best.placement, best.transition, best.score));
+      if (session.types[botId] === "s2-simple") {
+        const analysis = analyzeSimpleS2FinalPlacements(bot.state, { topN: 1, allowHold: session.botParameters[botId].allowHold });
+        const best = analysis.moves[0];
+        if (!best) return fail(422, { error: `${botId} has no legal final placement` });
+        submissions.push(submissionFor(bot, best.placement, best.transition, best.score));
+      } else {
+        const engine = session.types[botId];
+        const gui = botMatchToGuiState(session.match, bot.id);
+        const state = { board: gui.board, queue: gui.queue.slice(0, session.botParameters[botId].queueDepth), hold: gui.hold, combo: gui.combo, back_to_back: gui.back_to_back, randomizer: { type: "seven_bag", bag_state: [] } };
+        const proposal = await proposeCc2({ engine, state });
+        const result = isS2(engine) ? selectS2(gui, proposal.suggestion.moves, engine) : applyCc2FinalPlacementUnderObservedS2(gui, proposal.suggestion.moves[0], publicEngine(engine));
+        if (result.transition === null) return fail(422, { error: `${botId} CC2 placement rejected` });
+        submissions.push(submissionFor(bot, result.comparison.witness.placement, result.transition, result.comparison.score));
+      }
     }
     if (submissions.length === 0) return fail(409, { error: "human-lock-required" });
     const before = session.match;
@@ -232,7 +263,19 @@ function ok(body) { return { status: 200, body }; }
 function fail(status, body) { return { status, body }; }
 function messageOf(error) { return error instanceof Error ? error.message : String(error); }
 function unavailable(id, label) { return { id, label, available: false, reason: "requires the local server", parameters: [] }; }
+function staticCc2Capability(id) { const capability = botParameterCapability(id); capability.description += " Static WASM uses a fixed 512-selection budget; THINK TIME is ignored."; capability.parameters = capability.parameters.map((parameter) => parameter.key === "thinkMs" ? { ...parameter, disabled: true, disabledReason: "Static WASM uses exactly 512 selections" } : parameter); return capability; }
 function staticBotType(value) {
-  if (value !== "s2-simple" && value !== "human") throw new Error("static mode supports only s2-simple and human");
+  if (value !== "s2-simple" && value !== "human" && !(value in CC2_LABELS)) throw new Error(`unsupported static bot ${value}`);
   return value;
+}
+function requireCc2Type(value) { if (!(value in CC2_LABELS)) throw new Error(`unsupported CC2 engine ${value}`); return value; }
+function isS2(value) { return value.startsWith("cc2-s2"); }
+function publicEngine(id) { return { botType: id, engineId: id, label: CC2_LABELS[id], repository: id === "cc2-raw" ? "https://github.com/MinusKelvin/cold-clear-2" : id === "cc2-chouhy" ? "https://github.com/chouhy/cold-clear-2" : "https://github.com/61bi-234469/s2-analysis-engine", commit: id === "cc2-raw" ? "ed8b19327b6bd1410ddd873d8611485bd45d8fae" : id === "cc2-chouhy" ? "b20a92b0ed3230dd910d0674f7a09c552a34dd46" : "ed8b193+local-s2-reranker", comparisonSource: `${id}-final-placement` }; }
+function selectS2(gui, moves, id) {
+  const common = { candidateLimit:16,rankPenalty:25,adjustmentScale:28,weightProfileId:"sparse-s2",weights:SPARSE_S2_WEIGHTS,allowCompleteReturnedPrefix:true,engineId:id,comparisonSource:`${id}-final-placement` };
+  if (id === "cc2-s2-f11") return selectS2RenQualityPlacement(gui,moves,common);
+  if (id === "cc2-s2-f12") return selectS2ConversionQualifiedRenFinisherPlacement(gui,moves,common);
+  if (id === "cc2-s2-f14") return selectS2F12PostTankSolvencyRescuePlacement(gui,moves,common);
+  if (id === "cc2-s2-f25") return selectS2ThresholdImminentB2bRetentionPlacement(gui,moves,common);
+  return selectCc2S2HybridPlacement(gui,moves,publicEngine(id));
 }

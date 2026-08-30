@@ -16,6 +16,7 @@ export const PREFERENCE_SIDES = Object.freeze(["left", "right"]);
 export const CONTROL_PREFERENCE_IDS = Object.freeze([
   "analysis-bot",
   "think-ms",
+  "candidate-count",
   "left-bot",
   "right-bot",
   "match-seed",

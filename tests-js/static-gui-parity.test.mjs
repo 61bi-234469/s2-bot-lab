@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createGame, toS2GuiState } from "../cc2-gui/game.mjs";
 import { createGuiRequestHandlers } from "../src-js/gui-request-handlers.mjs";
@@ -29,4 +30,19 @@ test("static handler answers the same pure API family used by the GUI", async ()
     challenger: simple,
   });
   assert.equal(compared.contractId, "s2-same-position-comparison/1");
+});
+
+test("single analysis exposes every static CC2 engine", async () => {
+  const html = await readFile(new URL("../cc2-gui/index.html", import.meta.url), "utf8");
+  const analysis = html.match(/<select id="analysis-bot">([\s\S]*?)<\/select>/)?.[1] ?? "";
+  const ids = [...analysis.matchAll(/value="(cc2-[^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(ids, ["cc2-raw", "cc2-chouhy", "cc2-s2", "cc2-s2-gen017", "cc2-s2-f11", "cc2-s2-f12", "cc2-s2-f14", "cc2-s2-f25"]);
+});
+
+test("static CC2 suggestion preserves the GUI response identity contract", async () => {
+  const handlers = createGuiRequestHandlers({ proposeCc2: async () => ({ suggestion: { moves: [{ location: { type: "T", orientation: "north", x: 0, y: 0 }, spin: "none" }], move_info: { nodes: 512, nps: 512 } }, peakMemoryBytes: 65536 }) });
+  const body = await request(handlers, "POST", "/api/suggest", { engine: "cc2-raw", state: {} });
+  assert.equal(body.info.version, "deterministic-wasm-512");
+  assert.equal(body.engine.botType, "cc2-raw");
+  assert.equal(body.suggestion.move_info.nodes, 512);
 });

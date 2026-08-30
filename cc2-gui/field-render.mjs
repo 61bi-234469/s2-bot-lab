@@ -48,14 +48,17 @@ export function renderDetailMetrics(container, metrics) {
 }
 
 /* `overlay` carries a piece that has not locked - the one a human player is
-   moving, or the one a replay cursor is watching fall. It is drawn over the
-   board rather than into it, because the board itself is settled state. */
-export function renderMatchField(container, board, lastPlaced, overlay = null) {
+   moving, the one a replay cursor is watching fall, or a candidate placement a
+   thumbnail is previewing. It is drawn over the board rather than into it,
+   because the board itself is settled state. `cellElement` exists only for the
+   callers that draw a field inside a button, whose content model admits
+   phrasing content rather than divs. */
+export function renderMatchField(container, board, lastPlaced, overlay = null, { cellElement = "div" } = {}) {
   const placed = new Set((lastPlaced ?? []).map(([x, y]) => `${x}:${y}`));
   const cells = [];
   for (let y = VISIBLE_ROWS - 1; y >= 0; y -= 1) {
     for (let x = 0; x < 10; x += 1) {
-      const cell = document.createElement("div");
+      const cell = document.createElement(cellElement);
       const overlaid = overlay?.get(`${x}:${y}`) ?? null;
       const piece = overlaid?.piece ?? board[y][x];
       const isPlaced = overlaid === null && piece !== null && placed.has(`${x}:${y}`);
@@ -68,6 +71,16 @@ export function renderMatchField(container, board, lastPlaced, overlay = null) {
     }
   }
   container.replaceChildren(...cells);
+}
+
+/* Only the cells inside the visible field are drawn, but the rim of a piece
+   half above it is still computed from all four cells, so the part that is on
+   screen keeps the outline of the whole tetromino. */
+export function addOverlayPiece(overlay, cells, piece, ghost) {
+  const keys = new Set(cells.map(([x, y]) => `${x}:${y}`));
+  for (const [x, y] of cells) {
+    overlay.set(`${x}:${y}`, { piece, ghost, edges: outerEdges(keys, x, y) });
+  }
 }
 
 export function renderNextList(container, pieces) {

@@ -33,6 +33,13 @@ import {
   simpleAnalysisToVerification,
 } from "./analysis-proposal.mjs";
 import {
+  CANDIDATE_COUNT_LIMIT,
+  markCandidateSelection,
+  moveIdentity,
+  renderCandidateList,
+  simpleAnalysisCandidateRows,
+} from "./analysis-candidates.mjs";
+import {
   HUMAN_ACTIONS,
   HUMAN_HANDLING_FIELDS,
   SDF_INFINITE,
@@ -46,7 +53,7 @@ import {
   sanitizeHumanControls,
 } from "./human-controls.mjs";
 import {
-  outerEdges,
+  addOverlayPiece,
   renderChainCounter,
   renderDetailMetrics,
   renderFieldRateStats,
@@ -69,10 +76,6 @@ import {
   shiftedToEnd,
   spawnPlacement,
 } from "./human-play.mjs";
-import { installStaticTransport } from "./static-host.mjs";
-
-installStaticTransport();
-
 const elements = Object.fromEntries([...document.querySelectorAll("[id]")].map((node) => [node.id, node]));
 const BOT_SIDES = Object.freeze(["left", "right"]);
 // B2B charging as resolved by the server from the ruleset the GUI runs under.
@@ -94,6 +97,17 @@ let autoplay = false;
 // Invalidates an in-flight analysis whenever RESET or a bot change replaces
 // the position it was asked to evaluate.
 let analysisGeneration = 0;
+/* The proposer's ranked root placements for the position currently on screen,
+   in the order it returned them. A placement only means anything against the
+   field it was proposed for, so these are dropped whenever that field, or the
+   proposer being asked about it, changes. */
+let candidateRows = [];
+/* The same-position S2 reference the list was built with, kept so adopting a
+   candidate can re-score the comparison row against it instead of leaving the
+   previous proposal's numbers up. */
+let candidateReference = null;
+let candidateElapsedMs = 0;
+let candidatesLoading = false;
 let matchRunning = false;
 let matchAutoplay = false;
 /* Only true while a start request is in flight, which is the one moment the
@@ -147,6 +161,12 @@ elements["analysis-bot"].addEventListener("change", () => {
   renderAnalysisEngineIdentity();
 });
 elements["think-button"].addEventListener("click", think);
+elements["candidates-button"].addEventListener("click", toggleCandidates);
+/* Changing the width while the list is open reloads it, because the number on
+   the control and the number of rows on screen have to be the same claim. */
+elements["candidate-count"].addEventListener("change", () => {
+  if (!elements["candidate-panel"].hidden) loadCandidates();
+});
 elements["apply-button"].addEventListener("click", applyPending);
 elements["auto-button"].addEventListener("click", toggleAutoplay);
 elements["reset-button"].addEventListener("click", reset);
@@ -260,6 +280,10 @@ async function loadBotCapabilities() {
     };
   }
   b2bCharging = capabilities.ruleset?.b2bCharging ?? false;
+  if (capabilities.runtime?.mode === "static-wasm") {
+    elements["think-ms"].disabled = true;
+    elements["think-ms"].title = `Static WASM uses exactly ${capabilities.runtime.selectionLimit} selections`;
+  }
   const byId = new Map(capabilities.bots.map((bot) => {
     const fallback = BOT_PARAMETER_DEFINITIONS[bot.id];
     return [bot.id, {
@@ -330,6 +354,10 @@ function openBotSettings(side) {
       input.title = fairComparisonEnabled()
         ? "Fair comparison fixes both bots at 1 PPS"
         : "Think-time pace derives PPS from THINK TIME";
+    }
+    if (parameter.disabled === true) {
+      input.disabled = true;
+      input.title = parameter.disabledReason ?? "Unavailable in this runtime";
     }
     control.append(input);
     if (parameter.suffix) {
@@ -507,7 +535,7 @@ function renderBotSettingsSummary(side) {
 }
 
 async function think() {
-  if (thinking || game.toppedOut) return;
+  if (thinking || candidatesLoading || game.toppedOut) return;
   const generation = analysisGeneration;
   const engine = elements["analysis-bot"].value;
   // Both proposers and the verifier receive clones of this one position. Never
@@ -520,36 +548,15 @@ async function think() {
   pendingThinkElapsedMs = 0;
   resetComparison();
   setStatus("thinking", "THINKING");
-  elements["think-button"].disabled = true;
+  renderAnalysisBusy();
   elements["apply-button"].disabled = true;
   try {
     const suggestionStartedAt = performance.now();
-    const simpleRequest = fetch("/api/simple-s2", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        state: s2Snapshot,
-        n: 5,
-      }),
-    });
-    const suggestionRequest = engine === "s2-simple"
-      ? null
-      : fetch("/api/suggest", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            engine,
-            thinkMs: Number(elements["think-ms"].value),
-            state: cc2Snapshot,
-          }),
-        });
-    const [simpleResponse, response] = await Promise.all([simpleRequest, suggestionRequest]);
-    const s2 = await simpleResponse.json();
+    const simpleRequest = requestSimpleAnalysis(s2Snapshot, 5);
+    const suggestionRequest = engine === "s2-simple" ? null : requestSuggestion(engine, cc2Snapshot);
+    const [s2, response] = await Promise.all([simpleRequest, suggestionRequest]);
     const body = response === null ? null : await response.json();
     if (generation !== analysisGeneration) return;
-    if (!simpleResponse.ok || !Array.isArray(s2.moves) || s2.moves.length === 0) {
-      throw new Error(s2.error ?? "S2 simple placement analysis unavailable");
-    }
     if (response !== null && !response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
     const suggestionElapsedMs = Math.max(1, performance.now() - suggestionStartedAt);
     pendingThinkElapsedMs = suggestionElapsedMs;
@@ -611,6 +618,7 @@ async function think() {
     elements["apply-button"].disabled = false;
     renderField();
     renderPlacingStrip();
+    renderCandidateSelection();
     if (autoplay) setTimeout(applyPending, 180);
   } catch (error) {
     if (generation !== analysisGeneration) return;
@@ -621,7 +629,7 @@ async function think() {
   } finally {
     if (generation === analysisGeneration) {
       thinking = false;
-      elements["think-button"].disabled = game.toppedOut;
+      renderAnalysisBusy();
     }
   }
 }
@@ -633,6 +641,9 @@ async function applyPending() {
     if (body === null) throw new Error("S2 verification is missing or stale");
     const transition = applyS2Transition(game, pendingMove, body);
     gameMetricElapsedMs += pendingThinkElapsedMs;
+    // The board has moved on, so every candidate proposed against the previous
+    // one is now about a position that no longer exists.
+    clearCandidates();
     pendingMove = null;
     pendingVerification = null;
     pendingThinkElapsedMs = 0;
@@ -645,6 +656,7 @@ async function applyPending() {
       : `S2 Simulator: ${clear} · ${transition.attackStages.outgoingBeforeCancel} attack · B2B ${transition.chain.b2bAfter} · combo ${transition.chain.comboAfter} · ${transition.cancelResult.outgoingAfterCancel} garbage · score ${body.comparison.score.toFixed(2)} (${body.status})`;
     setStatus(game.toppedOut ? "error" : "idle", game.toppedOut ? "TOP OUT" : "READY");
     render();
+    renderAnalysisBusy();
     if (autoplay && !game.toppedOut) setTimeout(think, 220);
   } catch (error) {
     autoplay = false;
@@ -715,6 +727,8 @@ function reset() {
 function clearAnalysisProposal() {
   analysisGeneration += 1;
   thinking = false;
+  candidatesLoading = false;
+  clearCandidates();
   stopAutoplay();
   pendingMove = null;
   pendingVerification = null;
@@ -725,7 +739,7 @@ function clearAnalysisProposal() {
   elements["nps-value"].textContent = "—";
   resetComparison();
   elements["apply-button"].disabled = true;
-  elements["think-button"].disabled = game.toppedOut;
+  renderAnalysisBusy();
   setStatus("idle", "READY");
   render();
 }
@@ -736,6 +750,218 @@ function renderAnalysisEngineIdentity() {
   const label = capability?.label ?? elements["analysis-bot"].selectedOptions[0]?.textContent ?? botType;
   elements["suggestion-engine-label"].textContent = `${label.toUpperCase()} SUGGESTION`;
   elements["comparison-engine-label"].textContent = `${label.toUpperCase()} · S2 VERIFIED`;
+}
+
+/* 考える and 候補 ask the same proposer about the same position, so only one of
+   them is in flight at a time and both buttons report that together. */
+function renderAnalysisBusy() {
+  const busy = thinking || candidatesLoading;
+  elements["think-button"].disabled = busy || game.toppedOut;
+  elements["candidates-button"].disabled = busy || game.toppedOut;
+}
+
+function toggleCandidates() {
+  const open = !elements["candidate-panel"].hidden;
+  /* An open panel whose list an apply, RESET or bot change invalidated is
+     reloaded rather than closed: the button always answers "the candidates for
+     the position on screen", and only closes a list that is showing one. */
+  if (open && candidateRows.length === 0 && !candidatesLoading) {
+    loadCandidates();
+    return;
+  }
+  if (open) {
+    elements["candidate-panel"].hidden = true;
+    elements["candidates-button"].setAttribute("aria-pressed", "false");
+    return;
+  }
+  elements["candidate-panel"].hidden = false;
+  elements["candidates-button"].setAttribute("aria-pressed", "true");
+  loadCandidates();
+}
+
+/* One proposer request for the ranked root list, then one canonical
+   verification per candidate, all against the single snapshot taken here. A
+   reply that arrives after RESET or a bot change describes a position the deck
+   no longer shows, so it is discarded rather than rendered. */
+async function loadCandidates() {
+  if (thinking || candidatesLoading || game.toppedOut) return;
+  const generation = analysisGeneration;
+  const engine = elements["analysis-bot"].value;
+  const count = candidateCount();
+  const cc2Snapshot = toCc2State(game);
+  const s2Snapshot = toS2GuiState(game);
+  const board = game.board;
+  const currentPiece = game.queue[0] ?? null;
+  candidatesLoading = true;
+  candidateRows = [];
+  candidateReference = null;
+  elements["candidate-list"].replaceChildren();
+  elements["candidate-status"].textContent = "SEARCHING";
+  renderAnalysisBusy();
+  try {
+    const startedAt = performance.now();
+    const reference = await requestSimpleAnalysis(s2Snapshot, count);
+    const rows = engine === "s2-simple"
+      ? simpleAnalysisCandidateRows(reference, count)
+      : await requestCc2CandidateRows(engine, cc2Snapshot, s2Snapshot, count);
+    if (generation !== analysisGeneration) return;
+    candidateElapsedMs = Math.max(1, performance.now() - startedAt);
+    candidateReference = reference;
+    candidateRows = rows;
+    renderCandidateList(elements["candidate-list"], rows, {
+      board,
+      currentPiece,
+      onSelect: selectCandidate,
+    });
+    renderCandidateSelection();
+    const verified = rows.filter((row) => row.verification !== null).length;
+    // What a proposer publishes is its own decision: the deterministic upstream
+    // ports answer with the single move they play, so the list reports what was
+    // asked for and what actually came back rather than only the row count.
+    elements["candidate-status"].textContent =
+      `TOP ${count} REQUESTED · ${rows.length} RETURNED · ${verified} VERIFIED`;
+  } catch (error) {
+    if (generation !== analysisGeneration) return;
+    elements["candidate-status"].textContent = error instanceof Error ? error.message : String(error);
+  } finally {
+    if (generation === analysisGeneration) {
+      candidatesLoading = false;
+      renderAnalysisBusy();
+    }
+  }
+}
+
+async function requestCc2CandidateRows(engine, cc2State, s2State, count) {
+  const response = await requestSuggestion(engine, cc2State);
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
+  return Promise.all(body.suggestion.moves.slice(0, count)
+    .map((move) => verifyCandidate(engine, s2State, move)));
+}
+
+/* Each candidate is verified on its own, so a row reports what the Simulator
+   says about that placement rather than about the one the engine went on to
+   play. A witness the Simulator refuses is a fact about that one candidate: the
+   row stays in the list carrying the refusal, and cannot be adopted. */
+async function verifyCandidate(engine, state, move) {
+  try {
+    const response = await fetch("/api/apply-s2", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ engine, state, move }),
+    });
+    const verification = await response.json();
+    if (!response.ok) {
+      return { move, verification: null, reason: refusalOf(verification) ?? `HTTP ${response.status}` };
+    }
+    if (verification.transition?.legality?.legal !== true) {
+      return { move, verification: null, reason: refusalOf(verification) ?? "no legal transition" };
+    }
+    // The S2 selectors answer with the move they witnessed, which is the one an
+    // apply has to replay.
+    return { move: verification.move ?? move, verification };
+  } catch (error) {
+    return { move, verification: null, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function refusalOf(body) {
+  const reasons = Array.isArray(body?.reasons) && body.reasons.length > 0 ? body.reasons.join(", ") : null;
+  return reasons ?? body?.error ?? body?.transition?.legality?.reason ?? null;
+}
+
+/* Adopting a candidate replaces the proposal the deck is holding, exactly as a
+   search reply does: the field previews it and 提案を適用 commits it. Nothing on
+   the board changes until then. */
+async function selectCandidate(index) {
+  const row = candidateRows[index];
+  if (row === undefined || row.verification === null || thinking) return;
+  const generation = analysisGeneration;
+  stopAutoplay();
+  pendingMove = row.move;
+  pendingVerification = row.verification;
+  // The list cost one search for the whole set, so whichever candidate is
+  // adopted carries that search's time into the game clock.
+  pendingThinkElapsedMs = candidateElapsedMs;
+  const lock = row.verification.transition.lockResult;
+  const clear = clearLabel(lock.spin, lock.lines, lock.perfectClear) || "NO CLEAR";
+  const attack = row.verification.transition.attackStages.outgoingBeforeCancel;
+  elements["suggestion-move"].textContent = formatMove(pendingMove);
+  elements["suggestion-detail"].textContent = `候補 #${index + 1} · S2: ${clear} · ${attack} attack`;
+  elements["apply-button"].disabled = false;
+  setStatus("ready", "SUGGESTED");
+  renderField();
+  renderPlacingStrip();
+  renderCandidateSelection();
+  await scoreAdoptedCandidate(row.verification, generation);
+}
+
+/* The comparison row describes whichever placement the deck holds, so an
+   adopted candidate is re-scored against the same-position S2 reference the
+   list was built from. */
+async function scoreAdoptedCandidate(verification, generation) {
+  if (candidateReference === null) return;
+  resetComparison();
+  try {
+    const response = await fetch("/api/compare-simple", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseline: verification.comparison, challenger: candidateReference }),
+    });
+    const comparison = await response.json();
+    if (generation !== analysisGeneration) return;
+    if (!response.ok) throw new Error(comparison.error ?? "comparison refused");
+    renderComparison(verification, comparison);
+  } catch (error) {
+    if (generation !== analysisGeneration) return;
+    elements["s2-score"].textContent = error instanceof Error ? error.message : String(error);
+  }
+}
+
+function renderCandidateSelection() {
+  const selected = pendingMove === null ? -1 : candidateRows.findIndex((row) =>
+    row.verification !== null && moveIdentity(row.move) === moveIdentity(pendingMove));
+  markCandidateSelection(elements["candidate-list"], selected);
+}
+
+function clearCandidates() {
+  candidateRows = [];
+  candidateReference = null;
+  candidateElapsedMs = 0;
+  elements["candidate-list"].replaceChildren();
+  elements["candidate-status"].textContent = "NO LIST FOR THIS POSITION";
+}
+
+/* The control only offers widths this build supports, but a stored preference
+   is still untrusted input, so the requested width is bounded here as well. */
+function candidateCount() {
+  const value = Number(elements["candidate-count"].value);
+  return Number.isSafeInteger(value) && value >= 1 && value <= CANDIDATE_COUNT_LIMIT ? value : 5;
+}
+
+async function requestSimpleAnalysis(state, n) {
+  const response = await fetch("/api/simple-s2", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ state, n }),
+  });
+  const analysis = await response.json();
+  if (!response.ok || !Array.isArray(analysis.moves) || analysis.moves.length === 0) {
+    throw new Error(analysis.error ?? "S2 simple placement analysis unavailable");
+  }
+  return analysis;
+}
+
+function requestSuggestion(engine, cc2State) {
+  return fetch("/api/suggest", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      engine,
+      thinkMs: Number(elements["think-ms"].value),
+      state: cc2State,
+    }),
+  });
 }
 
 async function startMatch() {
@@ -969,16 +1195,6 @@ function renderHumanField() {
   renderMatchField(elements[`match-${human.side}-field`], human.board, [], overlay);
   renderMini(elements[`match-${human.side}-hold`], human.hold);
   renderNextList(elements[`match-${human.side}-next`], human.queue.slice(1, 6));
-}
-
-/* Only the cells inside the visible field are drawn, but the rim of a piece
-   half above it is still computed from all four cells, so the part that is on
-   screen keeps the outline of the whole tetromino. */
-function addOverlayPiece(overlay, cells, piece, ghost) {
-  const keys = new Set(cells.map(([x, y]) => `${x}:${y}`));
-  for (const [x, y] of cells) {
-    overlay.set(`${x}:${y}`, { piece, ghost, edges: outerEdges(keys, x, y) });
-  }
 }
 
 /* Hands the field back to the server view. Until the player stops, that side is

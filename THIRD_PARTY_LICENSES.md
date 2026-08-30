@@ -66,3 +66,23 @@ The complete upstream MIT and Apache-2.0 texts are retained in
 `bot/cold-clear-2-s2/LICENSE-MIT` and `bot/cold-clear-2-s2/LICENSE-APACHE`.
 `bot/cold-clear-2-s2/UPSTREAM.md` records the reviewed modifications and build
 boundary. No reference clone or generated binary is tracked.
+
+## Cold Clear 2 deterministic upstream and chouhy forks
+
+- `bot/cold-clear-2-upstream`: MinusKelvin/cold-clear-2 at `ed8b19327b6bd1410ddd873d8611485bd45d8fae`
+- `bot/cold-clear-2-chouhy`: chouhy/cold-clear-2 at `b20a92b0ed3230dd910d0674f7a09c552a34dd46`
+- License choice: MIT, Copyright (c) 2021 Mark Carlson
+- Use: import-free deterministic WASM and native parity references
+
+Both copies retain `LICENSE-MIT`, `LICENSE-APACHE`, and an `UPSTREAM.md` with
+the immutable source identity and deterministic-port patch inventory.
+
+## `instant` 0.1.13 deterministic WASM patch
+
+- Source: https://github.com/sebcrozet/instant
+- License: BSD-3-Clause
+- Use: transitive `parking_lot` clock implementation. On bare WASM only, its
+  unused timed-parking clock returns a deterministic constant so CC2 has no
+  host imports. Native behavior is unchanged.
+
+The source and license are retained in `bot/instant-wasm-safe/`.
