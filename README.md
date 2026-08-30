@@ -2,7 +2,13 @@
 
 ブラウザ内で動く S2 Simulator と bot GUI の静止点スナップショットです。
 
-Pages demo: <https://61bi-234469.github.io/s2-bot-lab/>
+## Hosted versions
+
+- Stable (`main`): <https://61bi-234469.github.io/s2-bot-lab/>
+- Development (`develop`): <https://61bi-234469.github.io/s2-bot-lab/preview/>
+
+Each Pages deployment assembles both branches: the stable build occupies the site root and the
+development build is published under `preview/`. The development URL is marked `noindex, nofollow`.
 
 ## What is included
 
