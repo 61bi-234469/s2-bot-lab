@@ -2,7 +2,7 @@ name: Deploy Pages
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   workflow_dispatch:
 
 permissions:
@@ -15,30 +15,66 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  build:
+    if: github.repository == '61bi-234469/s2-bot-lab'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out stable source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: main-src
+      - name: Check out development source
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+          path: develop-src
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            main-src/package-lock.json
+            develop-src/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+          targets: wasm32-unknown-unknown
+      - name: Build stable site at the Pages root
+        working-directory: main-src
+        run: |
+          npm ci --ignore-scripts
+          node scripts/build-pages.mjs
+      - name: Build development site under preview
+        working-directory: develop-src
+        run: |
+          npm ci --ignore-scripts
+          cargo build --release --target wasm32-unknown-unknown --manifest-path bot/cold-clear-2-s2/Cargo.toml --lib
+          cargo build --release --target wasm32-unknown-unknown --manifest-path bot/cold-clear-2-upstream/Cargo.toml --lib
+          cargo build --release --target wasm32-unknown-unknown --manifest-path bot/cold-clear-2-chouhy/Cargo.toml --lib
+          node scripts/build-pages.mjs
+      - name: Assemble stable and development URLs
+        run: |
+          mkdir -p site/preview
+          cp -a main-src/_site/. site/
+          cp -a develop-src/_site/. site/preview/
+      - name: Keep the development URL out of search indexes
+        run: |
+          find site/preview -name '*.html' -exec sed -i 's|<head>|<head>\n<meta name="robots" content="noindex, nofollow">|' {} +
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
   deploy:
     if: github.repository == '61bi-234469/s2-bot-lab'
+    needs: build
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.92.0
-          targets: wasm32-unknown-unknown
-      - run: npm ci --ignore-scripts
-      - run: cargo build --release --target wasm32-unknown-unknown --manifest-path bot/cold-clear-2-s2/Cargo.toml --lib
-      - run: cargo build --release --target wasm32-unknown-unknown --manifest-path bot/cold-clear-2-upstream/Cargo.toml --lib
-      - run: cargo build --release --target wasm32-unknown-unknown --manifest-path bot/cold-clear-2-chouhy/Cargo.toml --lib
-      - run: node scripts/build-pages.mjs
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4
