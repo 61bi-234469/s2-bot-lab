@@ -124,6 +124,7 @@
         </div>
         <div class="buttons">
           <button class="primary" id="think-button">考える</button>
+          <button id="candidates-button" aria-pressed="false">候補</button>
           <button id="apply-button" disabled>提案を適用</button>
           <button id="auto-button" aria-pressed="false">自動再生</button>
           <button class="quiet" id="reset-button">リセット</button>
@@ -146,6 +147,25 @@
           探索時間
           <input id="think-ms" type="range" min="100" max="2000" step="100" value="500">
         </label>
+        <label class="think-control">
+          候補数
+          <select id="candidate-count">
+            <option value="3">上位 3 手</option>
+            <option value="5" selected>上位 5 手</option>
+            <option value="8">上位 8 手</option>
+            <option value="12">上位 12 手</option>
+            <option value="16">上位 16 手</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="candidate-deck" id="candidate-panel" aria-label="候補手の一覧" hidden>
+        <div class="candidate-heading">
+          <p class="deck-label">CANDIDATE PLACEMENTS</p>
+          <span id="candidate-status">READY</span>
+        </div>
+        <div class="candidate-list" id="candidate-list"></div>
+        <p class="candidate-note">選択中のANALYSIS BOTが返した上位候補です。順位はそのbotが返した順で、サムネは現在のフィールドに候補の配置を重ねたものです。クリックするとその候補がフィールドのカレント提案になり、「提案を適用」で確定します。数値はいずれもS2 Simulatorが検証した結果で、検証できなかった候補は理由を添えて選択不可のまま残ります。何手返すかはbot側の仕様で、Raw CC2とchouhy forkの決定性移植版は実際に指す1手しか返さないため一覧も1行になります。</p>
       </section>
     </div>
 
