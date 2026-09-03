@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::{BotOptions, Mode, ModeSwitch, Statistics};
 use crate::dag::{ChildData, Dag, Evaluation};
 use crate::data::*;
-use crate::movegen::find_moves;
+use crate::movegen::{find_moves, find_moves_complete_with_entry, RootEntry};
 
 pub struct Freestyle {
     dag: Dag<Eval>,
@@ -61,7 +61,18 @@ impl Mode for Freestyle {
             {
                 puffin::profile_scope!("movegen");
                 for piece in next_possibilities | state.reserve {
-                    moves[piece] = find_moves(&state.board, piece);
+                    moves[piece] =
+                        find_moves(&state.board, piece, options.config.enable_direct_180);
+                }
+                if options.config.enable_spawn_buffer_entry && node.is_root()
+                    && (next_possibilities | state.reserve).iter().all(|p| moves[p].is_empty())
+                {
+                    for piece in next_possibilities | state.reserve {
+                        moves[piece] = find_moves_complete_with_entry(
+                            &state.board, piece, options.config.enable_direct_180,
+                            RootEntry::SpawnBufferFallback,
+                        ).moves;
+                    }
                 }
             }
 
@@ -158,7 +169,10 @@ fn evaluate(
     {
         reward += weights.wasted_t;
     }
-    if state.back_to_back {
+    if state.b2b > 0 {
+        eval += weights.has_back_to_back;
+    }
+    if state.b2b >= 4 {
         eval += weights.has_back_to_back;
     }
     reward += weights.softdrop * softdrop as f32;

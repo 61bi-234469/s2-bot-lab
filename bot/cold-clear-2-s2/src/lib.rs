@@ -16,6 +16,7 @@ use crate::tbp::{BotMessage, FrontendMessage};
 
 mod bot;
 mod dag;
+mod generated_direct_180_kicks;
 mod tbp;
 #[macro_use]
 pub mod data;
@@ -117,7 +118,10 @@ fn create_bot(mut start: tbp::Start, config: Arc<BotConfig>) -> Bot {
 
     let state = GameState {
         reserve,
-        back_to_back: start.back_to_back,
+        b2b: start
+            .b2b
+            .unwrap_or(u32::from(start.back_to_back))
+            .min(u32::from(crate::data::B2B_SAT)) as u8,
         combo: start.combo.try_into().unwrap_or(255),
         bag,
         board: start.board.into(),

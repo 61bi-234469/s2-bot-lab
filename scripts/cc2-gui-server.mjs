@@ -157,6 +157,17 @@ const cc2Engines = Object.freeze({
     binary: options.s2Binary,
     config: loadS2Config("fixtures/tuning/cc2-s2-spin-value-aligned.json"),
   }),
+  "cc2-s2-champion": Object.freeze({
+    botType: "cc2-s2-champion",
+    engineId: "cold-clear-2-s2-development-champion/f14-substrate-v2-search-state/1",
+    label: "CC2 S2 — current development champion (not release-qualified)",
+    repository: "https://github.com/61bi-234469/s2-bot-lab",
+    commit: "development-snapshot-f14-substrate-v2-search-state",
+    comparisonSource: "cold-clear-2-s2-development-champion-final-placement",
+    protocolName: "Cold Clear 2 S2",
+    binary: options.s2Binary,
+    config: loadS2Config("fixtures/tuning/cc2-s2-spawn-integrity-substrate-v2.json"),
+  }),
 });
 /* Modules the browser and Node share verbatim. Each URL basename matches the
    file's own name, so the relative imports inside them resolve to another entry
@@ -813,7 +824,7 @@ async function closeCc2MatchSessions(session) {
 }
 
 function assertBotType(value) {
-  if (!["cc2-raw", "cc2-chouhy", "cc2-s2", "cc2-s2-gen017", "cc2-s2-f11", "cc2-s2-f12", "cc2-s2-f14", "cc2-s2-f25", "s2-simple", "human"].includes(value)) throw new Error(`unsupported match bot ${value}`);
+  if (!["cc2-raw", "cc2-chouhy", "cc2-s2", "cc2-s2-gen017", "cc2-s2-f11", "cc2-s2-f12", "cc2-s2-f14", "cc2-s2-f25", "cc2-s2-champion", "s2-simple", "human"].includes(value)) throw new Error(`unsupported match bot ${value}`);
   if (value === "cc2-raw" || value === "cc2-chouhy" || isCc2S2Type(value)) requireCc2Engine(value);
   return value;
 }
@@ -826,7 +837,7 @@ function requireCc2Engine(botType) {
 }
 
 function isCc2S2Type(botType) {
-  return botType === "cc2-s2" || botType === "cc2-s2-gen017" || botType === "cc2-s2-f11" || botType === "cc2-s2-f12" || botType === "cc2-s2-f14" || botType === "cc2-s2-f25";
+  return botType === "cc2-s2" || botType === "cc2-s2-gen017" || botType === "cc2-s2-f11" || botType === "cc2-s2-f12" || botType === "cc2-s2-f14" || botType === "cc2-s2-f25" || botType === "cc2-s2-champion";
 }
 
 function selectCc2S2Placement(guiState, moves, engine) {
@@ -868,6 +879,18 @@ function selectCc2S2Placement(guiState, moves, engine) {
   }
   if (engine.botType === "cc2-s2-f25") {
     return selectS2ThresholdImminentB2bRetentionPlacement(guiState, moves, {
+      candidateLimit: 16,
+      rankPenalty: 25,
+      adjustmentScale: 28,
+      weightProfileId: "sparse-s2",
+      weights: f11Weights,
+      allowCompleteReturnedPrefix: true,
+      engineId: engine.engineId,
+      comparisonSource: engine.comparisonSource,
+    });
+  }
+  if (engine.botType === "cc2-s2-champion") {
+    return selectS2F12PostTankSolvencyRescuePlacement(guiState, moves, {
       candidateLimit: 16,
       rankPenalty: 25,
       adjustmentScale: 28,

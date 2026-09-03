@@ -28,7 +28,18 @@ pub struct BotConfig {
     pub search_selection_limit: u64,
     /// Seed for the single search worker's exploration choices.
     pub search_seed: u64,
+    /// Adds source-qualified direct-180 edges to the native proposal frontier.
+    ///
+    /// This remains disabled for every existing configuration unless a candidate
+    /// configuration explicitly enables it.
+    #[serde(default)]
+    pub enable_direct_180: bool,
+    /// Recover an empty root frontier through the hidden spawn buffer.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub enable_spawn_buffer_entry: bool,
 }
+
+fn is_false(value: &bool) -> bool { !*value }
 
 impl Default for BotConfig {
     fn default() -> Self {
@@ -120,6 +131,37 @@ mod tests {
         assert_eq!(config.suggestion_count, 16);
         assert_eq!(config.search_selection_limit, u64::MAX);
         assert_eq!(config.search_seed, 0x5332_4343_3200_0001);
+        assert!(!config.enable_direct_180);
+    }
+
+    #[test]
+    fn direct_180_config_flag_is_backward_compatible_and_opt_in() {
+        let mut value = serde_json::to_value(BotConfig::default()).unwrap();
+        value.as_object_mut().unwrap().remove("enable_direct_180");
+        let omitted: BotConfig = serde_json::from_value(value.clone()).unwrap();
+        assert!(!omitted.enable_direct_180);
+
+        value.as_object_mut().unwrap().insert(
+            "enable_direct_180".to_owned(),
+            serde_json::Value::Bool(true),
+        );
+        let enabled: BotConfig = serde_json::from_value(value).unwrap();
+        assert!(enabled.enable_direct_180);
+    }
+
+    #[test]
+    fn spawn_buffer_entry_is_opt_in_and_false_preserves_serialized_shape() {
+        let original = serde_json::to_value(BotConfig::default()).unwrap();
+        assert!(original.get("enable_spawn_buffer_entry").is_none());
+        let omitted: BotConfig = serde_json::from_value(original.clone()).unwrap();
+        assert!(!omitted.enable_spawn_buffer_entry);
+        for enabled in [false, true] {
+            let mut value = original.clone();
+            value["enable_spawn_buffer_entry"] = enabled.into();
+            let config: BotConfig = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(config.enable_spawn_buffer_entry, enabled);
+            assert_eq!(serde_json::to_value(config).unwrap(), if enabled { value } else { original.clone() });
+        }
     }
 }
 

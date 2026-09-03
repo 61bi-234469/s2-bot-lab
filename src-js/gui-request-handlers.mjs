@@ -49,6 +49,7 @@ const CC2_LABELS = Object.freeze({
   "cc2-s2-f12": "CC2 S2 — F12 REN finisher",
   "cc2-s2-f14": "CC2 S2 — F14 post-tank rescue",
   "cc2-s2-f25": "CC2 S2 — F25 B2B retention",
+  "cc2-s2-champion": "CC2 S2 — current development champion (not release-qualified)",
 });
 const SPARSE_S2_WEIGHTS = Object.freeze({ aggregateHeight:-.1,maxHeight:-.4,holes:-1,bumpiness:-.05,remainingIncoming:0,deferredIncoming:-.8,dueIncoming:0,incomingNextLock:0,confirmedIncoming:0,tankedIncoming:-.25,visibleTopOutMargin:0,outgoingBeforeCancel:0,outgoingAfterCancel:1,cancelled:.8,combo:0,b2b:.6,chargingLevel:0,surgeSent:.25 });
 
@@ -277,5 +278,6 @@ function selectS2(gui, moves, id) {
   if (id === "cc2-s2-f12") return selectS2ConversionQualifiedRenFinisherPlacement(gui,moves,common);
   if (id === "cc2-s2-f14") return selectS2F12PostTankSolvencyRescuePlacement(gui,moves,common);
   if (id === "cc2-s2-f25") return selectS2ThresholdImminentB2bRetentionPlacement(gui,moves,common);
+  if (id === "cc2-s2-champion") return selectS2F12PostTankSolvencyRescuePlacement(gui,moves,common);
   return selectCc2S2HybridPlacement(gui,moves,publicEngine(id));
 }

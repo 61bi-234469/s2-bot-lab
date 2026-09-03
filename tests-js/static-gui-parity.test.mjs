@@ -36,7 +36,15 @@ test("single analysis exposes every static CC2 engine", async () => {
   const html = await readFile(new URL("../cc2-gui/index.html", import.meta.url), "utf8");
   const analysis = html.match(/<select id="analysis-bot">([\s\S]*?)<\/select>/)?.[1] ?? "";
   const ids = [...analysis.matchAll(/value="(cc2-[^"]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(ids, ["cc2-raw", "cc2-chouhy", "cc2-s2", "cc2-s2-gen017", "cc2-s2-f11", "cc2-s2-f12", "cc2-s2-f14", "cc2-s2-f25"]);
+  assert.deepEqual(ids, ["cc2-raw", "cc2-chouhy", "cc2-s2", "cc2-s2-gen017", "cc2-s2-f11", "cc2-s2-f12", "cc2-s2-f14", "cc2-s2-f25", "cc2-s2-champion"]);
+});
+
+test("bot-vs-bot selectors expose the current development champion", async () => {
+  const html = await readFile(new URL("../cc2-gui/index.html", import.meta.url), "utf8");
+  for (const id of ["left-bot", "right-bot"]) {
+    const select = html.match(new RegExp(`<select id="${id}">([\\s\\S]*?)</select>`))?.[1] ?? "";
+    assert.match(select, /value="cc2-s2-champion"/);
+  }
 });
 
 test("static CC2 suggestion preserves the GUI response identity contract", async () => {

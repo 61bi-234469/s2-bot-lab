@@ -47,6 +47,9 @@ pub struct Start {
     pub hold: Option<Piece>,
     pub combo: u32,
     pub back_to_back: bool,
+    /// Canonical one-based B2B chain length. Missing falls back to the bool.
+    #[serde(default)]
+    pub b2b: Option<u32>,
     #[serde(default)]
     pub randomizer: Randomizer,
 }

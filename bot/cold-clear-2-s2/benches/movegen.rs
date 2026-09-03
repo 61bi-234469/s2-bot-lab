@@ -15,7 +15,9 @@ const PIECES: [Piece; 7] = [
 fn bench_movegen(c: &mut Criterion, name: &str, board: Board) {
     let mut group = c.benchmark_group(name);
     for p in PIECES {
-        group.bench_function(format!("{:?}", p), |b| b.iter(|| find_moves(&board, p)));
+        group.bench_function(format!("{:?}", p), |b| {
+            b.iter(|| find_moves(&board, p, false))
+        });
     }
 }
 

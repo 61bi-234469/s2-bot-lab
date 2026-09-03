@@ -8,13 +8,58 @@ pub struct Board {
     pub cols: [u64; 10],
 }
 
+/// Search B2B is saturated at the observed `b2bcharge_at` (4). Eval only reads
+/// `b2b > 0` and `b2b >= 4`; a fifth bucket would split transposition unused.
+pub const B2B_SAT: u8 = 4;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct GameState {
     pub board: Board,
     pub bag: EnumSet<Piece>,
     pub reserve: Piece,
-    pub back_to_back: bool,
+    pub b2b: u8,
     pub combo: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChainDelta {
+    pub combo_after: u8,
+    pub b2b_after: u8,
+    pub continuing_b2b: bool,
+}
+
+/// Canonical `advanceChain` if-else with observed `perfectClearB2bBonus = 1`,
+/// then B2B sat at [`B2B_SAT`]. PC charges +1 and is not stacked on difficult.
+pub fn advance_chain(
+    combo: u8,
+    b2b: u8,
+    lines: u32,
+    spin: Spin,
+    perfect_clear: bool,
+) -> ChainDelta {
+    let b2b = b2b.min(B2B_SAT);
+    if lines == 0 {
+        return ChainDelta {
+            combo_after: 0,
+            b2b_after: b2b,
+            continuing_b2b: false,
+        };
+    }
+    let combo_after = combo.saturating_add(1);
+    let difficult = lines >= 4 || !matches!(spin, Spin::None);
+    if perfect_clear || difficult {
+        ChainDelta {
+            combo_after,
+            b2b_after: b2b.saturating_add(1).min(B2B_SAT),
+            continuing_b2b: b2b >= 1,
+        }
+    } else {
+        ChainDelta {
+            combo_after,
+            b2b_after: 0,
+            continuing_b2b: false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -294,21 +339,26 @@ impl GameState {
         }
         self.board.place(placement.location);
         let cleared_mask = self.board.line_clears();
-        let mut back_to_back = false;
+        let lines_cleared = cleared_mask.count_ones();
         if cleared_mask != 0 {
             self.board.remove_lines(cleared_mask);
-            let hard = cleared_mask.count_ones() == 4 || !matches!(placement.spin, Spin::None);
-            back_to_back = hard && self.back_to_back;
-            self.back_to_back = hard;
-        } else {
-            self.combo = 0;
         }
+        let perfect_clear = lines_cleared > 0 && self.board.cols.iter().all(|&c| c == 0);
+        let delta = advance_chain(
+            self.combo,
+            self.b2b,
+            lines_cleared,
+            placement.spin,
+            perfect_clear,
+        );
+        self.combo = delta.combo_after;
+        self.b2b = delta.b2b_after;
         PlacementInfo {
             placement,
-            lines_cleared: cleared_mask.count_ones(),
+            lines_cleared,
             combo: self.combo as u32,
-            back_to_back,
-            perfect_clear: self.board.cols.iter().all(|&c| c == 0),
+            back_to_back: delta.continuing_b2b,
+            perfect_clear,
         }
     }
 }
@@ -329,5 +379,62 @@ fn clear_lines(col: &mut u64, mut lines: u64) {
         *col = *col & mask | *col >> 1 & !mask;
         lines &= !(1 << i);
         lines >>= 1;
+    }
+}
+
+#[cfg(test)]
+mod chain_tests {
+    use super::{advance_chain, ChainDelta, Spin, B2B_SAT};
+
+    fn delta(combo: u8, b2b: u8, lines: u32, spin: Spin, pc: bool) -> ChainDelta {
+        advance_chain(combo, b2b, lines, spin, pc)
+    }
+
+    #[test]
+    fn golden_chain_cases_with_sat_4() {
+        // fixtures/golden/chain-and-surge.json chainCases, B2B clamped to B2B_SAT.
+        assert_eq!(
+            delta(0, 0, 4, Spin::None, false),
+            ChainDelta { combo_after: 1, b2b_after: 1, continuing_b2b: false }
+        );
+        assert_eq!(
+            delta(1, 1, 2, Spin::Full, false),
+            ChainDelta { combo_after: 2, b2b_after: 2, continuing_b2b: true }
+        );
+        assert_eq!(
+            delta(3, 5, 1, Spin::None, false),
+            ChainDelta { combo_after: 4, b2b_after: 0, continuing_b2b: false }
+        );
+        assert_eq!(
+            delta(3, 5, 0, Spin::None, false),
+            ChainDelta { combo_after: 0, b2b_after: B2B_SAT, continuing_b2b: false }
+        );
+        assert_eq!(
+            delta(0, 2, 2, Spin::None, true),
+            ChainDelta { combo_after: 1, b2b_after: 3, continuing_b2b: true }
+        );
+    }
+
+    #[test]
+    fn tetris_or_spin_perfect_clear_charges_once() {
+        assert_eq!(
+            delta(0, 0, 4, Spin::None, true),
+            ChainDelta { combo_after: 1, b2b_after: 1, continuing_b2b: false }
+        );
+        assert_eq!(
+            delta(2, 3, 2, Spin::Full, true),
+            ChainDelta { combo_after: 3, b2b_after: 4, continuing_b2b: true }
+        );
+    }
+
+    #[test]
+    fn b2b_saturates_at_charge_threshold() {
+        assert_eq!(delta(1, 4, 4, Spin::None, false).b2b_after, 4);
+        assert_eq!(delta(1, 4, 1, Spin::Mini, true).b2b_after, 4);
+    }
+
+    #[test]
+    fn combo_saturates_at_u8_max() {
+        assert_eq!(delta(255, 0, 1, Spin::None, false).combo_after, 255);
     }
 }

@@ -48,6 +48,10 @@ export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
     description: "F14を土台に、B2B閾値直前で継続を守るF25開発botです。release候補ではありません。",
     parameters: CC2_PARAMETERS,
   }),
+  "cc2-s2-champion": Object.freeze({
+    description: "現在の開発champion（F14 selector + substrate v2 + search-state）です。release-qualifiedではありません。",
+    parameters: CC2_PARAMETERS,
+  }),
   "s2-simple": Object.freeze({
     description: "S2最終配置botがHOLD候補を探索するかを設定します。",
     parameters: Object.freeze([

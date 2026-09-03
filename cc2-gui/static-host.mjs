@@ -60,7 +60,12 @@ async function proposeCc2({ engine, state }) {
     worker.postMessage({ id, type, payload });
   });
   try {
-    await request("init", { wasm, configUrl: engine === "cc2-s2" || !engine.startsWith("cc2-s2") ? null : "./cc2-s2-spin-value-aligned.json", selectionLimit: "512", searchSeed: "5994928009864282113" });
+    const configUrl = engine === "cc2-s2-champion"
+      ? "./cc2-s2-spawn-integrity-substrate-v2.json"
+      : engine === "cc2-s2" || !engine.startsWith("cc2-s2")
+        ? null
+        : "./cc2-s2-spin-value-aligned.json";
+    await request("init", { wasm, configUrl, selectionLimit: "512", searchSeed: "5994928009864282113" });
     return await request("suggest", { state });
   } finally {
     try {

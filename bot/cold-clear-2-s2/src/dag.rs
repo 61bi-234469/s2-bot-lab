@@ -148,6 +148,10 @@ impl<E: Evaluation> Dag<E> {
 }
 
 impl<E: Evaluation> Selection<'_, E> {
+    pub fn is_root(&self) -> bool {
+        self.layers.len() == 1
+    }
+
     pub fn state(&self) -> (GameState, Option<Piece>) {
         (self.game_state, self.layers.last().unwrap().kind.piece())
     }

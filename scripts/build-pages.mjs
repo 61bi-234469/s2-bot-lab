@@ -75,6 +75,7 @@ const index = await readFile(resolve(repo, "cc2-gui/index.html"), "utf8");
 await writeFile(resolve(site, "index.html"), preparePagesIndex(index, appVersion));
 await cp(resolve(repo, "cc2-gui/styles.css"), resolve(site, "styles.css"));
 await cp(resolve(repo, "fixtures/tuning/cc2-s2-spin-value-aligned.json"), resolve(site, "cc2-s2-spin-value-aligned.json"));
+await cp(resolve(repo, "fixtures/tuning/cc2-s2-spawn-integrity-substrate-v2.json"), resolve(site, "cc2-s2-spawn-integrity-substrate-v2.json"));
 const wasmArtifacts = ["cold_clear_2_s2", "cold_clear_2_upstream", "cold_clear_2_chouhy"];
 const wasm = [];
 for (const name of wasmArtifacts) {

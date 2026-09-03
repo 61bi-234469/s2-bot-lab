@@ -42,6 +42,7 @@ const fixedAssets = [
   ".gitattributes",
   ".gitignore",
   ".github/workflows/pages.yml",
+  "AGENTS.md",
   "CONTRIBUTING.md",
   "Cargo.lock",
   "Cargo.toml",
@@ -51,6 +52,7 @@ const fixedAssets = [
   "fixtures/benchmark/search-v1.json",
   "fixtures/tuning/cc2-s2-initial-weight-grid.json",
   "fixtures/tuning/cc2-s2-spin-value-aligned.json",
+  "fixtures/tuning/cc2-s2-spawn-integrity-substrate-v2.json",
   "package-lock.json",
   "package.json",
   "rulesets/tetrio-s2-v19-beta-1-5-0-observed.json",
@@ -75,7 +77,7 @@ const excludedPublicTests = new Set([
   // This test consumes an arena fixture; arena evidence is private-only.
   "tests-js/proposal-outcome.test.mjs",
 ]);
-const forbiddenPath = /^(?:AGENTS(?:\.local)?\.md|CLAUDE\.md|docs\/|skills\/|\.claude\/|一時的\/|target\/|node_modules\/|research\/|third_party\/reference-clones\/|third_party\/mochbot-fusion\/|fixtures\/arena\/|fixtures\/compare\/|fixtures\/evidence\/)/i;
+const forbiddenPath = /^(?:AGENTS\.local\.md|CLAUDE\.md|docs\/|skills\/|\.claude\/|一時的\/|target\/|node_modules\/|research\/|third_party\/reference-clones\/|third_party\/mochbot-fusion\/|fixtures\/arena\/|fixtures\/compare\/|fixtures\/evidence\/)/i;
 const forbiddenText = /fusion|LOCALAPPDATA|C:\\Users\\|C:\/Users\/|\/Users\/[^/]+\/|\/home\/[^/]+\/|AppData|OneDrive|docs\/|skills\/|一時的/i;
 const textAuditExclusions = new Set(["scripts/publication-closure.mjs"]);
 const importPattern = /(?:from\s*|import\s*\()\s*["']([^"']+)["']/g;
