@@ -93,6 +93,25 @@ test("bot-vs-bot defaults to a random seed and unlimited turns", async () => {
   assert.match(html, /<input id="match-unlimited-turns" type="checkbox" checked>/);
 });
 
+test("the 1P Reset key restarts every match state and rerolls RND", async () => {
+  const app = await readFile(new URL("../cc2-gui/app.mjs", import.meta.url), "utf8");
+  const keydown = app.slice(
+    app.indexOf("function handleHumanKeyDown"),
+    app.indexOf("function handleHumanKeyUp"),
+  );
+  assert.match(keydown, /requestHumanMatchRestart\(\)/);
+  assert.doesNotMatch(keydown, /matchStarting \|\| matchRoundFinalization/);
+
+  const restart = app.slice(
+    app.indexOf("async function activateHumanMatchReset"),
+    app.indexOf("function clearMatchArena"),
+  );
+  assert.match(restart, /if \(matchStartInFlight !== null\) await matchStartInFlight/);
+  assert.match(restart, /if \(matchRoundFinalization !== null\) await matchRoundFinalization/);
+  assert.match(restart, /excludedRandomSeed:[\s\S]*match-random-seed/);
+  assert.match(restart, /rerollRandomSeed: true/);
+});
+
 test("static CC2 suggestion preserves the GUI response identity contract", async () => {
   let proposalRequest;
   const handlers = createGuiRequestHandlers({ proposeCc2: async (request) => { proposalRequest = request; return { suggestion: { moves: [{ location: { type: "T", orientation: "north", x: 0, y: 0 }, spin: "none" }], move_info: { nodes: 512, nps: 512 } }, peakMemoryBytes: 65536 }; } });

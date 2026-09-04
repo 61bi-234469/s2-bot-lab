@@ -128,6 +128,9 @@ let matchAutoplay = false;
 /* Only true while a start request is in flight, which is the one moment the
    single run button has nothing to toggle yet. */
 let matchStarting = false;
+let matchStartInFlight = null;
+let humanMatchRestartInFlight = null;
+let lastStartedMatchSeed = null;
 let matchSeries = null;
 let matchRoundStatus = "";
 let matchRoundFinalization = null;
@@ -157,9 +160,10 @@ let humanRenderRequested = false;
    shared clock rather than chained off the previous reply, because the player's
    own locks advance that clock in between. */
 let humanBotStepTimer = null;
-/* A step is in flight. The STEP button used to carry this, but a human match
-   disables that button while still stepping its opponent. */
-let matchStepInFlight = false;
+/* Identifies the server session whose step is in flight. A new round advances
+   matchGeneration, so an old request can neither block nor clear the new
+   round's first step. */
+let matchStepGeneration = null;
 let lastMatchView = null;
 
 applyStoredPreferences();
@@ -1166,7 +1170,18 @@ function requestSuggestion(engine, cc2State) {
   });
 }
 
-async function startMatch() {
+async function startMatch(options = {}) {
+  if (matchStartInFlight !== null) return matchStartInFlight;
+  const operation = performStartMatch(options);
+  matchStartInFlight = operation;
+  try {
+    return await operation;
+  } finally {
+    if (matchStartInFlight === operation) matchStartInFlight = null;
+  }
+}
+
+async function performStartMatch({ excludedRandomSeed = null } = {}) {
   matchAutoplay = false;
   matchRunning = false;
   matchSeries = null;
@@ -1181,7 +1196,7 @@ async function startMatch() {
   elements["match-status"].textContent = "STARTING";
   try {
     if (selectedHumanSide() !== null) await ensurePlacementGeometry();
-    matchSeries = createMatchSeries();
+    matchSeries = createMatchSeries({ excludedRandomSeed });
     setMatchSettingsDisabled(true);
     renderMatchSummary();
     matchAutoplay = true;
@@ -1434,6 +1449,11 @@ function handleHumanKeyDown(event) {
   // behavior. Everywhere else, reserve configured keys for the game only.
   if (isKeyboardEditingTarget(event.target)) return;
   event.preventDefault();
+  if (action === "Reset") {
+    if (event.repeat || mode !== "match" || selectedHumanSide() === null) return;
+    requestHumanMatchRestart();
+    return;
+  }
   if (!humanInputEnabled()) return;
   if (event.repeat) return;
   const handling = humanHandling(humanControls);
@@ -1472,9 +1492,6 @@ function handleHumanKeyDown(event) {
     case "Hold":
       humanHold();
       return;
-    case "Reset":
-      resetMatch();
-      return;
     default:
   }
 }
@@ -1485,7 +1502,7 @@ function handleHumanKeyUp(event) {
   if (action !== null) pieceRepeat.end(action);
 }
 
-function createMatchSeries() {
+function createMatchSeries({ excludedRandomSeed = null } = {}) {
   const fairComparison = fairComparisonEnabled();
   const leftType = elements["left-bot"].value;
   const rightType = elements["right-bot"].value;
@@ -1503,7 +1520,7 @@ function createMatchSeries() {
       rightParameters,
       fairComparison,
       seed: elements["match-random-seed"].checked
-        ? randomUint32()
+        ? randomUint32Except(excludedRandomSeed)
         : readBoundedInteger("match-seed", 0, 0xffff_ffff),
       maxTurns: elements["match-unlimited-turns"].checked
         ? null
@@ -1518,15 +1535,20 @@ function createMatchSeries() {
     totalTurns: 0,
     rounds: [],
     replayMeta: null,
+    currentSeed: null,
   };
 }
 
 async function startSeriesGame() {
   if (matchRoundFinalization !== null || matchSeries === null || matchSeriesWinner() !== null) return;
-  const generation = matchGeneration;
+  // Every server session owns a generation. A previous round's late `/step`
+  // reply is ignored without delaying this start or sharing its in-flight gate.
+  const generation = ++matchGeneration;
   const gameNumber = matchSeries.completed + 1;
   const config = matchSeries.config;
   const seed = (config.seed + matchSeries.completed) >>> 0;
+  matchSeries.currentSeed = seed;
+  lastStartedMatchSeed = seed;
   elements["match-status"].textContent = `GAME ${gameNumber} · FT${config.firstTo} · STARTING · SEED ${seed}`;
   const response = await fetch("/api/match/start", {
     method: "POST",
@@ -1584,9 +1606,9 @@ function cancelHumanMatchBotStep() {
 }
 
 async function stepMatch() {
-  if (!matchRunning || matchStepInFlight) return;
   const generation = matchGeneration;
-  matchStepInFlight = true;
+  if (!matchRunning || matchStepGeneration === generation) return;
+  matchStepGeneration = generation;
   matchClock = setMatchClockRunning(matchClock, true, performance.now());
   elements["match-step"].disabled = true;
   // Once a bot-only match is known to be compute-limited, keep the measured
@@ -1629,7 +1651,7 @@ async function stepMatch() {
   } catch (error) {
     if (generation === matchGeneration) handleMatchError(error);
   } finally {
-    matchStepInFlight = false;
+    if (matchStepGeneration === generation) matchStepGeneration = null;
     if (generation === matchGeneration) {
       if (!matchAutoplay) matchClock = setMatchClockRunning(matchClock, false, performance.now());
       elements["match-step"].disabled = !matchRunning || human !== null;
@@ -1777,8 +1799,10 @@ function handleMatchError(error) {
   renderMatchRunButton();
 }
 
-/* Clears the arena and explicitly releases any retained bot runtime. */
-async function resetMatch() {
+/* Clears the arena and explicitly releases any retained bot runtime. In 1P,
+   restartCurrentGame preserves the series so only its unfinished game is
+   abandoned; RND may replace that game's seed before it is opened again. */
+async function resetMatch({ restartCurrentGame = false, rerollRandomSeed = false } = {}) {
   if (matchRoundFinalization !== null) {
     elements["match-status"].textContent = "WAITING FOR ROUND SAVE";
     try {
@@ -1787,10 +1811,20 @@ async function resetMatch() {
       return;
     }
   }
+  const preservedSeries = restartCurrentGame ? matchSeries : null;
+  if (rerollRandomSeed && preservedSeries !== null && elements["match-random-seed"].checked) {
+    const previousSeed = preservedSeries.currentSeed ??
+      ((preservedSeries.config.seed + preservedSeries.completed) >>> 0);
+    const nextSeed = randomUint32Except(previousSeed);
+    preservedSeries.config.seed = (nextSeed - preservedSeries.completed) >>> 0;
+    if (preservedSeries.replayMeta?.match !== undefined) {
+      preservedSeries.replayMeta.match.seed = preservedSeries.config.seed;
+    }
+  }
   pauseMatchAutoplay();
   matchRunning = false;
-  matchStarting = false;
-  matchSeries = null;
+  matchStarting = restartCurrentGame;
+  matchSeries = preservedSeries;
   matchRoundStatus = "";
   matchGeneration += 1;
   cancelHumanMatchBotStep();
@@ -1817,11 +1851,42 @@ async function resetMatch() {
   renderMatchSummary();
   renderMatchSaveButton();
   setMatchExportMessage(null, "");
-  elements["match-status"].textContent = "NOT STARTED";
+  elements["match-status"].textContent = restartCurrentGame ? "RESTARTING" : "NOT STARTED";
   elements["match-step"].disabled = true;
-  elements["match-reset"].disabled = true;
-  setMatchSettingsDisabled(false);
+  elements["match-reset"].disabled = !restartCurrentGame;
+  setMatchSettingsDisabled(restartCurrentGame);
   renderMatchRunButton();
+  if (restartCurrentGame && matchSeries === preservedSeries && preservedSeries !== null) {
+    matchAutoplay = true;
+    matchStarting = false;
+    await beginSeriesGame();
+  }
+}
+
+/* The configured 1P Reset key always starts play. During an active series it
+   abandons only the unfinished game and retains completed scores; after the
+   series ends it opens a fresh series. A random-seed restart rerolls the
+   current game, while a manual seed keeps its deterministic queue. */
+function requestHumanMatchRestart() {
+  if (humanMatchRestartInFlight !== null) return;
+  const operation = activateHumanMatchReset();
+  humanMatchRestartInFlight = operation;
+  operation.catch(handleMatchError).finally(() => {
+    if (humanMatchRestartInFlight === operation) humanMatchRestartInFlight = null;
+  });
+}
+
+async function activateHumanMatchReset() {
+  if (matchStartInFlight !== null) await matchStartInFlight;
+  if (matchRoundFinalization !== null) await matchRoundFinalization;
+  if (!matchSeriesActive()) {
+    const previousSeed = matchSeries?.currentSeed ?? lastStartedMatchSeed;
+    await startMatch({
+      excludedRandomSeed: elements["match-random-seed"].checked ? previousSeed : null,
+    });
+    return;
+  }
+  await resetMatch({ restartCurrentGame: true, rerollRandomSeed: true });
 }
 
 function clearMatchArena() {
@@ -2056,6 +2121,11 @@ function randomUint32() {
   const values = new Uint32Array(1);
   if (globalThis.crypto?.getRandomValues) return globalThis.crypto.getRandomValues(values)[0];
   return Math.floor(Math.random() * 0x1_0000_0000) >>> 0;
+}
+
+function randomUint32Except(excluded) {
+  const value = randomUint32();
+  return Number.isSafeInteger(excluded) && value === excluded ? (value + 1) >>> 0 : value;
 }
 
 function renderMatch(view) {

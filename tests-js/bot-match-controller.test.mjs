@@ -26,6 +26,15 @@ function state({ frame = 100, marker = null } = {}) {
   return result;
 }
 
+function guiState(options) {
+  const result = state(options);
+  result.board.height = 40;
+  result.board.visibleHeight = 20;
+  result.board.bufferHeight = 20;
+  result.board.cells = result.board.cells.padEnd(400, "_");
+  return result;
+}
+
 function submission(botId, before, {
   outgoing = 0,
   cancelled = 0,
@@ -164,6 +173,38 @@ test("paced mode schedules each bot independently at its configured PPS", () => 
     garbageCleared: 0,
     elapsedFrames: match.clock.logicalFrame,
   }).pps), [2, 1]);
+});
+
+test("fractional PPS projects each rounded cadence as an integer lock step", () => {
+  const left = guiState({ frame: 0, marker: "left" });
+  const right = guiState({ frame: 0, marker: "right" });
+  let match = createBotMatch({
+    bots: [{ id: "left", state: left }, { id: "right", state: right }],
+    mode: "paced",
+    ppsByBotId: { left: 1.3, right: 1.3 },
+  });
+
+  for (const expected of [46, 46, 46, 47]) {
+    assert.equal(botMatchToGuiState(match, "left").s2.clock.framesPerLock, expected);
+    const due = botMatchNextStep(match);
+    assert.equal(due.frames, expected);
+    match = advanceBotMatch(match, match.bots.map((bot) => submission(bot.id, bot.state)));
+  }
+  assert.equal(match.clock.logicalFrame, 185);
+});
+
+test("paced projection measures from the shared clock after the other bot locks", () => {
+  const left = guiState({ frame: 0, marker: "left" });
+  const right = guiState({ frame: 0, marker: "right" });
+  let match = createBotMatch({
+    bots: [{ id: "left", state: left }, { id: "right", state: right }],
+    mode: "paced",
+    ppsByBotId: { left: 2, right: 1 },
+  });
+
+  match = advanceBotMatch(match, [submission("left", left)]);
+  assert.equal(match.clock.logicalFrame, 30);
+  assert.equal(botMatchToGuiState(match, "right").s2.clock.framesPerLock, 30);
 });
 
 test("an externally paced player locks on the frames the caller supplies", () => {

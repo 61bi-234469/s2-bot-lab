@@ -341,8 +341,12 @@ export function botMatchToGuiState(match, botId) {
         kind: "synthetic-fixed-lock-step",
         // An externally paced player has no fixed cadence to report, so the
         // match's own turn length stands in rather than a fabricated rate.
+        // Scheduled rates can be fractional (for example 1.3 PPS), while the
+        // canonical clock is frame-exact. Report the integer distance from the
+        // shared match clock to this bot's next scheduled lock rather than the
+        // fractional average cadence.
         framesPerLock: match.mode === "paced" && match.pace.ppsByBotId[botId] !== null
-          ? 60 / match.pace.ppsByBotId[botId]
+          ? match.pace.nextLockFrames[botId] - match.clock.logicalFrame
           : match.clock.framesPerTurn,
       },
     },
