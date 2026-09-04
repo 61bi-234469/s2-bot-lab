@@ -2,22 +2,16 @@ export const DEFAULT_BOT_MATCH_OPTIONS = Object.freeze({
   leftThinkMs: 250,
   rightThinkMs: 250,
   fairComparison: false,
-  thinkTimePace: false,
   seed: 0x5e2,
   maxTurns: 500,
 });
 
 export function normalizeBotMatchOptions(input = {}) {
   const fairComparison = booleanValue(input.fairComparison ?? DEFAULT_BOT_MATCH_OPTIONS.fairComparison, "fairComparison");
-  const thinkTimePace = booleanValue(input.thinkTimePace ?? DEFAULT_BOT_MATCH_OPTIONS.thinkTimePace, "thinkTimePace");
-  if (fairComparison && thinkTimePace) {
-    throw new Error("fairComparison and thinkTimePace cannot both be enabled");
-  }
   return Object.freeze({
     leftThinkMs: integerInRange(input.leftThinkMs ?? DEFAULT_BOT_MATCH_OPTIONS.leftThinkMs, 10, 10_000, "leftThinkMs"),
     rightThinkMs: integerInRange(input.rightThinkMs ?? DEFAULT_BOT_MATCH_OPTIONS.rightThinkMs, 10, 10_000, "rightThinkMs"),
     fairComparison,
-    thinkTimePace,
     seed: integerInRange(input.seed ?? DEFAULT_BOT_MATCH_OPTIONS.seed, 0, 0xffff_ffff, "seed"),
     maxTurns: input.maxTurns === null
       ? null
@@ -30,6 +24,17 @@ export function normalizeBotMatchOptions(input = {}) {
 export function ppsForThinkTime(thinkMs) {
   const budget = integerInRange(thinkMs, 10, 10_000, "thinkMs");
   return Math.max(0.1, Math.min(20, 1000 / budget));
+}
+
+/** Resolves the synthetic match cadence used when a CC2 bot has no explicit
+ * PPS limiter. A selection-limited search has no duration known in advance, so
+ * the earliest supported cadence adds no visible wait after its reply; actual
+ * placement still cannot happen before the search completes. A time-only
+ * search maps its configured duration to the equivalent cadence. */
+export function ppsForCc2Parameters(parameters) {
+  if (parameters?.ppsEnabled !== false) return parameters.pps;
+  if (parameters.selectionEnabled) return 20;
+  return ppsForThinkTime(parameters.thinkMs);
 }
 
 /**

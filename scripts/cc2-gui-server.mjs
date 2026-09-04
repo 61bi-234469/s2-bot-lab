@@ -49,12 +49,12 @@ import { fullStateKey } from "../src-js/state-keys.mjs";
 import {
   matchOutcome,
   normalizeBotMatchOptions,
-  ppsForThinkTime,
+  ppsForCc2Parameters,
   realtimeCc2ThinkMs,
 } from "../src-js/bot-match-options.mjs";
 import { runBotProposals } from "../src-js/bot-proposal-runner.mjs";
 import { calculatePlayerMetrics } from "../cc2-gui/player-metrics.mjs";
-import { botParameterCapability, normalizeBotParameters } from "../src-js/bot-parameters.mjs";
+import { botParameterCapability, fairComparisonBotParameters, normalizeBotParameters } from "../src-js/bot-parameters.mjs";
 import { loadS2Config, s2ConfigArguments } from "../src-js/cc2-s2-config.mjs";
 import { RULESET_IDS, resolvePlacementRules } from "../src-js/ruleset-profiles.mjs";
 import { canonicalTransitionHttpResponse } from "../src-js/canonical-transition-api.mjs";
@@ -271,8 +271,12 @@ const server = createServer(async (request, response) => {
           throw new Error("fair comparison fixes both sides at 1 PPS and cannot include a human player");
         }
         botParameters = {
-          left: normalizeBotParameters(leftType, body.leftParameters),
-          right: normalizeBotParameters(rightType, body.rightParameters),
+          left: config.fairComparison
+            ? fairComparisonBotParameters(leftType, body.leftParameters)
+            : normalizeBotParameters(leftType, body.leftParameters),
+          right: config.fairComparison
+            ? fairComparisonBotParameters(rightType, body.rightParameters)
+            : normalizeBotParameters(rightType, body.rightParameters),
         };
       } catch (error) {
         return sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
@@ -567,7 +571,7 @@ async function runScheduledBots(session) {
  * the budget towards its floor for no reason the bot can see.
  */
 function botLockCadenceFrames(session, botId) {
-  const pps = session.config.fairComparison ? 1 : session.botParameters[botId].pps;
+  const pps = session.match.pace.ppsByBotId[botId];
   return 60 / pps;
 }
 
@@ -599,10 +603,8 @@ async function searchForBot(session, bot, dueCount) {
   const searchStartedAt = performance.now();
   try {
     cc2 = await cc2Session.suggest({
-      // THINK TIME PACE is an explicit match-wide override: its documented
-      // promise to give the configured time to CC2 also enables that limit.
-      timeLimitEnabled: parameters.thinkTimeEnabled || session.config.thinkTimePace,
-      thinkMs: session.config.thinkTimePace
+      timeLimitEnabled: parameters.thinkTimeEnabled,
+      thinkMs: parameters.ppsEnabled === false
         ? parameters.thinkMs
         : realtimeCc2ThinkMs({
           thinkMs: parameters.thinkMs,
@@ -774,9 +776,8 @@ function resolveHumanSide(leftType, rightType) {
 function pacedRateFor(side, botType, humanSide, config, botParameters) {
   if (botType === "human") return null;
   if (config.fairComparison) return 1;
-  const thinkMs = botParameters[side].thinkMs;
-  return config.thinkTimePace && Number.isSafeInteger(thinkMs)
-    ? ppsForThinkTime(thinkMs)
+  return botType.startsWith("cc2-")
+    ? ppsForCc2Parameters(botParameters[side])
     : botParameters[side].pps;
 }
 
@@ -1034,7 +1035,6 @@ function matchReplayMeta({ match, config, types, botParameters, firstTo, ttrmCom
     match: {
       seed: config.seed,
       fairComparison: config.fairComparison,
-      thinkTimePace: config.thinkTimePace,
       maxTurns: config.maxTurns,
       firstTo,
       ttrmCompatible: ttrmCompatible === true,

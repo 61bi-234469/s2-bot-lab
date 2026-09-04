@@ -26,7 +26,6 @@ export const CONTROL_PREFERENCE_IDS = Object.freeze([
 ]);
 export const TOGGLE_PREFERENCE_IDS = Object.freeze([
   "match-fair-comparison",
-  "match-think-time-pace",
   "match-pre-lock-preview",
   "match-unlimited-turns",
   "match-random-seed",

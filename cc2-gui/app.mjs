@@ -26,9 +26,9 @@ import {
 import {
   BOT_PARAMETER_DEFINITIONS,
   defaultBotParameters,
+  fairComparisonBotParameters,
   normalizeBotParameters,
 } from "/shared/bot-parameters.mjs";
-import { ppsForThinkTime } from "/shared/bot-match-options.mjs";
 import {
   canonicalPlacementToGuiMove,
   simpleAnalysisToVerification,
@@ -83,16 +83,17 @@ const BOT_SIDES = Object.freeze(["left", "right"]);
 // which group a parameter belongs to; what that group is called, and the rule
 // printed under it, are presentation and stay here.
 const BOT_PARAMETER_GROUPS = Object.freeze({
-  pace: Object.freeze({ label: "PACING" }),
+  pace: Object.freeze({
+    label: "PACING",
+    note: "PPSをOFFにすると、SELECTIONまたはTHINK TIMEの探索が終了した時点で配置します。",
+  }),
   budget: Object.freeze({
     label: "SEARCH BUDGET",
-    note: "SELECTION と THINK TIME は併用でき（先着で打ち切り）、両方OFFにはできません。",
+    note: "SELECTION と THINK TIME は併用でき、先に到達した方で探索を終了します。",
   }),
   input: Object.freeze({ label: "INPUT" }),
 });
-// Disabling the last remaining limit is refused by `normalizeBotParameters` as
-// well, so the locked checkbox has to say why rather than look broken.
-const LAST_SEARCH_LIMIT_NOTE = "最後の探索制限のためOFFにできません。";
+const SEARCH_BUDGET_VALIDATION_NOTE = "SELECTIONまたはTHINK TIMEを1つ以上ONにしてください。";
 // B2B charging as resolved by the server from the ruleset the GUI runs under.
 // Until /api/bots answers there is no rule to read, so no counter claims to be
 // surge-ready; `false` is the ruleset's own value for charging being off.
@@ -193,7 +194,6 @@ elements["match-save-ttrm"].addEventListener("click", saveMatchTtrm);
 elements["match-unlimited-turns"].addEventListener("change", syncMaxTurnsControl);
 elements["match-random-seed"].addEventListener("change", syncRandomSeedControl);
 elements["match-fair-comparison"].addEventListener("change", syncFairComparisonControls);
-elements["match-think-time-pace"].addEventListener("change", syncThinkTimePaceControls);
 elements["match-ttrm-compatible"].addEventListener("click", confirmTtrmQueue);
 elements["ttrm-queue-confirm"].addEventListener("click", enableTtrmQueue);
 for (const side of BOT_SIDES) {
@@ -214,7 +214,6 @@ syncMaxTurnsControl();
 syncRandomSeedControl();
 syncHumanMatchControls();
 syncFairComparisonControls();
-syncThinkTimePaceControls();
 /* The export buttons ship disabled in the markup, so their reason has to be
    filled in once before the first match rather than only on the next render. */
 renderMatchSaveButton();
@@ -336,14 +335,18 @@ function openBotSettings(side) {
   settingsSide = side;
   elements["bot-settings-side"].textContent = botType === "human" ? `${side.toUpperCase()} PLAYER` : `${side.toUpperCase()} BOT`;
   elements["bot-settings-title"].textContent = capability.label ?? botType;
-  elements["bot-settings-description"].textContent = capability.description ?? "";
+  const fairNote = fairComparisonEnabled() && botType.startsWith("cc2-")
+    ? " FAIR COMPARISON中の対局ではSELECTION 512のみを探索条件に使い、1 PPSで配置します。保存済みの個別設定は上書きされず、FAIR解除後に戻ります。"
+    : "";
+  elements["bot-settings-description"].textContent = `${capability.description ?? ""}${fairNote}`;
+  setBotSettingsValidation("");
   if (botType === "human") {
     elements["bot-settings-fields"].replaceChildren(...humanSettingsFields());
     elements["bot-settings-dialog"].showModal();
     return;
   }
   elements["bot-settings-fields"].replaceChildren(...botSettingsFields(capability, values));
-  syncCc2BudgetForm(capability);
+  syncBotSettingsForm(capability);
   elements["bot-settings-dialog"].showModal();
 }
 
@@ -454,9 +457,7 @@ function botParameterStateElement(parameter, values) {
 function botParameterStateText(parameter, values) {
   if (parameter.disabled === true) return parameter.disabledReason ?? "この実行環境では利用できません。";
   if (parameter.key === "pps" && ppsIsOverridden()) {
-    return fairComparisonEnabled()
-      ? "FAIR COMPARISON が両botを 1 PPS に固定しています。"
-      : `THINK TIME PACE が ${values.thinkMs} ms から PPS を導出しています。`;
+    return "FAIR COMPARISON が両Botを 1 PPS に固定しています。";
   }
   return "";
 }
@@ -494,56 +495,50 @@ function setBotParameterState(key, text) {
   if (state !== null) state.textContent = text;
 }
 
-function syncCc2BudgetForm(capability) {
+function syncBotSettingsForm(capability) {
   const form = elements["bot-settings-form"];
   const selection = form.elements.namedItem("selectionEnabled");
   const thinkTime = form.elements.namedItem("thinkTimeEnabled");
-  if (!(selection instanceof HTMLInputElement) || !(thinkTime instanceof HTMLInputElement)) return;
   const sync = () => {
-    // The only active limit cannot be switched off. Turning the other limit on
-    // first makes both checkboxes available again.
-    selection.disabled = selection.checked && !thinkTime.checked;
-    thinkTime.disabled = thinkTime.checked && !selection.checked;
-    setBotParameterState("selectionEnabled", selection.disabled ? LAST_SEARCH_LIMIT_NOTE : "");
-    setBotParameterState("thinkTimeEnabled", thinkTimeToggleStateText(thinkTime));
-    // A limit that the match settings force back on keeps its card lit even
-    // though its own toggle reads OFF, so the card never contradicts the input
-    // it contains.
-    const overridden = new Set();
     for (const parameter of capability.parameters) {
       if (!parameter.controlledBy) continue;
       const input = form.elements.namedItem(parameter.key);
       const controller = form.elements.namedItem(parameter.controlledBy);
       if (!(input instanceof HTMLInputElement) || !(controller instanceof HTMLInputElement)) continue;
-      const matchPaceOverride = parameter.controlledBy === "thinkTimeEnabled" && thinkTimePaceEnabled();
-      input.disabled = parameter.disabled === true || (!controller.checked && !matchPaceOverride);
-      if (!controller.checked && !input.disabled) overridden.add(parameter.controlledBy);
-      setBotParameterState(parameter.key, budgetLimitStateText(parameter, capability, controller, matchPaceOverride));
+      const fairPpsOverride = parameter.key === "pps" && fairComparisonEnabled();
+      input.disabled = parameter.disabled === true || !controller.checked || fairPpsOverride;
+      if (fairPpsOverride) input.value = 1;
+      setBotParameterState(parameter.key, controlledLimitStateText(parameter, capability, controller, fairPpsOverride));
     }
-    for (const toggle of [selection, thinkTime]) {
-      const card = document.getElementById(`bot-parameter-card-${toggle.name}`);
-      if (card !== null) card.classList.toggle("is-disabled", !toggle.checked && !overridden.has(toggle.name));
+    if (selection instanceof HTMLInputElement && thinkTime instanceof HTMLInputElement) {
+      const validation = selection.checked || thinkTime.checked ? "" : SEARCH_BUDGET_VALIDATION_NOTE;
+      setBotSettingsValidation(validation);
+      renderSearchBudgetSummary(form, selection, thinkTime);
     }
-    renderSearchBudgetSummary(form, selection, thinkTime);
   };
-  selection.addEventListener("change", sync);
-  thinkTime.addEventListener("change", sync);
+  for (const parameter of capability.parameters) {
+    if (parameter.type !== "boolean") continue;
+    form.elements.namedItem(parameter.key)?.addEventListener("change", sync);
+  }
   sync();
 }
 
-function thinkTimeToggleStateText(thinkTime) {
-  if (thinkTime.disabled) return LAST_SEARCH_LIMIT_NOTE;
-  if (!thinkTime.checked && thinkTimePaceEnabled()) return "THINK TIME PACE により、OFFでも時間制限が有効です。";
-  return "";
-}
-
-function budgetLimitStateText(parameter, capability, controller, matchPaceOverride) {
+function controlledLimitStateText(parameter, capability, controller, fairPpsOverride) {
   if (parameter.disabled === true) return parameter.disabledReason ?? "この実行環境では利用できません。";
+  if (fairPpsOverride) return "FAIR COMPARISON が両Botを 1 PPS に固定しています。";
   if (controller.checked) return "";
-  if (matchPaceOverride) return "THINK TIME PACE により有効です。";
   const controllerLabel = capability.parameters
     .find((candidate) => candidate.key === parameter.controlledBy)?.label ?? parameter.controlledBy;
   return `${controllerLabel} がOFFのため編集できません。`;
+}
+
+function setBotSettingsValidation(message) {
+  const output = elements["bot-settings-validation"];
+  output.textContent = message;
+  output.hidden = message === "";
+  const save = elements["bot-settings-save"];
+  save.classList.toggle("is-invalid", message !== "");
+  save.setAttribute("aria-disabled", String(message !== ""));
 }
 
 function renderSearchBudgetSummary(form, selection, thinkTime) {
@@ -551,7 +546,7 @@ function renderSearchBudgetSummary(form, selection, thinkTime) {
   if (summary === null) return;
   const limits = [];
   if (selection.checked) limits.push(`${form.elements.namedItem("selectionLimit").value} selections`);
-  if (thinkTime.checked || thinkTimePaceEnabled()) limits.push(`${form.elements.namedItem("thinkMs").value} ms`);
+  if (thinkTime.checked) limits.push(`${form.elements.namedItem("thinkMs").value} ms`);
   summary.textContent = limits.length > 1
     ? `有効 > ${limits.join(" / ")}（先に到達した方で打ち切り）`
     : `有効 > ${limits[0] ?? "なし"}`;
@@ -686,6 +681,13 @@ function saveBotSettings(event) {
   const values = botParameters[side][botType];
   const form = elements["bot-settings-form"];
   if (!form.reportValidity()) return;
+  const selection = form.elements.namedItem("selectionEnabled");
+  const thinkTime = form.elements.namedItem("thinkTimeEnabled");
+  if (selection instanceof HTMLInputElement && thinkTime instanceof HTMLInputElement
+      && !selection.checked && !thinkTime.checked) {
+    setBotSettingsValidation(SEARCH_BUDGET_VALIDATION_NOTE);
+    return;
+  }
   const candidate = Object.fromEntries(capability.parameters.map((parameter) => {
     const input = form.elements.namedItem(parameter.key);
     if (parameter.key === "pps" && ppsIsOverridden()) return [parameter.key, values[parameter.key]];
@@ -706,7 +708,10 @@ function saveBotSettings(event) {
 function renderBotSettingsSummary(side) {
   const botType = elements[`${side}-bot`].value;
   const capability = botCapabilities.get(botType) ?? BOT_PARAMETER_DEFINITIONS[botType];
-  const values = botParameters[side][botType];
+  const configuredValues = botParameters[side][botType];
+  const values = fairComparisonEnabled()
+    ? fairComparisonBotParameters(botType, configuredValues)
+    : configuredValues;
   if (botType === "human") {
     elements[`${side}-bot-settings-summary`].textContent = describeHumanControls(humanControls);
     return;
@@ -716,16 +721,13 @@ function renderBotSettingsSummary(side) {
     // that OFF was the same contradiction the dialog used to show.
     if (parameter.controlledBy === undefined) return true;
     return values[parameter.controlledBy] === true
-      || (parameter.controlledBy === "thinkTimeEnabled" && thinkTimePaceEnabled());
+      || (parameter.key === "pps" && fairComparisonEnabled());
   }).map((parameter) => {
     const overriddenPps = parameter.key === "pps" && ppsIsOverridden();
     const value = overriddenPps ? effectivePps(values) : values[parameter.key];
     if (parameter.type === "boolean") return `${parameter.label} ${value ? "ON" : "OFF"}`;
-    const source = fairComparisonEnabled() ? " (FAIR)" : thinkTimePaceEnabled() ? " (THINK TIME)" : "";
-    // The one limit that can be listed while its own toggle reads OFF has to say
-    // what is keeping it alive.
-    const paced = parameter.controlledBy !== undefined && values[parameter.controlledBy] !== true ? " (PACE)" : "";
-    return `${parameter.label} ${value}${parameter.suffix ? ` ${parameter.suffix}` : ""}${overriddenPps ? source : paced}`;
+    const source = fairComparisonEnabled() ? " (FAIR)" : "";
+    return `${parameter.label} ${value}${parameter.suffix ? ` ${parameter.suffix}` : ""}${overriddenPps ? source : ""}`;
   }).join(" · ");
 }
 
@@ -1486,25 +1488,21 @@ function handleHumanKeyUp(event) {
 
 function createMatchSeries() {
   const fairComparison = fairComparisonEnabled();
-  const leftParameters = { ...botParameters.left[elements["left-bot"].value] };
-  const rightParameters = { ...botParameters.right[elements["right-bot"].value] };
-  const thinkTimePace = thinkTimePaceEnabled();
-  if (fairComparison) {
-    leftParameters.pps = 1;
-    rightParameters.pps = 1;
-  } else if (thinkTimePace) {
-    for (const parameters of [leftParameters, rightParameters]) {
-      if (Number.isSafeInteger(parameters.thinkMs)) parameters.pps = ppsForThinkTime(parameters.thinkMs);
-    }
-  }
+  const leftType = elements["left-bot"].value;
+  const rightType = elements["right-bot"].value;
+  const leftParameters = { ...(fairComparison
+    ? fairComparisonBotParameters(leftType, botParameters.left[leftType])
+    : botParameters.left[leftType]) };
+  const rightParameters = { ...(fairComparison
+    ? fairComparisonBotParameters(rightType, botParameters.right[rightType])
+    : botParameters.right[rightType]) };
   return {
     config: {
-      left: elements["left-bot"].value,
-      right: elements["right-bot"].value,
+      left: leftType,
+      right: rightType,
       leftParameters,
       rightParameters,
       fairComparison,
-      thinkTimePace,
       seed: elements["match-random-seed"].checked
         ? randomUint32()
         : readBoundedInteger("match-seed", 0, 0xffff_ffff),
@@ -1541,7 +1539,6 @@ async function startSeriesGame() {
       leftParameters: config.leftParameters,
       rightParameters: config.rightParameters,
       fairComparison: config.fairComparison,
-      thinkTimePace: config.thinkTimePace,
       seed,
       maxTurns: config.maxTurns,
       firstTo: config.firstTo,
@@ -2007,7 +2004,7 @@ function matchSeriesWinner() {
 function setMatchSettingsDisabled(disabled) {
   for (const id of [
     "left-bot", "right-bot", "left-bot-settings", "right-bot-settings",
-    "match-fair-comparison", "match-think-time-pace", "match-pre-lock-preview", "match-seed", "match-max-turns", "match-unlimited-turns", "match-count",
+    "match-fair-comparison", "match-pre-lock-preview", "match-seed", "match-max-turns", "match-unlimited-turns", "match-count",
     "match-ttrm-compatible",
   ]) elements[id].disabled = disabled;
   elements["match-max-turns"].disabled = disabled || elements["match-unlimited-turns"].checked;
@@ -2042,33 +2039,23 @@ function fairComparisonEnabled() {
   return elements["match-fair-comparison"].checked;
 }
 
-function thinkTimePaceEnabled() {
-  return elements["match-think-time-pace"].checked;
-}
-
 function ppsIsOverridden() {
-  return fairComparisonEnabled() || thinkTimePaceEnabled();
+  return fairComparisonEnabled();
 }
 
 function effectivePps(parameters) {
   if (fairComparisonEnabled()) return 1;
-  return Number.isSafeInteger(parameters.thinkMs) ? ppsForThinkTime(parameters.thinkMs) : parameters.pps;
+  return parameters.pps;
 }
 
 function syncFairComparisonControls() {
-  if (fairComparisonEnabled()) elements["match-think-time-pace"].checked = false;
   const ppsInput = elements["bot-settings-form"].elements.namedItem("pps");
+  const ppsEnabled = elements["bot-settings-form"].elements.namedItem("ppsEnabled");
   if (ppsInput !== null) {
-    ppsInput.disabled = ppsIsOverridden();
+    ppsInput.disabled = ppsIsOverridden() || (ppsEnabled instanceof HTMLInputElement && !ppsEnabled.checked);
     if (fairComparisonEnabled()) ppsInput.value = 1;
   }
-  elements["match-think-time-pace"].disabled = fairComparisonEnabled();
   for (const side of BOT_SIDES) renderBotSettingsSummary(side);
-}
-
-function syncThinkTimePaceControls() {
-  if (thinkTimePaceEnabled()) elements["match-fair-comparison"].checked = false;
-  syncFairComparisonControls();
 }
 
 /* TTRM QUEUE reads like an export format switch, but it also replaces the

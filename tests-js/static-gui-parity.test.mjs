@@ -49,9 +49,21 @@ test("bot-vs-bot selectors expose the current development champion", async () =>
 
 test("bot-vs-bot exposes You (1P) only in the left-player selector", async () => {
   const html = await readFile(new URL("../cc2-gui/index.html", import.meta.url), "utf8");
-  const right = html.match(/<select id="right-bot">([\s\S]*?)<\/select>/)?.[1] ?? "";
-  assert.doesNotMatch(right, /value="human"/);
+  const optionsFor = (id) => html.match(new RegExp(`<select id="${id}">([\\s\\S]*?)</select>`))?.[1] ?? "";
+  assert.match(optionsFor("left-bot"), /<option value="human">You \(1P\)<\/option>/);
+  assert.doesNotMatch(optionsFor("right-bot"), /value="human"/);
   assert.match(html, /LEFT BOTで <strong>You \(1P\)<\/strong> を選ぶ/);
+});
+
+test("CC2 pace is bot-specific and the former match-wide pace toggle is absent", async () => {
+  const html = await readFile(new URL("../cc2-gui/index.html", import.meta.url), "utf8");
+  assert.doesNotMatch(html, /match-think-time-pace|THINK TIME PACE/);
+  const capability = (await request(createGuiRequestHandlers({ proposeCc2: async () => ({}) }), "GET", "/api/bots"))
+    .bots.find((bot) => bot.id === "cc2-raw");
+  assert.deepEqual(capability.parameters.slice(0, 2).map(({ key, controlledBy }) => ({ key, controlledBy })), [
+    { key: "ppsEnabled", controlledBy: undefined },
+    { key: "pps", controlledBy: "ppsEnabled" },
+  ]);
 });
 
 test("bot-vs-bot defaults to a random seed and unlimited turns", async () => {
@@ -80,6 +92,50 @@ test("static CC2 supports a time-only search budget", async () => {
   assert.equal(body.info.version, "time-budgeted-wasm");
   assert.equal(proposalRequest.selectionLimit, null);
   assert.equal(proposalRequest.thinkMs, 250);
+});
+
+test("static CC2 rejects disabling both search limits", async () => {
+  const handlers = createGuiRequestHandlers({ proposeCc2: async () => { throw new Error("must not run"); } });
+  const result = await handlers.handle({
+    method: "POST",
+    path: "/api/suggest",
+    body: { engine: "cc2-raw", state: {}, parameters: { selectionEnabled: false, thinkTimeEnabled: false } },
+  });
+  assert.equal(result.status, 422);
+  assert.match(result.body.error, /cannot both be disabled/);
+});
+
+test("static CC2 match pacing follows each bot PPS toggle and FAIR override", async () => {
+  const selectionPaced = await request(createGuiRequestHandlers(), "POST", "/api/match/start", {
+    left: "cc2-raw",
+    right: "cc2-chouhy",
+    leftParameters: { ppsEnabled: false, selectionEnabled: true, thinkTimeEnabled: false },
+    rightParameters: { ppsEnabled: false, selectionEnabled: true, thinkTimeEnabled: false },
+  });
+  assert.equal(selectionPaced.nextStepFrames, 3);
+
+  const timePaced = await request(createGuiRequestHandlers(), "POST", "/api/match/start", {
+    left: "cc2-raw",
+    right: "cc2-chouhy",
+    leftParameters: { ppsEnabled: false, selectionEnabled: false, thinkTimeEnabled: true, thinkMs: 250 },
+    rightParameters: { ppsEnabled: false, selectionEnabled: false, thinkTimeEnabled: true, thinkMs: 250 },
+  });
+  assert.equal(timePaced.nextStepFrames, 15);
+
+  const fair = await request(createGuiRequestHandlers(), "POST", "/api/match/start", {
+    left: "cc2-raw",
+    right: "cc2-chouhy",
+    fairComparison: true,
+    leftParameters: { ppsEnabled: true, selectionEnabled: false, selectionLimit: 999, thinkTimeEnabled: false },
+    rightParameters: { ppsEnabled: true, selectionEnabled: false, selectionLimit: 999, thinkTimeEnabled: false },
+  });
+  assert.equal(fair.nextStepFrames, 60);
+  for (const side of ["left", "right"]) {
+    assert.equal(fair.botParameters[side].ppsEnabled, false);
+    assert.equal(fair.botParameters[side].selectionEnabled, true);
+    assert.equal(fair.botParameters[side].selectionLimit, 512);
+    assert.equal(fair.botParameters[side].thinkTimeEnabled, false);
+  }
 });
 
 test("static matches expose the selected placement over the pre-lock board", async () => {

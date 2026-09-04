@@ -227,9 +227,6 @@
           <label class="fair-comparison-setting">FAIR COMPARISON
             <span><input id="match-fair-comparison" type="checkbox"> SERIAL · 1 PPS</span>
           </label>
-          <label class="fair-comparison-setting">THINK TIME PACE
-            <span><input id="match-think-time-pace" type="checkbox"> 1000 ms = 1 PPS</span>
-          </label>
           <label class="pre-lock-preview-setting">PRE-LOCK PREVIEW
             <span><input id="match-pre-lock-preview" type="checkbox"> GHOST</span>
           </label>
@@ -320,7 +317,7 @@
           </article>
         </div>
         <p class="match-note" id="match-human-note">LEFT BOTで <strong>You (1P)</strong> を選ぶと自分で対戦できます。既定の操作は ← → 移動、↓ ソフトドロップ、Space ハードドロップ、Z/X 回転、A 180度回転、C HOLD、Esc リセット。DAS・ARR・DCD・SDF とキー割り当ては SETTINGS で変更できます。自然落下はありません。ハードドロップした瞬間の共有クロックがそのミノのロック時刻になるので、置くのが遅いほど自分のPPSが下がります。</p>
-        <p class="match-note" id="match-bot-note">START MATCH begins the series; pressing the same button again pauses it, and once more resumes. Both bots share one game clock. CC2 SETTINGS can stop search by SELECTION, THINK TIME, or whichever enabled limit is reached first; at least one must remain enabled. THINK TIME is off by default because real-time search can vary with device, browser, and runtime load. THINK TIME PACE is a match-wide override that enables THINK TIME, derives each CC2 bot's PPS from its configured limit (1000 ms = 1 PPS), and gives that full time to the search. FAIR COMPARISON instead fixes both bots at 1 PPS and runs simultaneous searches serially to avoid direct CPU contention; it cannot be combined with THINK TIME PACE. Bot-specific parameters are configured independently from each SETTINGS button. QUEUE MODEL is a match setting, not an output one: TTRM QUEUE generates pieces with the 7-bag randomiser and, for non-simple bots, uses the deterministic no-HOLD input controller so each lock can be emitted as a verified TETR.IO input log. Therefore a TTRM QUEUE match is replay-compatible rather than a byte-for-byte CC2 final-placement match. EXPORT becomes available once a round has advanced — SAVE .json writes this engine's own match record, and SAVE .ttrm writes a server-verified TETR.IO replay.</p>
+        <p class="match-note" id="match-bot-note">START MATCH begins the series; pressing the same button again pauses it, and once more resumes. Both bots share one game clock. CC2 SETTINGS independently enable PPS pacing, SELECTION, and THINK TIME. Search stops at the first enabled search limit; PPS OFF places as soon as that search finishes. At least one of SELECTION and THINK TIME must remain enabled. THINK TIME is off by default because real-time search can vary with device, browser, and runtime load. FAIR COMPARISON temporarily standardizes every CC2 bot to SELECTION 512 ON, PPS OFF, THINK TIME OFF, then places both sides at 1 PPS and runs simultaneous searches serially. Saved per-bot settings return when FAIR is disabled. Bot-specific parameters are configured independently from each SETTINGS button. QUEUE MODEL is a match setting, not an output one: TTRM QUEUE generates pieces with the 7-bag randomiser and, for non-simple bots, uses the deterministic no-HOLD input controller so each lock can be emitted as a verified TETR.IO input log. Therefore a TTRM QUEUE match is replay-compatible rather than a byte-for-byte CC2 final-placement match. EXPORT becomes available once a round has advanced — SAVE .json writes this engine's own match record, and SAVE .ttrm writes a server-verified TETR.IO replay.</p>
       </section>
     </div>
 
@@ -445,6 +442,7 @@
         </header>
         <p class="bot-settings-description" id="bot-settings-description"></p>
         <div class="bot-settings-fields" id="bot-settings-fields"></div>
+        <p class="bot-settings-validation" id="bot-settings-validation" role="alert" hidden></p>
         <div class="dialog-actions">
           <button value="cancel" formmethod="dialog">CANCEL</button>
           <button class="primary" id="bot-settings-save" value="save">SAVE</button>

@@ -26,8 +26,8 @@ import {
 } from "./replay/bot-match-recorder.mjs";
 import { buildReplayIR, nowMs } from "./replay/ttrm-simulator.mjs";
 import { MAX_TTRM_TEXT_LENGTH, TtrmError, parseTtrm } from "./replay/ttrm-parser.mjs";
-import { botParameterCapability, normalizeBotParameters } from "./bot-parameters.mjs";
-import { matchOutcome, normalizeBotMatchOptions } from "./bot-match-options.mjs";
+import { botParameterCapability, fairComparisonBotParameters, normalizeBotParameters } from "./bot-parameters.mjs";
+import { matchOutcome, normalizeBotMatchOptions, ppsForCc2Parameters } from "./bot-match-options.mjs";
 import { RULESET_IDS, resolvePlacementRules } from "./ruleset-profiles.mjs";
 import { placementGeometry } from "./triangle/placement-geometry.mjs";
 import { lockedPieceCells, toS2GuiState, createGame, extendSeededQueue, extendTriangleSeededQueue,
@@ -125,8 +125,12 @@ export function createGuiRequestHandlers({ proposeCc2 = null } = {}) {
       const config = normalizeBotMatchOptions(body);
       if (humanSide !== null && config.fairComparison) throw new Error("fair comparison cannot include a human player");
       const botParameters = {
-        left: normalizeBotParameters(left, body.leftParameters),
-        right: normalizeBotParameters(right, body.rightParameters),
+        left: config.fairComparison
+          ? fairComparisonBotParameters(left, body.leftParameters)
+          : normalizeBotParameters(left, body.leftParameters),
+        right: config.fairComparison
+          ? fairComparisonBotParameters(right, body.rightParameters)
+          : normalizeBotParameters(right, body.rightParameters),
       };
       const ttrmCompatible = body.ttrmCompatible === true;
       const queueModel = ttrmCompatible ? QUEUE_MODE_TRIANGLE_7_BAG : QUEUE_MODE_LEGACY_LCG;
@@ -138,14 +142,17 @@ export function createGuiRequestHandlers({ proposeCc2 = null } = {}) {
           { id: "right", gameId: 2, state: structuredClone(initial) },
         ],
         mode: "paced",
-        ppsByBotId: { left: left === "human" ? null : botParameters.left.pps, right: right === "human" ? null : botParameters.right.pps },
+        ppsByBotId: {
+          left: left === "human" ? null : staticPacedRate(left, botParameters.left, config.fairComparison),
+          right: right === "human" ? null : staticPacedRate(right, botParameters.right, config.fairComparison),
+        },
       });
       session = {
         types: { left, right }, humanSide, botParameters, config, ttrmCompatible, queueModel,
         queueSeeds: { left: scenario.bagSeed, right: scenario.bagSeed }, match, recording: createMatchRecording({
           match, meta: { origin: "s2-bot-match/1", users: [{ id: "left", username: "LEFT · ${left}" }, { id: "right", username: "RIGHT · ${right}" }],
             gamemode: "s2-bot-match", ts: new Date().toISOString(), version: 1, parseMs: 0,
-            match: { seed: config.seed, fairComparison: config.fairComparison, thinkTimePace: config.thinkTimePace,
+            match: { seed: config.seed, fairComparison: config.fairComparison,
               maxTurns: config.maxTurns, firstTo: 1, ttrmCompatible, queueModel,
               bots: { left: { type: left, parameters: botParameters.left }, right: { type: right, parameters: botParameters.right } }, rulesetId: match.rulesetId } },
         }), finishedRound: null, lastSubmissions: [],
@@ -173,7 +180,7 @@ export function createGuiRequestHandlers({ proposeCc2 = null } = {}) {
         const engine = session.types[botId];
         const gui = botMatchToGuiState(session.match, bot.id);
         const state = { board: gui.board, queue: gui.queue.slice(0, session.botParameters[botId].queueDepth), hold: gui.hold, combo: gui.combo, back_to_back: gui.back_to_back, randomizer: { type: "seven_bag", bag_state: [] } };
-        const proposal = await proposeCc2({ engine, state, ...cc2SearchBudget(session.botParameters[botId], session.config.thinkTimePace) });
+        const proposal = await proposeCc2({ engine, state, ...cc2SearchBudget(session.botParameters[botId]) });
         const result = isS2(engine) ? selectS2(gui, proposal.suggestion.moves, engine) : applyCc2FinalPlacementUnderObservedS2(gui, proposal.suggestion.moves[0], publicEngine(engine));
         if (result.transition === null) return fail(422, { error: `${botId} CC2 placement rejected` });
         submissions.push(submissionFor(bot, result.comparison.witness.placement, result.transition, result.comparison.score));
@@ -287,10 +294,14 @@ function fail(status, body) { return { status, body }; }
 function messageOf(error) { return error instanceof Error ? error.message : String(error); }
 function unavailable(id, label) { return { id, label, available: false, reason: "requires the local server", parameters: [] }; }
 function staticCc2Capability(id) { const capability = botParameterCapability(id); capability.description += " 公開WASM版でもTHINK TIMEを利用できます。有効時は端末性能・ブラウザ・実行時負荷によって探索量と選択手が変化します。"; return capability; }
-function cc2SearchBudget(parameters, forceThinkTime = false) { return {
+function cc2SearchBudget(parameters) { return {
   selectionLimit: parameters.selectionEnabled ? parameters.selectionLimit : null,
-  thinkMs: parameters.thinkTimeEnabled || forceThinkTime ? parameters.thinkMs : null,
+  thinkMs: parameters.thinkTimeEnabled ? parameters.thinkMs : null,
 }; }
+function staticPacedRate(botType, parameters, fairComparison) {
+  if (fairComparison) return 1;
+  return botType.startsWith("cc2-") ? ppsForCc2Parameters(parameters) : parameters.pps;
+}
 function staticWasmVersion(parameters) {
   if (parameters.selectionEnabled && !parameters.thinkTimeEnabled) return `deterministic-wasm-${parameters.selectionLimit}`;
   return "time-budgeted-wasm";

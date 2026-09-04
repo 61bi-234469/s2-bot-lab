@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   matchOutcome,
   normalizeBotMatchOptions,
+  ppsForCc2Parameters,
   ppsForThinkTime,
   realtimeCc2ThinkMs,
 } from "../src-js/bot-match-options.mjs";
@@ -14,10 +15,9 @@ test("bot match options accept independent budgets, seed, and turn cap", () => {
     rightThinkMs: 750,
     clockRate: 2,
     fairComparison: false,
-    thinkTimePace: true,
     seed: 0xffff_ffff,
     maxTurns: 42,
-  }), { leftThinkMs: 100, rightThinkMs: 750, fairComparison: false, thinkTimePace: true, seed: 0xffff_ffff, maxTurns: 42 });
+  }), { leftThinkMs: 100, rightThinkMs: 750, fairComparison: false, seed: 0xffff_ffff, maxTurns: 42 });
 });
 
 test("bot match options reject unsafe or out-of-range values", () => {
@@ -25,7 +25,6 @@ test("bot match options reject unsafe or out-of-range values", () => {
     { leftThinkMs: 0 },
     { rightThinkMs: 10_001 },
     { fairComparison: "yes" },
-    { fairComparison: true, thinkTimePace: true },
     { seed: -1 },
     { seed: 0x1_0000_0000 },
     { maxTurns: 0 },
@@ -58,9 +57,15 @@ test("GUI CC2 search leaves headroom inside the requested real-time cadence", ()
   assert.equal(realtimeCc2ThinkMs({ thinkMs: 250, stepFrames: 3 }), 35);
 });
 
-test("think-time pace derives PPS from the configured search budget", () => {
+test("a think-time duration converts to its equivalent PPS", () => {
   assert.equal(ppsForThinkTime(1_000), 1);
   assert.equal(ppsForThinkTime(200), 5);
   assert.equal(ppsForThinkTime(10), 20);
   assert.equal(ppsForThinkTime(10_000), 0.1);
+});
+
+test("disabled CC2 PPS pacing follows the active search budget", () => {
+  assert.equal(ppsForCc2Parameters({ ppsEnabled: true, pps: 2 }), 2);
+  assert.equal(ppsForCc2Parameters({ ppsEnabled: false, selectionEnabled: true, thinkMs: 250 }), 20);
+  assert.equal(ppsForCc2Parameters({ ppsEnabled: false, selectionEnabled: false, thinkMs: 250 }), 4);
 });

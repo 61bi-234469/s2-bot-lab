@@ -9,12 +9,22 @@ const PPS_PARAMETER = Object.freeze({
   suffix: "pieces/s",
 });
 
+const CC2_PPS_ENABLED_PARAMETER = Object.freeze({
+  key: "ppsEnabled",
+  label: "PPS",
+  group: "pace",
+  type: "boolean",
+  defaultValue: true,
+  description: "有効にすると指定PPSで配置間隔を制限します。無効時は探索が終了した時点で配置します。",
+});
+
 /* `group` and `shortLabel` carry no validation meaning: they only tell the GUI
    which heading a parameter belongs under, and what to call a limit once its own
    toggle already names it. A limit keeps its full `label` for the collapsed
    summary, which has no card around it to supply that context. */
 const CC2_PARAMETERS = Object.freeze([
-  Object.freeze({ ...PPS_PARAMETER, group: "pace" }),
+  CC2_PPS_ENABLED_PARAMETER,
+  Object.freeze({ ...PPS_PARAMETER, label: "PPS LIMIT", shortLabel: "LIMIT", group: "pace", controlledBy: "ppsEnabled" }),
   Object.freeze({ key: "selectionEnabled", label: "SELECTION", group: "budget", type: "boolean", defaultValue: true, description: "指定した探索選択数で打ち切ります。固定値では同じ局面の探索量を揃えられます。" }),
   Object.freeze({ key: "selectionLimit", label: "SELECTION LIMIT", shortLabel: "LIMIT", group: "budget", type: "integer", minimum: 1, maximum: 10_000_000, step: 1, defaultValue: 512, suffix: "selections", controlledBy: "selectionEnabled" }),
   Object.freeze({ key: "thinkTimeEnabled", label: "THINK TIME", group: "budget", type: "boolean", defaultValue: false, description: "有効にすると実時間で探索を打ち切るため、端末性能・ブラウザ・実行時負荷により探索量と選択手が変わります。" }),
@@ -118,6 +128,21 @@ export function normalizeBotParameters(botType, input = {}) {
     throw new Error("SELECTION and THINK TIME cannot both be disabled");
   }
   return Object.freeze(normalized);
+}
+
+/** Applies the reproducible CC2 comparison preset without mutating the saved
+ * per-bot settings. FAIR owns the 1 PPS scheduler separately, so the bot's PPS
+ * limiter is represented as OFF here. */
+export function fairComparisonBotParameters(botType, input = {}) {
+  const normalizedType = botType === "cc2" ? "cc2-raw" : botType;
+  if (!normalizedType.startsWith("cc2-")) return normalizeBotParameters(botType, input);
+  return normalizeBotParameters(botType, {
+    ...input,
+    ppsEnabled: false,
+    selectionEnabled: true,
+    selectionLimit: 512,
+    thinkTimeEnabled: false,
+  });
 }
 
 function definitionFor(botType) {

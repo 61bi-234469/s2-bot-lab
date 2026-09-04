@@ -314,22 +314,19 @@ input[type="number"]:disabled { border-color: var(--line-dim); color: #4a504a; c
 .bot-parameter label { color: var(--muted); font-size: 10px; letter-spacing: .06em; }
 .bot-parameter-control { display: flex; align-items: center; gap: 6px; }
 .bot-parameter-control span { color: var(--muted); font-size: 9px; }
-.bot-parameter-control input[type="checkbox"] { width: 16px; height: 16px; margin-left: auto; accent-color: var(--accent); }
+.bot-parameter-control input[type="checkbox"] { width: 16px; height: 16px; margin-left: auto; appearance: none; border: 1px solid var(--accent); background: transparent; cursor: pointer; }
+.bot-parameter-control input[type="checkbox"]:checked { background: var(--accent); box-shadow: inset 0 0 0 3px #0d0f0d; }
 /* A settings row that explains itself puts the note under both columns. */
 .bot-parameter-description { grid-column: 1 / -1; color: #565c56; font-size: 9px; line-height: 1.5; }
 .bot-settings-fields .deck-label { grid-column: 1 / -1; margin: 10px 0 0; }
 /* A limit belongs to the toggle above it, so the two share one box and the limit
-   is indented inside it. The amber left rule is the card's ON light: it is the
-   only place in the dialog where an accent means "this limit is bounding the
-   search right now". */
+   is indented inside it. All three CC2 switches keep the same accent frame in
+   either state; the checkbox, rather than a disappearing colour, carries ON/OFF. */
 .bot-parameter-card { display: grid; border: 1px solid var(--line); border-left: 2px solid var(--accent); }
 .bot-parameter-card .bot-parameter { border: none; }
 .bot-parameter-card > .bot-parameter:first-child { border-bottom: 1px solid var(--line-dim); }
 .bot-parameter-card .bot-parameter[data-nested] { padding-left: 22px; }
 .bot-parameter-card > .bot-parameter-description, .bot-parameter-card > .bot-parameter-state { margin: 0; padding: 0 10px 8px 22px; }
-.bot-parameter-card.is-disabled { border-color: var(--line-dim); }
-.bot-parameter-card.is-disabled label { color: #4a504a; }
-.bot-parameter-card.is-disabled .bot-parameter-control span { color: #43483f; }
 /* Why a control cannot be edited, next to the control. The rule that at least
    one limit must stay on is invisible otherwise, and a `title` tooltip shows on
    neither touch nor a glance. */
@@ -338,6 +335,10 @@ input[type="number"]:disabled { border-color: var(--line-dim); color: #4a504a; c
 .bot-parameter-card > .bot-parameter[data-nested] .bot-parameter-state { margin-top: 4px; }
 .bot-parameter-summary { margin: 0; padding: 6px 10px; border: 1px solid var(--line-dim); border-left: 2px solid var(--green); color: var(--green); font-size: 10px; line-height: 1.4; }
 .bot-parameter-note { margin: 0; padding: 0 2px; color: #565c56; font-size: 9px; line-height: 1.5; }
+.bot-settings-validation { margin: 0 15px 10px; color: var(--accent); font-size: 10px; line-height: 1.5; }
+.bot-settings-validation[hidden] { display: none; }
+.dialog-actions button.primary.is-invalid { border-color: var(--line-dim); color: #4a504a; }
+.dialog-actions button.primary.is-invalid:hover { border-color: var(--line-dim); background: transparent; color: #4a504a; }
 /* A disabled number field reads as a value being shown, not offered. */
 .bot-parameter input[type="number"]:disabled { border-style: dashed; }
 /* A key binding field shows the key it captured and is never typed into. */
