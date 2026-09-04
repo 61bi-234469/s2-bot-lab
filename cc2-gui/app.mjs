@@ -78,6 +78,20 @@ import {
 } from "./human-play.mjs";
 const elements = Object.fromEntries([...document.querySelectorAll("[id]")].map((node) => [node.id, node]));
 const BOT_SIDES = Object.freeze(["left", "right"]);
+// Headings for the `group` ids the parameter schema declares. The schema says
+// which group a parameter belongs to; what that group is called, and the rule
+// printed under it, are presentation and stay here.
+const BOT_PARAMETER_GROUPS = Object.freeze({
+  pace: Object.freeze({ label: "PACING" }),
+  budget: Object.freeze({
+    label: "SEARCH BUDGET",
+    note: "SELECTION と THINK TIME は併用でき（先着で打ち切り）、両方OFFにはできません。",
+  }),
+  input: Object.freeze({ label: "INPUT" }),
+});
+// Disabling the last remaining limit is refused by `normalizeBotParameters` as
+// well, so the locked checkbox has to say why rather than look broken.
+const LAST_SEARCH_LIMIT_NOTE = "最後の探索制限のためOFFにできません。";
 // B2B charging as resolved by the server from the ruleset the GUI runs under.
 // Until /api/bots answers there is no rule to read, so no counter claims to be
 // surge-ready; `false` is the ruleset's own value for charging being off.
@@ -327,55 +341,156 @@ function openBotSettings(side) {
     elements["bot-settings-dialog"].showModal();
     return;
   }
-  elements["bot-settings-fields"].replaceChildren(...capability.parameters.map((parameter) => {
-    const row = document.createElement("div");
-    row.className = "bot-parameter";
-    const label = document.createElement("label");
-    const input = document.createElement("input");
-    const control = document.createElement("div");
-    control.className = "bot-parameter-control";
-    input.id = `bot-parameter-${parameter.key}`;
-    input.name = parameter.key;
-    label.htmlFor = input.id;
-    label.textContent = parameter.label;
-    if (parameter.type === "boolean") {
-      input.type = "checkbox";
-      input.checked = values[parameter.key];
-    } else {
-      input.type = "number";
-      input.min = parameter.minimum;
-      input.max = parameter.maximum;
-      input.step = parameter.step;
-      input.value = values[parameter.key];
-    }
-    if (parameter.key === "pps" && ppsIsOverridden()) {
-      input.value = effectivePps(values);
-      input.disabled = true;
-      input.title = fairComparisonEnabled()
-        ? "Fair comparison fixes both bots at 1 PPS"
-        : "Think-time pace derives PPS from THINK TIME";
-    }
-    if (parameter.disabled === true) {
-      input.disabled = true;
-      input.title = parameter.disabledReason ?? "Unavailable in this runtime";
-    }
-    control.append(input);
-    if (parameter.suffix) {
-      const suffix = document.createElement("span");
-      suffix.textContent = parameter.suffix;
-      control.append(suffix);
-    }
-    row.append(label, control);
-    if (parameter.description) {
-      const description = document.createElement("small");
-      description.className = "bot-parameter-description";
-      description.textContent = parameter.description;
-      row.append(description);
-    }
-    return row;
-  }));
+  elements["bot-settings-fields"].replaceChildren(...botSettingsFields(capability, values));
   syncCc2BudgetForm(capability);
   elements["bot-settings-dialog"].showModal();
+}
+
+/* A flat list of rows hid the two relationships that decide what the dialog
+   actually does: which toggle owns which limit, and which rows are live right
+   now. Each toggle therefore becomes a card holding its own limit, and every
+   reason a control is locked is written next to it instead of into a `title`
+   tooltip that never shows on touch and barely registers against this palette. */
+function botSettingsFields(capability, values) {
+  const dependents = new Map();
+  for (const parameter of capability.parameters) {
+    if (parameter.controlledBy === undefined) continue;
+    dependents.set(parameter.controlledBy, [...dependents.get(parameter.controlledBy) ?? [], parameter]);
+  }
+  const nodes = [];
+  for (const [groupId, parameters] of groupBotParameters(capability.parameters)) {
+    const group = BOT_PARAMETER_GROUPS[groupId];
+    if (group !== undefined) nodes.push(botSettingsHeading(group.label));
+    if (groupId === "budget") nodes.push(searchBudgetSummaryElement());
+    for (const parameter of parameters) {
+      const children = dependents.get(parameter.key) ?? [];
+      nodes.push(children.length === 0
+        ? botParameterRow(parameter, values)
+        : botParameterCard(parameter, children, values));
+    }
+    if (group?.note !== undefined) nodes.push(botSettingsNote(group.note));
+  }
+  return nodes;
+}
+
+/* Insertion order is the declared parameter order, so groups come out in the
+   order the schema lists them. A bot whose parameters carry no group at all
+   collapses to one unlabelled group and renders exactly as it did before. */
+function groupBotParameters(parameters) {
+  const groups = new Map();
+  for (const parameter of parameters) {
+    if (parameter.controlledBy !== undefined) continue;
+    groups.set(parameter.group, [...groups.get(parameter.group) ?? [], parameter]);
+  }
+  return groups;
+}
+
+function botParameterCard(parameter, dependents, values) {
+  const card = document.createElement("div");
+  card.className = "bot-parameter-card";
+  card.id = `bot-parameter-card-${parameter.key}`;
+  card.append(botParameterRow(parameter, values, { describe: false, state: false }));
+  for (const dependent of dependents) card.append(botParameterRow(dependent, values, { nested: true }));
+  // Both of the toggle's own footnotes sit under the pair rather than inside its
+  // row: in the old layout the description pushed a limit further from its own
+  // toggle than from the next unrelated setting, and a lock note put there would
+  // do the same thing again.
+  if (parameter.description) card.append(botParameterDescription(parameter.description));
+  card.append(botParameterStateElement(parameter, values));
+  return card;
+}
+
+function botParameterRow(parameter, values, { nested = false, describe = true, state = true } = {}) {
+  const row = document.createElement("div");
+  row.className = "bot-parameter";
+  row.dataset.control = parameter.type;
+  if (nested) row.dataset.nested = "true";
+  const label = document.createElement("label");
+  const input = document.createElement("input");
+  const control = document.createElement("div");
+  control.className = "bot-parameter-control";
+  input.id = `bot-parameter-${parameter.key}`;
+  input.name = parameter.key;
+  label.htmlFor = input.id;
+  // Inside a card the toggle above already says SELECTION or THINK TIME, so the
+  // limit only has to say that it is the limit.
+  label.textContent = nested ? parameter.shortLabel ?? parameter.label : parameter.label;
+  if (parameter.type === "boolean") {
+    input.type = "checkbox";
+    input.checked = values[parameter.key];
+  } else {
+    input.type = "number";
+    input.min = parameter.minimum;
+    input.max = parameter.maximum;
+    input.step = parameter.step;
+    input.value = values[parameter.key];
+  }
+  if (parameter.key === "pps" && ppsIsOverridden()) {
+    input.value = effectivePps(values);
+    input.disabled = true;
+  }
+  if (parameter.disabled === true) input.disabled = true;
+  control.append(input);
+  if (parameter.suffix) {
+    const suffix = document.createElement("span");
+    suffix.textContent = parameter.suffix;
+    control.append(suffix);
+  }
+  row.append(label, control);
+  if (describe && parameter.description) row.append(botParameterDescription(parameter.description));
+  if (state) row.append(botParameterStateElement(parameter, values));
+  return row;
+}
+
+function botParameterStateElement(parameter, values) {
+  const state = document.createElement("small");
+  state.className = "bot-parameter-state";
+  state.id = `bot-parameter-state-${parameter.key}`;
+  state.textContent = botParameterStateText(parameter, values);
+  return state;
+}
+
+function botParameterStateText(parameter, values) {
+  if (parameter.disabled === true) return parameter.disabledReason ?? "この実行環境では利用できません。";
+  if (parameter.key === "pps" && ppsIsOverridden()) {
+    return fairComparisonEnabled()
+      ? "FAIR COMPARISON が両botを 1 PPS に固定しています。"
+      : `THINK TIME PACE が ${values.thinkMs} ms から PPS を導出しています。`;
+  }
+  return "";
+}
+
+function botParameterDescription(text) {
+  const description = document.createElement("small");
+  description.className = "bot-parameter-description";
+  description.textContent = text;
+  return description;
+}
+
+function botSettingsHeading(text) {
+  const heading = document.createElement("p");
+  heading.className = "deck-label";
+  heading.textContent = text;
+  return heading;
+}
+
+function botSettingsNote(text) {
+  const note = document.createElement("p");
+  note.className = "bot-parameter-note";
+  note.textContent = text;
+  return note;
+}
+
+function searchBudgetSummaryElement() {
+  const summary = document.createElement("p");
+  summary.className = "bot-parameter-summary";
+  summary.id = "bot-search-budget-summary";
+  return summary;
+}
+
+function setBotParameterState(key, text) {
+  const state = document.getElementById(`bot-parameter-state-${key}`);
+  if (state !== null) state.textContent = text;
 }
 
 function syncCc2BudgetForm(capability) {
@@ -388,19 +503,57 @@ function syncCc2BudgetForm(capability) {
     // first makes both checkboxes available again.
     selection.disabled = selection.checked && !thinkTime.checked;
     thinkTime.disabled = thinkTime.checked && !selection.checked;
+    setBotParameterState("selectionEnabled", selection.disabled ? LAST_SEARCH_LIMIT_NOTE : "");
+    setBotParameterState("thinkTimeEnabled", thinkTimeToggleStateText(thinkTime));
+    // A limit that the match settings force back on keeps its card lit even
+    // though its own toggle reads OFF, so the card never contradicts the input
+    // it contains.
+    const overridden = new Set();
     for (const parameter of capability.parameters) {
       if (!parameter.controlledBy) continue;
       const input = form.elements.namedItem(parameter.key);
       const controller = form.elements.namedItem(parameter.controlledBy);
-      if (input instanceof HTMLInputElement && controller instanceof HTMLInputElement) {
-        const matchPaceOverride = parameter.controlledBy === "thinkTimeEnabled" && thinkTimePaceEnabled();
-        input.disabled = parameter.disabled === true || (!controller.checked && !matchPaceOverride);
-      }
+      if (!(input instanceof HTMLInputElement) || !(controller instanceof HTMLInputElement)) continue;
+      const matchPaceOverride = parameter.controlledBy === "thinkTimeEnabled" && thinkTimePaceEnabled();
+      input.disabled = parameter.disabled === true || (!controller.checked && !matchPaceOverride);
+      if (!controller.checked && !input.disabled) overridden.add(parameter.controlledBy);
+      setBotParameterState(parameter.key, budgetLimitStateText(parameter, capability, controller, matchPaceOverride));
     }
+    for (const toggle of [selection, thinkTime]) {
+      const card = document.getElementById(`bot-parameter-card-${toggle.name}`);
+      if (card !== null) card.classList.toggle("is-disabled", !toggle.checked && !overridden.has(toggle.name));
+    }
+    renderSearchBudgetSummary(form, selection, thinkTime);
   };
   selection.addEventListener("change", sync);
   thinkTime.addEventListener("change", sync);
   sync();
+}
+
+function thinkTimeToggleStateText(thinkTime) {
+  if (thinkTime.disabled) return LAST_SEARCH_LIMIT_NOTE;
+  if (!thinkTime.checked && thinkTimePaceEnabled()) return "THINK TIME PACE により、OFFでも時間制限が有効です。";
+  return "";
+}
+
+function budgetLimitStateText(parameter, capability, controller, matchPaceOverride) {
+  if (parameter.disabled === true) return parameter.disabledReason ?? "この実行環境では利用できません。";
+  if (controller.checked) return "";
+  if (matchPaceOverride) return "THINK TIME PACE により有効です。";
+  const controllerLabel = capability.parameters
+    .find((candidate) => candidate.key === parameter.controlledBy)?.label ?? parameter.controlledBy;
+  return `${controllerLabel} がOFFのため編集できません。`;
+}
+
+function renderSearchBudgetSummary(form, selection, thinkTime) {
+  const summary = document.getElementById("bot-search-budget-summary");
+  if (summary === null) return;
+  const limits = [];
+  if (selection.checked) limits.push(`${form.elements.namedItem("selectionLimit").value} selections`);
+  if (thinkTime.checked || thinkTimePaceEnabled()) limits.push(`${form.elements.namedItem("thinkMs").value} ms`);
+  summary.textContent = limits.length > 1
+    ? `有効 > ${limits.join(" / ")}（先に到達した方で打ち切り）`
+    : `有効 > ${limits[0] ?? "なし"}`;
 }
 
 /* The 1P settings are laid out like the `input` and `keys` tabs of the reference
@@ -557,12 +710,21 @@ function renderBotSettingsSummary(side) {
     elements[`${side}-bot-settings-summary`].textContent = describeHumanControls(humanControls);
     return;
   }
-  elements[`${side}-bot-settings-summary`].textContent = capability.parameters.map((parameter) => {
+  elements[`${side}-bot-settings-summary`].textContent = capability.parameters.filter((parameter) => {
+    // A limit whose toggle is off does not bound anything, and listing it beside
+    // that OFF was the same contradiction the dialog used to show.
+    if (parameter.controlledBy === undefined) return true;
+    return values[parameter.controlledBy] === true
+      || (parameter.controlledBy === "thinkTimeEnabled" && thinkTimePaceEnabled());
+  }).map((parameter) => {
     const overriddenPps = parameter.key === "pps" && ppsIsOverridden();
     const value = overriddenPps ? effectivePps(values) : values[parameter.key];
     if (parameter.type === "boolean") return `${parameter.label} ${value ? "ON" : "OFF"}`;
     const source = fairComparisonEnabled() ? " (FAIR)" : thinkTimePaceEnabled() ? " (THINK TIME)" : "";
-    return `${parameter.label} ${value}${parameter.suffix ? ` ${parameter.suffix}` : ""}${overriddenPps ? source : ""}`;
+    // The one limit that can be listed while its own toggle reads OFF has to say
+    // what is keeping it alive.
+    const paced = parameter.controlledBy !== undefined && values[parameter.controlledBy] !== true ? " (PACE)" : "";
+    return `${parameter.label} ${value}${parameter.suffix ? ` ${parameter.suffix}` : ""}${overriddenPps ? source : paced}`;
   }).join(" · ");
 }
 

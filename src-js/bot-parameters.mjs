@@ -9,13 +9,17 @@ const PPS_PARAMETER = Object.freeze({
   suffix: "pieces/s",
 });
 
+/* `group` and `shortLabel` carry no validation meaning: they only tell the GUI
+   which heading a parameter belongs under, and what to call a limit once its own
+   toggle already names it. A limit keeps its full `label` for the collapsed
+   summary, which has no card around it to supply that context. */
 const CC2_PARAMETERS = Object.freeze([
-  PPS_PARAMETER,
-  Object.freeze({ key: "selectionEnabled", label: "SELECTION", type: "boolean", defaultValue: true, description: "指定した探索選択数で打ち切ります。固定値では同じ局面の探索量を揃えられます。" }),
-  Object.freeze({ key: "selectionLimit", label: "SELECTION LIMIT", type: "integer", minimum: 1, maximum: 10_000_000, step: 1, defaultValue: 512, suffix: "selections", controlledBy: "selectionEnabled" }),
-  Object.freeze({ key: "thinkTimeEnabled", label: "THINK TIME", type: "boolean", defaultValue: false, description: "有効にすると実時間で探索を打ち切るため、端末性能・ブラウザ・実行時負荷により探索量と選択手が変わります。" }),
-  Object.freeze({ key: "thinkMs", label: "THINK TIME LIMIT", type: "integer", minimum: 10, maximum: 10_000, step: 10, defaultValue: 250, suffix: "ms", controlledBy: "thinkTimeEnabled" }),
-  Object.freeze({ key: "queueDepth", label: "QUEUE DEPTH", type: "integer", minimum: 1, maximum: 28, step: 1, defaultValue: 14, suffix: "pieces" }),
+  Object.freeze({ ...PPS_PARAMETER, group: "pace" }),
+  Object.freeze({ key: "selectionEnabled", label: "SELECTION", group: "budget", type: "boolean", defaultValue: true, description: "指定した探索選択数で打ち切ります。固定値では同じ局面の探索量を揃えられます。" }),
+  Object.freeze({ key: "selectionLimit", label: "SELECTION LIMIT", shortLabel: "LIMIT", group: "budget", type: "integer", minimum: 1, maximum: 10_000_000, step: 1, defaultValue: 512, suffix: "selections", controlledBy: "selectionEnabled" }),
+  Object.freeze({ key: "thinkTimeEnabled", label: "THINK TIME", group: "budget", type: "boolean", defaultValue: false, description: "有効にすると実時間で探索を打ち切るため、端末性能・ブラウザ・実行時負荷により探索量と選択手が変わります。" }),
+  Object.freeze({ key: "thinkMs", label: "THINK TIME LIMIT", shortLabel: "LIMIT", group: "budget", type: "integer", minimum: 10, maximum: 10_000, step: 10, defaultValue: 250, suffix: "ms", controlledBy: "thinkTimeEnabled" }),
+  Object.freeze({ key: "queueDepth", label: "QUEUE DEPTH", group: "input", type: "integer", minimum: 1, maximum: 28, step: 1, defaultValue: 14, suffix: "pieces" }),
 ]);
 
 export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
