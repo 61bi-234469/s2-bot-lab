@@ -66,6 +66,9 @@ test("a think-time duration converts to its equivalent PPS", () => {
 
 test("disabled CC2 PPS pacing follows the active search budget", () => {
   assert.equal(ppsForCc2Parameters({ ppsEnabled: true, pps: 2 }), 2);
-  assert.equal(ppsForCc2Parameters({ ppsEnabled: false, selectionEnabled: true, thinkMs: 250 }), 20);
-  assert.equal(ppsForCc2Parameters({ ppsEnabled: false, selectionEnabled: false, thinkMs: 250 }), 4);
+  assert.equal(ppsForCc2Parameters({ ppsEnabled: false, selectionEnabled: true, selectionLimit: 512, thinkTimeEnabled: false, thinkMs: 250 }), 10);
+  assert.equal(ppsForCc2Parameters({ ppsEnabled: false, selectionEnabled: true, selectionLimit: 1024, thinkTimeEnabled: false, thinkMs: 250 }), 5);
+  assert.equal(ppsForCc2Parameters({ ppsEnabled: false, selectionEnabled: false, thinkTimeEnabled: true, thinkMs: 250 }), 4);
+  assert.equal(ppsForCc2Parameters({ ppsEnabled: false, selectionEnabled: true, selectionLimit: 512, thinkTimeEnabled: true, thinkMs: 250 }), 4);
+  assert.equal(ppsForCc2Parameters({ ppsEnabled: false, selectionEnabled: true, selectionLimit: 512, thinkTimeEnabled: false }, { realtime: true }), 20);
 });

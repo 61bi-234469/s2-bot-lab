@@ -26,15 +26,21 @@ export function ppsForThinkTime(thinkMs) {
   return Math.max(0.1, Math.min(20, 1000 / budget));
 }
 
-/** Resolves the synthetic match cadence used when a CC2 bot has no explicit
- * PPS limiter. A selection-limited search has no duration known in advance, so
- * the earliest supported cadence adds no visible wait after its reply; actual
- * placement still cannot happen before the search completes. A time-only
- * search maps its configured duration to the equivalent cadence. */
-export function ppsForCc2Parameters(parameters) {
+/** Resolves the deterministic bot-only cadence used when CC2 has no explicit
+ * PPS limiter. The selection formula deliberately leaves headroom at the
+ * default 512 selections while remaining identical on every device. A 1P
+ * caller passes `realtime: true` and keeps the controller's supported 20 PPS
+ * ceiling; missed deadlines are then moved to their actual wall-clock frame. */
+export function ppsForCc2Parameters(parameters, { realtime = false } = {}) {
   if (parameters?.ppsEnabled !== false) return parameters.pps;
-  if (parameters.selectionEnabled) return 20;
-  return ppsForThinkTime(parameters.thinkMs);
+  if (realtime) return 20;
+  const selectionPps = parameters.selectionEnabled
+    ? Math.max(0.1, Math.min(10, 5120 / parameters.selectionLimit))
+    : null;
+  const thinkPps = parameters.thinkTimeEnabled ? ppsForThinkTime(parameters.thinkMs) : null;
+  if (selectionPps === null) return thinkPps;
+  if (thinkPps === null) return selectionPps;
+  return Math.min(selectionPps, thinkPps);
 }
 
 /**

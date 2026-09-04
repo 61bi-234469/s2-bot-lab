@@ -101,14 +101,25 @@ export function createBotMatch({
  * `externalLockFrame` advances an externally paced player instead of the bots
  * the synthetic schedule has due next. The caller owns that frame, because a
  * human player's lock time is only known once the lock has happened.
+ * `allowScheduledOverrun` lets a real-time 1P lock pass an overdue bot while
+ * rebasing that bot atomically. `scheduledLockFrame` records the actual frame
+ * of a scheduled bot whose calculation missed its synthetic deadline.
  */
-export function advanceBotMatch(match, submissions, { externalLockFrame = null } = {}) {
+export function advanceBotMatch(match, submissions, {
+  externalLockFrame = null,
+  allowScheduledOverrun = false,
+  scheduledLockFrame = null,
+} = {}) {
   assertMatchSnapshot(match);
   if (!Array.isArray(submissions)) throw new Error("submissions must be an array");
+  if (externalLockFrame !== null && scheduledLockFrame !== null) {
+    throw new Error("externalLockFrame and scheduledLockFrame cannot be combined");
+  }
 
+  const scheduledStep = externalLockFrame === null ? botMatchNextStep(match) : null;
   const nextStep = externalLockFrame === null
-    ? botMatchNextStep(match)
-    : externalStepFor(match, submissions, externalLockFrame);
+    ? scheduledStepFor(match, scheduledStep, scheduledLockFrame)
+    : externalStepFor(match, submissions, externalLockFrame, allowScheduledOverrun);
   const expectedIds = nextStep.botIds;
   if (submissions.length !== expectedIds.length) {
     throw new Error(`${match.mode} mode requires submissions from ${expectedIds.join(", ")}`);
@@ -145,13 +156,23 @@ export function advanceBotMatch(match, submissions, { externalLockFrame = null }
 
   if (next.mode === "paced") {
     for (const botId of expectedIds) {
-      const bot = next.bots.find((candidate) => candidate.id === botId);
       const pps = next.pace.ppsByBotId[botId];
       // An externally paced player has no schedule to move forward: the next
       // lock frame arrives with the next submission.
-      next.pace.nextLockFrames[botId] = pps === null
-        ? null
-        : pacedLockFrame(next.pace.startedAtFrame, bot.stats.turns + 1, pps);
+      if (pps === null) {
+        next.pace.nextLockFrames[botId] = null;
+      } else {
+        advanceScheduledCadence(next.pace, botId, toFrame, match.pace.nextLockFrames[botId]);
+      }
+    }
+    // A real-time external lock may pass one or more scheduled deadlines. Move
+    // every missed lock inside this same immutable snapshot update so callers
+    // can never observe nextLockFrame <= clock.logicalFrame.
+    for (const bot of next.bots) {
+      if (submittedById.has(bot.id) || next.pace.ppsByBotId[bot.id] === null) continue;
+      if (next.pace.nextLockFrames[bot.id] <= toFrame) {
+        rebasePendingCadence(next.pace, bot.id, toFrame + 1);
+      }
     }
   }
 
@@ -232,11 +253,11 @@ export function botMatchNextStep(match) {
  * no scheduled lock is skipped over. `null` means the schedule leaves no room
  * and the due bot has to be advanced first.
  */
-export function externalLockFrameWindow(match, botId) {
+export function externalLockFrameWindow(match, botId, { allowScheduledOverrun = false } = {}) {
   assertMatchSnapshot(match);
   assertExternallyPaced(match, botId);
   const scheduled = scheduledLockFrames(match);
-  const latest = scheduled.length === 0
+  const latest = allowScheduledOverrun || scheduled.length === 0
     ? Number.MAX_SAFE_INTEGER
     : Math.min(...scheduled) - 1;
   const earliest = match.clock.logicalFrame + 1;
@@ -252,12 +273,12 @@ function scheduledLockFrames(match) {
   return Object.values(match.pace.nextLockFrames).filter((frame) => frame !== null);
 }
 
-function externalStepFor(match, submissions, externalLockFrame) {
+function externalStepFor(match, submissions, externalLockFrame, allowScheduledOverrun) {
   if (match.mode !== "paced") throw new Error("external lock frames require a paced match");
   const botIds = submissions.map((submission) => submission?.botId);
   if (botIds.length !== 1) throw new Error("an external lock advances exactly one player");
   assertExternallyPaced(match, botIds[0]);
-  const window = externalLockFrameWindow(match, botIds[0]);
+  const window = externalLockFrameWindow(match, botIds[0], { allowScheduledOverrun });
   if (window === null) throw new Error("a scheduled bot lock has to be advanced first");
   if (!Number.isSafeInteger(externalLockFrame)) throw new Error("externalLockFrame must be a safe integer");
   if (externalLockFrame < window.earliest || externalLockFrame > window.latest) {
@@ -267,6 +288,21 @@ function externalStepFor(match, submissions, externalLockFrame) {
     logicalFrame: externalLockFrame,
     frames: externalLockFrame - match.clock.logicalFrame,
     botIds: Object.freeze([botIds[0]]),
+  });
+}
+
+function scheduledStepFor(match, scheduledStep, scheduledLockFrame) {
+  if (scheduledLockFrame === null) return scheduledStep;
+  if (!Number.isSafeInteger(scheduledLockFrame)) {
+    throw new Error("scheduledLockFrame must be a safe integer");
+  }
+  if (scheduledLockFrame < scheduledStep.logicalFrame) {
+    throw new Error(`scheduledLockFrame must be at least ${scheduledStep.logicalFrame}`);
+  }
+  return Object.freeze({
+    ...scheduledStep,
+    logicalFrame: scheduledLockFrame,
+    frames: scheduledLockFrame - match.clock.logicalFrame,
   });
 }
 
@@ -466,13 +502,21 @@ function assertMatchSnapshot(match) {
     for (const bot of match.bots) {
       const pps = match.pace.ppsByBotId?.[bot.id];
       const nextFrame = match.pace.nextLockFrames?.[bot.id];
+      const cadence = match.pace.cadenceByBotId?.[bot.id];
       if (pps === null) {
         if (nextFrame !== null) throw new Error(`bot ${bot.id} is externally paced and cannot be scheduled`);
+        if (cadence !== null) throw new Error(`bot ${bot.id} is externally paced and cannot have cadence state`);
         continue;
       }
       assertPps(pps, `pps for bot ${bot.id}`);
+      if (cadence === null || typeof cadence !== "object") throw new Error(`missing cadence state for bot ${bot.id}`);
+      assertNonNegativeSafeInteger(cadence.originFrame, `cadence origin for bot ${bot.id}`);
+      assertNonNegativeSafeInteger(cadence.placementNumber, `cadence placement number for bot ${bot.id}`);
       if (!Number.isSafeInteger(nextFrame) || nextFrame <= match.clock.logicalFrame) {
         throw new Error(`invalid next lock frame for bot ${bot.id}`);
+      }
+      if (nextFrame !== pacedLockFrame(cadence.originFrame, cadence.placementNumber, pps)) {
+        throw new Error(`cadence state does not match next lock frame for bot ${bot.id}`);
       }
     }
     if (match.bots.every((bot) => match.pace.ppsByBotId?.[bot.id] === null)) {
@@ -498,11 +542,31 @@ function createPace(ids, startedAtFrame, ppsByBotId) {
   return {
     startedAtFrame,
     ppsByBotId: normalized,
+    cadenceByBotId: Object.fromEntries(ids.map((id) => [id, normalized[id] === null ? null : {
+      originFrame: startedAtFrame,
+      placementNumber: 1,
+    }])),
     nextLockFrames: Object.fromEntries(ids.map((id) => [
       id,
       normalized[id] === null ? null : pacedLockFrame(startedAtFrame, 1, normalized[id]),
     ])),
   };
+}
+
+function advanceScheduledCadence(pace, botId, lockFrame, priorScheduledFrame) {
+  const pps = pace.ppsByBotId[botId];
+  if (lockFrame > priorScheduledFrame) {
+    pace.cadenceByBotId[botId] = { originFrame: lockFrame, placementNumber: 1 };
+  } else {
+    pace.cadenceByBotId[botId].placementNumber += 1;
+  }
+  const cadence = pace.cadenceByBotId[botId];
+  pace.nextLockFrames[botId] = pacedLockFrame(cadence.originFrame, cadence.placementNumber, pps);
+}
+
+function rebasePendingCadence(pace, botId, lockFrame) {
+  pace.cadenceByBotId[botId] = { originFrame: lockFrame, placementNumber: 0 };
+  pace.nextLockFrames[botId] = lockFrame;
 }
 
 function pacedLockFrame(startedAtFrame, placementNumber, pps) {

@@ -53,6 +53,8 @@ import {
   realtimeCc2ThinkMs,
 } from "../src-js/bot-match-options.mjs";
 import { runBotProposals } from "../src-js/bot-proposal-runner.mjs";
+import { createLiveMatchMutationQueue } from "../src-js/live-match-mutation.mjs";
+import { realtimeDeadlineDelayMs, realtimeScheduledLockFrame } from "../src-js/realtime-match-pacing.mjs";
 import { calculatePlayerMetrics } from "../cc2-gui/player-metrics.mjs";
 import { botParameterCapability, fairComparisonBotParameters, normalizeBotParameters } from "../src-js/bot-parameters.mjs";
 import { loadS2Config, s2ConfigArguments } from "../src-js/cc2-s2-config.mjs";
@@ -190,7 +192,7 @@ let matchSession = null;
    next state from the same stale snapshot. Bot search deliberately happens
    outside the chain, so waiting for a slow opponent never delays the player's
    own lock. */
-let matchMutations = Promise.resolve();
+const matchMutations = createLiveMatchMutationQueue();
 const server = createServer(async (request, response) => {
   try {
     if (request.method === "POST" && request.url === "/api/suggest") {
@@ -307,6 +309,7 @@ const server = createServer(async (request, response) => {
         ttrmCompatible,
         queueModel,
         cc2Sessions: new Map(),
+        inFlightStep: null,
         queueSeeds: { left: scenario.bagSeed, right: scenario.bagSeed },
         match,
         recording: createMatchRecording({ match, meta: matchReplayMeta({
@@ -326,11 +329,11 @@ const server = createServer(async (request, response) => {
       if (matchSession === null) return sendJson(response, 409, { error: "match-not-started" });
       const currentView = matchView(matchSession);
       if (currentView.outcome.complete) return sendJson(response, 409, { error: "match-complete", outcome: currentView.outcome });
-      // The match clock is owned by the canonical match snapshot.  In
-      // particular, browser wall time and search latency must not affect PPS,
-      // APM, or any other rate calculated from this match.
-      await readJson(request);
-      return sendJson(response, 200, await stepScheduledBots(matchSession));
+      // Bot-only keeps the canonical synthetic clock. In 1P the browser sends
+      // its monotonic wall frame and a late opponent is committed no earlier
+      // than the measured completion frame.
+      const body = await readJson(request);
+      return sendJson(response, 200, await stepScheduledBots(matchSession, { requestedWallFrame: body?.lockFrame }));
     }
     if (request.method === "POST" && request.url === "/api/match/human-lock") {
       if (matchSession === null) return sendJson(response, 409, { error: "match-not-started" });
@@ -341,17 +344,17 @@ const server = createServer(async (request, response) => {
       if (!Number.isSafeInteger(requestedFrame) || requestedFrame < 0) {
         return sendJson(response, 400, { error: "lockFrame must be a non-negative safe integer" });
       }
-      // A scheduled bot lock that lands on the very next frame leaves no frame
-      // for the player, so the bot is advanced first and the lock retried.
-      // Advancing always moves the clock, so this terminates.
-      for (let attempt = 0; attempt < 4; attempt += 1) {
-        const outcome = matchView(session).outcome;
-        if (outcome.complete) return sendJson(response, 409, { error: "match-complete", outcome });
-        const view = await withMatchMutation(() => commitHumanLock(session, body.placement, requestedFrame));
-        if (view !== null) return sendJson(response, 200, view);
-        await stepScheduledBots(session);
-      }
-      return sendJson(response, 409, { error: "human-lock-not-schedulable" });
+      const outcome = matchView(session).outcome;
+      if (outcome.complete) return sendJson(response, 409, { error: "match-complete", outcome });
+      const view = await withMatchMutation(() => commitHumanLock(session, body.placement, requestedFrame));
+      return sendJson(response, 200, view);
+    }
+    if (request.method === "POST" && request.url === "/api/match/close") {
+      await readJson(request);
+      const session = matchSession;
+      matchSession = null;
+      await closeCc2MatchSessions(session);
+      return sendJson(response, 200, { closed: true });
     }
     if (request.method === "GET" && request.url === "/api/match/round") {
       if (matchSession === null || matchSession.recording === undefined) {
@@ -479,9 +482,7 @@ process.once("exit", () => {
 
 /** Serializes one mutation of the live match snapshot against every other. */
 function withMatchMutation(work) {
-  const result = matchMutations.then(work, work);
-  matchMutations = result.then(() => undefined, () => undefined);
-  return result;
+  return matchMutations.run(work);
 }
 
 /**
@@ -493,32 +494,44 @@ function withMatchMutation(work) {
  * delivers changes the searching bot's canonical state without changing which
  * placements are legal from its board.
  */
-async function stepScheduledBots(session) {
-  // This is the only path that reaches an engine, so counting its depth is
-  // enough to know whether a search is in flight. `/api/match/step` and
-  // `/api/match/human-lock` can overlap, so the count has to nest rather than
-  // be a flag.
+async function stepScheduledBots(session, options = {}) {
+  if (session.inFlightStep !== null) return session.inFlightStep;
   cancelEngineIdleTimeout();
   searchesInFlight += 1;
-  try {
-    return await runScheduledBots(session);
-  } finally {
+  const work = runScheduledBots(session, options).finally(() => {
     searchesInFlight -= 1;
     if (searchesInFlight === 0 && session.cc2Sessions.size > 0) scheduleEngineIdleTimeout(session);
-  }
+    if (session.inFlightStep === work) session.inFlightStep = null;
+  });
+  session.inFlightStep = work;
+  return work;
 }
 
-async function runScheduledBots(session) {
+async function runScheduledBots(session, { requestedWallFrame = null } = {}) {
+  const realtime = session.humanSide !== null;
+  const requestFrame = realtime && Number.isSafeInteger(requestedWallFrame) && requestedWallFrame >= 0
+    ? requestedWallFrame
+    : session.match.clock.logicalFrame;
+  const startedAt = performance.now();
   const prepared = await withMatchMutation(() => {
     refillMatchQueues(session);
     const nextStep = botMatchNextStep(session.match);
-    return { dueBots: session.match.bots.filter((bot) => nextStep.botIds.includes(bot.id)) };
+    return { nextStep, dueBots: session.match.bots.filter((bot) => nextStep.botIds.includes(bot.id)) };
   });
   const proposals = await runBotProposals(
     prepared.dueBots,
     (bot) => searchForBot(session, bot, prepared.dueBots.length),
     { serial: session.config.fairComparison },
   );
+  if (realtime) {
+    const elapsedMs = performance.now() - startedAt;
+    const delayMs = realtimeDeadlineDelayMs({
+      scheduledFrame: prepared.nextStep.logicalFrame,
+      requestWallFrame: requestFrame,
+      elapsedMs,
+    });
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
   const stepped = await withMatchMutation(() => {
     if (matchView(session).outcome.complete) return matchView(session);
     const failed = proposals.find((proposal) => proposal.proposalResult?.status === "failure");
@@ -549,7 +562,13 @@ async function runScheduledBots(session) {
     }
     const submissions = proposals.map((proposal) => resolveProposal(session, proposal));
     const before = session.match;
-    const after = advanceBotMatch(before, submissions);
+    const scheduledLockFrame = realtime ? realtimeScheduledLockFrame({
+      scheduledFrame: botMatchNextStep(before).logicalFrame,
+      requestWallFrame: requestFrame,
+      elapsedMs: performance.now() - startedAt,
+      currentLogicalFrame: before.clock.logicalFrame,
+    }) : null;
+    const after = advanceBotMatch(before, submissions, { scheduledLockFrame });
     session.match = after;
     session.recording = recordMatchLocks(session.recording, before, after, submissions);
     const view = matchView(session, submissions, before);
@@ -604,7 +623,7 @@ async function searchForBot(session, bot, dueCount) {
   try {
     cc2 = await cc2Session.suggest({
       timeLimitEnabled: parameters.thinkTimeEnabled,
-      thinkMs: parameters.ppsEnabled === false
+      thinkMs: session.humanSide !== null || parameters.ppsEnabled === false
         ? parameters.thinkMs
         : realtimeCc2ThinkMs({
           thinkMs: parameters.thinkMs,
@@ -729,19 +748,15 @@ function resolveProposal(session, proposal) {
  * Applies one player lock, or returns `null` when the schedule leaves no frame
  * for it yet.
  *
- * The requested frame is the browser's own real-time reading of the shared
- * match clock. It is clamped into the window that keeps the clock monotone, so
- * a lock the player made while the opponent's proposal was still in flight is
- * recorded just before that opponent's lock rather than after it. The error is
- * bounded by the opponent's search latency and is part of the declared
- * synthetic clock, not a measurement of the player's real cadence.
+ * The requested frame is the browser's real-time reading. A 1P lock may pass
+ * an overdue scheduled bot; the controller rebases every missed bot deadline
+ * in this same immutable update so no invalid snapshot escapes.
  */
 function commitHumanLock(session, placement, requestedFrame) {
   if (matchView(session).outcome.complete) throw new Error("match-complete");
   refillMatchQueues(session);
-  const window = externalLockFrameWindow(session.match, session.humanSide);
-  if (window === null) return null;
-  const lockFrame = Math.min(Math.max(requestedFrame, window.earliest), window.latest);
+  const window = externalLockFrameWindow(session.match, session.humanSide, { allowScheduledOverrun: true });
+  const lockFrame = Math.max(requestedFrame, window.earliest);
   const bot = session.match.bots.find((candidate) => candidate.id === session.humanSide);
   const gui = botMatchToGuiState(session.match, bot.id);
   const result = applyHumanFinalPlacementUnderObservedS2(bot.state, placement);
@@ -756,7 +771,10 @@ function commitHumanLock(session, placement, requestedFrame) {
     lastPlaced: lockedPieceCells(gui.board, result.transition, result.comparison.witness.placement.piece),
   };
   const before = session.match;
-  const after = advanceBotMatch(before, [submission], { externalLockFrame: lockFrame });
+  const after = advanceBotMatch(before, [submission], {
+    externalLockFrame: lockFrame,
+    allowScheduledOverrun: true,
+  });
   session.match = after;
   session.recording = recordMatchLocks(session.recording, before, after, [submission]);
   const view = matchView(session, [submission]);
@@ -777,7 +795,7 @@ function pacedRateFor(side, botType, humanSide, config, botParameters) {
   if (botType === "human") return null;
   if (config.fairComparison) return 1;
   return botType.startsWith("cc2-")
-    ? ppsForCc2Parameters(botParameters[side])
+    ? ppsForCc2Parameters(botParameters[side], { realtime: humanSide !== null })
     : botParameters[side].pps;
 }
 
@@ -986,6 +1004,10 @@ function matchView(session, submissions = [], preLockMatch = null) {
     clock: session.match.clock,
     config: session.config,
     botParameters: session.botParameters,
+    pacing: {
+      authority: session.humanSide === null ? "synthetic" : "realtime-1p",
+      declaredPpsByBotId: structuredClone(session.match.pace.ppsByBotId),
+    },
     outcome,
     deliveries: session.match.lastStep?.deliveries ?? [],
     metricElapsedMs: session.match.clock.logicalFrame * 1000 / 60,
@@ -1039,6 +1061,7 @@ function matchReplayMeta({ match, config, types, botParameters, firstTo, ttrmCom
       firstTo,
       ttrmCompatible: ttrmCompatible === true,
       queueModel: queueModel ?? QUEUE_MODE_LEGACY_LCG,
+      declaredPpsByBotId: structuredClone(match.pace.ppsByBotId),
       bots: {
         left: { type: types.left, label: matchBotLabel(types.left), parameters: structuredClone(botParameters.left) },
         right: { type: types.right, label: matchBotLabel(types.right), parameters: structuredClone(botParameters.right) },

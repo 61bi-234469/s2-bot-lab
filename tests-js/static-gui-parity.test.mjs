@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createGame, toS2GuiState } from "../cc2-gui/game.mjs";
 import { createGuiRequestHandlers } from "../src-js/gui-request-handlers.mjs";
+import { guiStateToCanonical } from "../src-js/gui-state.mjs";
+import { analyzeSimpleS2FinalPlacements } from "../src-js/simple-s2-bot.mjs";
 
 async function request(handlers, method, path, body = null) {
   const result = await handlers.handle({ method, path, body });
@@ -122,6 +124,20 @@ test("static CC2 rejects disabling both search limits", async () => {
   assert.match(result.body.error, /cannot both be disabled/);
 });
 
+test("static matches release both CC2 sessions after a proposal failure", async () => {
+  const closed = [];
+  const handlers = createGuiRequestHandlers({ cc2: {
+    async propose() { throw new Error("proposal failed"); },
+    async closeSessions(options) { closed.push(options); },
+  } });
+  await request(handlers, "POST", "/api/match/start", { left: "cc2-raw", right: "s2-simple" });
+  closed.length = 0;
+  const result = await handlers.handle({ method: "POST", path: "/api/match/step", body: {} });
+  assert.equal(result.status, 422);
+  assert.match(result.body.error, /proposal failed/);
+  assert.deepEqual(closed, [{ sessionKeys: ["left", "right"] }]);
+});
+
 test("static CC2 match pacing follows each bot PPS toggle and FAIR override", async () => {
   const selectionPaced = await request(createGuiRequestHandlers(), "POST", "/api/match/start", {
     left: "cc2-raw",
@@ -129,7 +145,14 @@ test("static CC2 match pacing follows each bot PPS toggle and FAIR override", as
     leftParameters: { ppsEnabled: false, selectionEnabled: true, thinkTimeEnabled: false },
     rightParameters: { ppsEnabled: false, selectionEnabled: true, thinkTimeEnabled: false },
   });
-  assert.equal(selectionPaced.nextStepFrames, 3);
+  assert.equal(selectionPaced.nextStepFrames, 6);
+
+  const realtimeSelectionPaced = await request(createGuiRequestHandlers(), "POST", "/api/match/start", {
+    left: "human",
+    right: "cc2-chouhy",
+    rightParameters: { ppsEnabled: false, selectionEnabled: true, thinkTimeEnabled: false },
+  });
+  assert.equal(realtimeSelectionPaced.nextStepFrames, 3);
 
   const timePaced = await request(createGuiRequestHandlers(), "POST", "/api/match/start", {
     left: "cc2-raw",
@@ -169,4 +192,131 @@ test("static matches expose the selected placement over the pre-lock board", asy
     assert.equal(typeof bot.preLockPreview.placement.piece, "string");
     assert.ok(bot.lastPlaced.length > 0);
   }
+});
+
+test("static 1P keeps a human wall-clock lock while one shared bot step is in flight", async () => {
+  let releaseProposal;
+  let proposalStarted;
+  let proposalCalls = 0;
+  const started = new Promise((resolve) => { proposalStarted = resolve; });
+  const proposalGate = new Promise((resolve) => { releaseProposal = resolve; });
+  const cc2 = {
+    async propose({ state }) {
+      proposalCalls += 1;
+      proposalStarted();
+      await proposalGate;
+      const piece = state.queue[0];
+      return {
+        suggestion: {
+          moves: [{ location: { type: piece, orientation: "north", x: 4, y: piece === "I" ? 2 : 0 }, spin: "none" }],
+          move_info: {},
+        },
+      };
+    },
+    async closeSessions() {},
+  };
+  const handlers = createGuiRequestHandlers({ cc2, now: () => 0, wait: async () => {} });
+  const seed = 42;
+  await request(handlers, "POST", "/api/match/start", {
+    left: "human",
+    right: "cc2-raw",
+    seed,
+    rightParameters: { ppsEnabled: true, pps: 1 },
+  });
+
+  const firstStep = handlers.handle({ method: "POST", path: "/api/match/step", body: { lockFrame: 0 } });
+  const duplicateStep = handlers.handle({ method: "POST", path: "/api/match/step", body: { lockFrame: 0 } });
+  await started;
+  const initial = guiStateToCanonical(toS2GuiState(createGame(seed)));
+  const placement = analyzeSimpleS2FinalPlacements(initial, { topN: 1 }).moves[0].placement;
+  const human = await handlers.handle({
+    method: "POST",
+    path: "/api/match/human-lock",
+    body: { lockFrame: 1001, placement },
+  });
+  assert.equal(human.status, 200, JSON.stringify(human.body));
+  assert.equal(human.body.clock.logicalFrame, 1001);
+  assert.equal(human.body.nextStepFrames, 1);
+
+  releaseProposal();
+  const [stepped, duplicated] = await Promise.all([firstStep, duplicateStep]);
+  assert.equal(stepped.status, 200, JSON.stringify(stepped.body));
+  assert.equal(duplicated.status, 200, JSON.stringify(duplicated.body));
+  assert.equal(stepped.body.clock.logicalFrame, 1002);
+  assert.equal(proposalCalls, 1);
+});
+
+test("static bot-only match starts same-frame proposals in parallel", async () => {
+  let started = 0;
+  let bothStarted;
+  let release;
+  const startedGate = new Promise((resolve) => { bothStarted = resolve; });
+  const releaseGate = new Promise((resolve) => { release = resolve; });
+  const handlers = createGuiRequestHandlers({ cc2: {
+    async propose({ state }) {
+      started += 1;
+      if (started === 2) bothStarted();
+      await releaseGate;
+      const piece = state.queue[0];
+      return { suggestion: { moves: [{ location: { type: piece, orientation: "north", x: 4, y: piece === "I" ? 2 : 0 }, spin: "none" }] } };
+    },
+    async closeSessions() {},
+  } });
+  await request(handlers, "POST", "/api/match/start", { left: "cc2-raw", right: "cc2-chouhy" });
+  const stepping = handlers.handle({ method: "POST", path: "/api/match/step", body: {} });
+  await startedGate;
+  assert.equal(started, 2);
+  release();
+  const result = await stepping;
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+});
+
+test("static bot-only caps PPS-on think time but 1P keeps the configured budget", async () => {
+  const observed = [];
+  const cc2 = {
+    async propose({ state, thinkMs }) {
+      observed.push(thinkMs);
+      const piece = state.queue[0];
+      return { suggestion: { moves: [{ location: { type: piece, orientation: "north", x: 4, y: piece === "I" ? 2 : 0 }, spin: "none" }] } };
+    },
+    async closeSessions() {},
+  };
+  const botOnly = createGuiRequestHandlers({ cc2 });
+  await request(botOnly, "POST", "/api/match/start", {
+    left: "cc2-raw", right: "s2-simple",
+    leftParameters: { ppsEnabled: true, pps: 4, thinkTimeEnabled: true, thinkMs: 250 },
+    rightParameters: { pps: 4 },
+  });
+  await request(botOnly, "POST", "/api/match/step", {});
+  assert.equal(observed.shift(), 175);
+
+  const onePlayer = createGuiRequestHandlers({ cc2, now: () => 0, wait: async () => {} });
+  await request(onePlayer, "POST", "/api/match/start", {
+    left: "human", right: "cc2-raw",
+    rightParameters: { ppsEnabled: true, pps: 4, thinkTimeEnabled: true, thinkMs: 250 },
+  });
+  await request(onePlayer, "POST", "/api/match/step", { lockFrame: 0 });
+  assert.equal(observed.shift(), 250);
+});
+
+test("fixed-selection bot-only rounds remain byte-identical for the same seed and settings", async () => {
+  const run = async () => {
+    const handlers = createGuiRequestHandlers({ cc2: {
+      async propose({ state }) {
+        const piece = state.queue[0];
+        return { suggestion: { moves: [{ location: { type: piece, orientation: "north", x: 4, y: piece === "I" ? 2 : 0 }, spin: "none" }] } };
+      },
+      async closeSessions() {},
+    } });
+    await request(handlers, "POST", "/api/match/start", {
+      left: "cc2-raw",
+      right: "cc2-chouhy",
+      seed: 77,
+      leftParameters: { ppsEnabled: false, selectionEnabled: true, selectionLimit: 512, thinkTimeEnabled: false },
+      rightParameters: { ppsEnabled: false, selectionEnabled: true, selectionLimit: 512, thinkTimeEnabled: false },
+    });
+    await request(handlers, "POST", "/api/match/step", {});
+    return request(handlers, "GET", "/api/match/round");
+  };
+  assert.equal(JSON.stringify(await run()), JSON.stringify(await run()));
 });

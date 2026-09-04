@@ -192,6 +192,49 @@ test("an externally paced player locks on the frames the caller supplies", () =>
   assert.deepEqual(externalLockFrameWindow(match, "left"), { earliest: 25, latest: 59 });
 });
 
+test("a real-time player lock atomically rebases every overdue scheduled bot", () => {
+  const left = state({ frame: 0, marker: "left" });
+  const right = state({ frame: 0, marker: "right" });
+  let match = createBotMatch({
+    bots: [{ id: "left", state: left }, { id: "right", state: right }],
+    mode: "paced",
+    ppsByBotId: { left: null, right: 1 },
+  });
+
+  match = advanceBotMatch(match, [submission("left", left)], {
+    externalLockFrame: 1001,
+    allowScheduledOverrun: true,
+  });
+
+  assert.equal(match.clock.logicalFrame, 1001);
+  assert.equal(match.pace.nextLockFrames.right, 1002);
+  assert.deepEqual(botMatchNextStep(match), { logicalFrame: 1002, frames: 1, botIds: ["right"] });
+  assert.deepEqual(externalLockFrameWindow(match, "left", { allowScheduledOverrun: true }), {
+    earliest: 1002,
+    latest: Number.MAX_SAFE_INTEGER,
+  });
+
+  match = advanceBotMatch(match, [submission("right", match.bots[1].state)]);
+  assert.equal(match.clock.logicalFrame, 1002);
+  assert.equal(match.pace.nextLockFrames.right, 1062);
+});
+
+test("a late scheduled lock starts its next cadence from the actual lock frame", () => {
+  const left = state({ frame: 0, marker: "left" });
+  const right = state({ frame: 0, marker: "right" });
+  let match = createBotMatch({
+    bots: [{ id: "left", state: left }, { id: "right", state: right }],
+    mode: "paced",
+    ppsByBotId: { left: null, right: 4 },
+  });
+
+  match = advanceBotMatch(match, [submission("right", right)], { scheduledLockFrame: 41 });
+  assert.equal(match.clock.logicalFrame, 41);
+  assert.equal(match.pace.nextLockFrames.right, 56);
+  assert.equal(match.pace.cadenceByBotId.right.originFrame, 41);
+  assert.equal(match.pace.cadenceByBotId.right.placementNumber, 1);
+});
+
 test("a player lock can neither pass a scheduled lock nor stall the clock", () => {
   const left = state({ frame: 0, marker: "left" });
   const right = state({ frame: 0, marker: "right" });

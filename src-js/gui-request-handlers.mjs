@@ -28,6 +28,10 @@ import { buildReplayIR, nowMs } from "./replay/ttrm-simulator.mjs";
 import { MAX_TTRM_TEXT_LENGTH, TtrmError, parseTtrm } from "./replay/ttrm-parser.mjs";
 import { botParameterCapability, fairComparisonBotParameters, normalizeBotParameters } from "./bot-parameters.mjs";
 import { matchOutcome, normalizeBotMatchOptions, ppsForCc2Parameters } from "./bot-match-options.mjs";
+import { realtimeCc2ThinkMs } from "./bot-match-options.mjs";
+import { runBotProposals } from "./bot-proposal-runner.mjs";
+import { createLiveMatchMutationQueue } from "./live-match-mutation.mjs";
+import { realtimeDeadlineDelayMs, realtimeScheduledLockFrame } from "./realtime-match-pacing.mjs";
 import { RULESET_IDS, resolvePlacementRules } from "./ruleset-profiles.mjs";
 import { placementGeometry } from "./triangle/placement-geometry.mjs";
 import { lockedPieceCells, toS2GuiState, createGame, extendSeededQueue, extendTriangleSeededQueue,
@@ -57,7 +61,11 @@ const SPARSE_S2_WEIGHTS = Object.freeze({ aggregateHeight:-.1,maxHeight:-.4,hole
  * Transport-neutral browser API. Native CC2 engines are deliberately absent;
  * callers get a stable capability response instead of an import-time failure.
  */
-export function createGuiRequestHandlers({ proposeCc2 = null } = {}) {
+export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = () => performance.now(), wait = defaultWait } = {}) {
+  const cc2Runtime = cc2 ?? (proposeCc2 === null ? null : {
+    propose: proposeCc2,
+    closeSessions: async () => {},
+  });
   let session = null;
 
   return Object.freeze({
@@ -66,7 +74,7 @@ export function createGuiRequestHandlers({ proposeCc2 = null } = {}) {
         runtime: { mode: "static-wasm", defaultSelectionLimit: 512, searchSeed: "5994928009864282113", timeBudget: "worker-clock-chunked" },
         ruleset: { id: RULESET_IDS.s2Observed, b2bCharging: resolvePlacementRules(RULESET_IDS.s2Observed).b2bCharging },
         bots: [
-          ...Object.entries(CC2_LABELS).map(([id, label]) => proposeCc2 === null ? unavailable(id, label) : ({ id, label, available: true, ...staticCc2Capability(id) })),
+          ...Object.entries(CC2_LABELS).map(([id, label]) => cc2Runtime === null ? unavailable(id, label) : ({ id, label, available: true, ...staticCc2Capability(id) })),
           SIMPLE_BOT,
           HUMAN_BOT,
         ],
@@ -79,11 +87,11 @@ export function createGuiRequestHandlers({ proposeCc2 = null } = {}) {
         return ok(analyzeSimpleS2FinalPlacements(guiStateToCanonical(body.state), { topN: body.n ?? 5 }));
       }
       if (method === "POST" && path === "/api/suggest") {
-        if (proposeCc2 === null) return fail(503, { error: "CC2 WASM is unavailable" });
+        if (cc2Runtime === null) return fail(503, { error: "CC2 WASM is unavailable" });
         const engine = requireCc2Type(body.engine ?? "cc2-raw");
         try {
           const parameters = normalizeBotParameters(engine, body.parameters);
-          return ok({ ...(await proposeCc2({ engine, state: body.state, ...cc2SearchBudget(parameters) })), info: { version: staticWasmVersion(parameters) }, engine: publicEngine(engine) });
+          return ok({ ...(await cc2Runtime.propose({ sessionKey: "analysis", engine, state: body.state, ...cc2SearchBudget(parameters) })), info: { version: staticWasmVersion(parameters) }, engine: publicEngine(engine) });
         }
         catch (error) { return fail(422, { error: messageOf(error) }); }
       }
@@ -104,8 +112,9 @@ export function createGuiRequestHandlers({ proposeCc2 = null } = {}) {
         catch (error) { return fail(422, { error: messageOf(error) }); }
       }
       if (method === "POST" && path === "/api/match/start") return startMatch(body);
-      if (method === "POST" && path === "/api/match/step") return stepMatch();
+      if (method === "POST" && path === "/api/match/step") return stepMatch(body);
       if (method === "POST" && path === "/api/match/human-lock") return humanLock(body);
+      if (method === "POST" && path === "/api/match/close") return closeMatch();
       if (method === "GET" && path === "/api/match/round") return round();
       if (method === "GET" && path === "/api/match/ttrm") return fail(409, {
         stage: "static-mode", message: "TTRM export is available from the local server only",
@@ -115,7 +124,7 @@ export function createGuiRequestHandlers({ proposeCc2 = null } = {}) {
     },
   });
 
-  function startMatch(body) {
+  async function startMatch(body) {
     try {
       const left = staticBotType(body.left ?? "s2-simple");
       const right = staticBotType(body.right ?? "s2-simple");
@@ -132,6 +141,7 @@ export function createGuiRequestHandlers({ proposeCc2 = null } = {}) {
           ? fairComparisonBotParameters(right, body.rightParameters)
           : normalizeBotParameters(right, body.rightParameters),
       };
+      await cc2Runtime?.closeSessions({ sessionKeys: ["left", "right"] });
       const ttrmCompatible = body.ttrmCompatible === true;
       const queueModel = ttrmCompatible ? QUEUE_MODE_TRIANGLE_7_BAG : QUEUE_MODE_LEGACY_LCG;
       const scenario = createGame(config.seed, { queueModel });
@@ -143,17 +153,19 @@ export function createGuiRequestHandlers({ proposeCc2 = null } = {}) {
         ],
         mode: "paced",
         ppsByBotId: {
-          left: left === "human" ? null : staticPacedRate(left, botParameters.left, config.fairComparison),
-          right: right === "human" ? null : staticPacedRate(right, botParameters.right, config.fairComparison),
+          left: left === "human" ? null : staticPacedRate(left, botParameters.left, config.fairComparison, humanSide !== null),
+          right: right === "human" ? null : staticPacedRate(right, botParameters.right, config.fairComparison, humanSide !== null),
         },
       });
       session = {
         types: { left, right }, humanSide, botParameters, config, ttrmCompatible, queueModel,
+        mutations: createLiveMatchMutationQueue(), inFlightStep: null,
         queueSeeds: { left: scenario.bagSeed, right: scenario.bagSeed }, match, recording: createMatchRecording({
           match, meta: { origin: "s2-bot-match/1", users: [{ id: "left", username: "LEFT · ${left}" }, { id: "right", username: "RIGHT · ${right}" }],
             gamemode: "s2-bot-match", ts: new Date().toISOString(), version: 1, parseMs: 0,
             match: { seed: config.seed, fairComparison: config.fairComparison,
               maxTurns: config.maxTurns, firstTo: 1, ttrmCompatible, queueModel,
+              declaredPpsByBotId: structuredClone(match.pace.ppsByBotId),
               bots: { left: { type: left, parameters: botParameters.left }, right: { type: right, parameters: botParameters.right } }, rulesetId: match.rulesetId } },
         }), finishedRound: null, lastSubmissions: [],
       };
@@ -161,57 +173,181 @@ export function createGuiRequestHandlers({ proposeCc2 = null } = {}) {
     } catch (error) { return fail(400, { error: messageOf(error) }); }
   }
 
-  async function stepMatch() {
+  async function stepMatch(body = {}) {
     if (session === null) return fail(409, { error: "match-not-started" });
-    const view = matchView();
-    if (view.outcome.complete) return fail(409, { error: "match-complete", outcome: view.outcome });
-    refillQueues();
-    const ids = botMatchNextStep(session.match).botIds;
-    const submissions = [];
-    for (const botId of ids) {
-      if (session.types[botId] === "human") continue;
-      const bot = session.match.bots.find((candidate) => candidate.id === botId);
-      if (session.types[botId] === "s2-simple") {
-        const analysis = analyzeSimpleS2FinalPlacements(bot.state, { topN: 1, allowHold: session.botParameters[botId].allowHold });
-        const best = analysis.moves[0];
-        if (!best) return fail(422, { error: `${botId} has no legal final placement` });
-        submissions.push(submissionFor(bot, best.placement, best.transition, best.score));
-      } else {
-        const engine = session.types[botId];
-        const gui = botMatchToGuiState(session.match, bot.id);
-        const state = { board: gui.board, queue: gui.queue.slice(0, session.botParameters[botId].queueDepth), hold: gui.hold, combo: gui.combo, back_to_back: gui.back_to_back, randomizer: { type: "seven_bag", bag_state: [] } };
-        const proposal = await proposeCc2({ engine, state, ...cc2SearchBudget(session.botParameters[botId]) });
-        const result = isS2(engine) ? selectS2(gui, proposal.suggestion.moves, engine) : applyCc2FinalPlacementUnderObservedS2(gui, proposal.suggestion.moves[0], publicEngine(engine));
-        if (result.transition === null) return fail(422, { error: `${botId} CC2 placement rejected` });
-        submissions.push(submissionFor(bot, result.comparison.witness.placement, result.transition, result.comparison.score));
-      }
-    }
-    if (submissions.length === 0) return fail(409, { error: "human-lock-required" });
-    const before = session.match;
-    session.match = advanceBotMatch(before, submissions);
-    session.lastSubmissions = submissions;
-    session.recording = recordMatchLocks(session.recording, before, session.match, submissions);
-    finalize();
-    return ok(matchView(before));
+    if (session.inFlightStep !== null) return session.inFlightStep;
+    const activeSession = session;
+    const work = runStepMatch(activeSession, body).finally(() => {
+      if (activeSession.inFlightStep === work) activeSession.inFlightStep = null;
+    });
+    activeSession.inFlightStep = work;
+    return work;
   }
 
-  function humanLock(body) {
+  async function runStepMatch(activeSession, body) {
+    const prepared = await activeSession.mutations.run(() => {
+      if (session !== activeSession) return null;
+      const view = matchView();
+      if (view.outcome.complete) return { complete: view.outcome };
+      refillQueues();
+      const nextStep = botMatchNextStep(activeSession.match);
+      return {
+        match: activeSession.match,
+        nextStep,
+        bots: activeSession.match.bots.filter((bot) => nextStep.botIds.includes(bot.id)),
+      };
+    });
+    if (prepared === null) return fail(409, { error: "match-replaced" });
+    if (prepared.complete !== undefined) return fail(409, { error: "match-complete", outcome: prepared.complete });
+    if (prepared.bots.every((bot) => activeSession.types[bot.id] === "human")) {
+      return fail(409, { error: "human-lock-required" });
+    }
+
+    const requestedWallFrame = activeSession.humanSide === null
+      ? null
+      : validWallFrame(body?.lockFrame, activeSession.match.clock.logicalFrame);
+    const startedAt = now();
+    let proposals;
+    try {
+      proposals = await runBotProposals(
+        prepared.bots.filter((bot) => activeSession.types[bot.id] !== "human"),
+        (bot) => proposeStaticBot(activeSession, prepared.match, bot, prepared.bots.length),
+        { serial: activeSession.config.fairComparison },
+      );
+    } catch (error) {
+      await cc2Runtime?.closeSessions({ sessionKeys: ["left", "right"] });
+      return fail(422, { error: messageOf(error) });
+    }
+
+    if (requestedWallFrame !== null) {
+      const elapsedMs = now() - startedAt;
+      const delayMs = realtimeDeadlineDelayMs({
+        scheduledFrame: prepared.nextStep.logicalFrame,
+        requestWallFrame: requestedWallFrame,
+        elapsedMs,
+      });
+      if (delayMs > 0) await wait(delayMs);
+    }
+
+    try {
+      return await activeSession.mutations.run(() => {
+        if (session !== activeSession) return fail(409, { error: "match-replaced" });
+        if (matchView().outcome.complete) return fail(409, { error: "match-complete", outcome: matchView().outcome });
+        const submissions = proposals.map((proposal) => resolveStaticProposal(activeSession, proposal));
+        const before = activeSession.match;
+        const scheduledLockFrame = requestedWallFrame === null ? null : realtimeScheduledLockFrame({
+          scheduledFrame: botMatchNextStep(before).logicalFrame,
+          requestWallFrame: requestedWallFrame,
+          elapsedMs: now() - startedAt,
+          currentLogicalFrame: before.clock.logicalFrame,
+        });
+        activeSession.match = advanceBotMatch(before, submissions, { scheduledLockFrame });
+        activeSession.lastSubmissions = submissions;
+        activeSession.recording = recordMatchLocks(activeSession.recording, before, activeSession.match, submissions);
+        finalize();
+        const view = matchView(before);
+        if (view.outcome.complete) cc2Runtime?.closeSessions({ sessionKeys: ["left", "right"] });
+        return ok(view);
+      });
+    } catch (error) {
+      return fail(422, { error: messageOf(error) });
+    }
+  }
+
+  async function humanLock(body) {
     if (session === null) return fail(409, { error: "match-not-started" });
-    if (session.humanSide === null) return fail(409, { error: "no-human-player" });
+    const activeSession = session;
+    if (activeSession.humanSide === null) return fail(409, { error: "no-human-player" });
     if (!Number.isSafeInteger(body.lockFrame) || body.lockFrame < 0) return fail(400, { error: "lockFrame must be a non-negative safe integer" });
-    const window = externalLockFrameWindow(session.match, session.humanSide);
-    if (window === null) return fail(409, { error: "human-lock-not-schedulable" });
-    const bot = session.match.bots.find((candidate) => candidate.id === session.humanSide);
-    const gui = botMatchToGuiState(session.match, bot.id);
-    const result = applyHumanFinalPlacementUnderObservedS2(bot.state, body.placement);
-    if (result.transition === null) return fail(422, { error: result.reasons.join(", ") });
-    const submission = submissionFor(bot, result.comparison.witness.placement, result.transition, result.comparison.score);
-    const before = session.match;
-    session.match = advanceBotMatch(before, [submission], { externalLockFrame: Math.min(Math.max(body.lockFrame, window.earliest), window.latest) });
-    session.lastSubmissions = [submission];
-    session.recording = recordMatchLocks(session.recording, before, session.match, [submission]);
-    finalize();
-    return ok(matchView());
+    try {
+      return await activeSession.mutations.run(() => {
+        if (session !== activeSession) return fail(409, { error: "match-replaced" });
+        if (matchView().outcome.complete) return fail(409, { error: "match-complete", outcome: matchView().outcome });
+        refillQueues();
+        const window = externalLockFrameWindow(activeSession.match, activeSession.humanSide, { allowScheduledOverrun: true });
+        const lockFrame = Math.max(body.lockFrame, window.earliest);
+        const bot = activeSession.match.bots.find((candidate) => candidate.id === activeSession.humanSide);
+        const result = applyHumanFinalPlacementUnderObservedS2(bot.state, body.placement);
+        if (result.transition === null) return fail(422, { error: result.reasons.join(", ") });
+        const submission = submissionFor(bot, result.comparison.witness.placement, result.transition, result.comparison.score);
+        const before = activeSession.match;
+        activeSession.match = advanceBotMatch(before, [submission], {
+          externalLockFrame: lockFrame,
+          allowScheduledOverrun: true,
+        });
+        activeSession.lastSubmissions = [submission];
+        activeSession.recording = recordMatchLocks(activeSession.recording, before, activeSession.match, [submission]);
+        finalize();
+        const view = matchView();
+        if (view.outcome.complete) cc2Runtime?.closeSessions({ sessionKeys: ["left", "right"] });
+        return ok(view);
+      });
+    } catch (error) {
+      return fail(422, { error: messageOf(error) });
+    }
+  }
+
+  async function closeMatch() {
+    await cc2Runtime?.closeSessions({ sessionKeys: ["left", "right"] });
+    session = null;
+    return ok({ closed: true });
+  }
+
+  async function proposeStaticBot(activeSession, preparedMatch, bot, dueCount) {
+    const type = activeSession.types[bot.id];
+    if (type === "s2-simple") return { botId: bot.id, type };
+    if (cc2Runtime === null) throw new Error("CC2 WASM is unavailable");
+    const parameters = activeSession.botParameters[bot.id];
+    const gui = botMatchToGuiState(preparedMatch, bot.id);
+    const state = {
+      board: gui.board,
+      queue: gui.queue.slice(0, parameters.queueDepth),
+      hold: gui.hold,
+      combo: gui.combo,
+      back_to_back: gui.back_to_back,
+      randomizer: { type: "seven_bag", bag_state: [] },
+    };
+    const proposal = await cc2Runtime.propose({
+      sessionKey: bot.id,
+      engine: type,
+      state,
+      ...cc2MatchSearchBudget(activeSession, bot.id, dueCount),
+    });
+    return { botId: bot.id, type, moves: proposal.suggestion.moves };
+  }
+
+  function resolveStaticProposal(activeSession, proposal) {
+    const bot = activeSession.match.bots.find((candidate) => candidate.id === proposal.botId);
+    const type = activeSession.types[bot.id];
+    if (type === "s2-simple") {
+      const analysis = analyzeSimpleS2FinalPlacements(bot.state, {
+        topN: 1,
+        allowHold: activeSession.botParameters[bot.id].allowHold,
+      });
+      const best = analysis.moves[0];
+      if (!best) throw new Error(`${bot.id} has no legal final placement`);
+      return submissionFor(bot, best.placement, best.transition, best.score);
+    }
+    const gui = botMatchToGuiState(activeSession.match, bot.id);
+    const result = isS2(type)
+      ? selectS2(gui, proposal.moves, type)
+      : applyCc2FinalPlacementUnderObservedS2(gui, proposal.moves[0], publicEngine(type));
+    if (result.transition === null) throw new Error(`${bot.id} CC2 placement rejected`);
+    return submissionFor(bot, result.comparison.witness.placement, result.transition, result.comparison.score);
+  }
+
+  function cc2MatchSearchBudget(activeSession, botId, dueCount) {
+    const parameters = activeSession.botParameters[botId];
+    const budget = cc2SearchBudget(parameters);
+    if (activeSession.humanSide !== null || parameters.ppsEnabled === false || !parameters.thinkTimeEnabled) return budget;
+    return {
+      ...budget,
+      thinkMs: realtimeCc2ThinkMs({
+        thinkMs: parameters.thinkMs,
+        stepFrames: 60 / activeSession.match.pace.ppsByBotId[botId],
+        serialProposalCount: activeSession.config.fairComparison ? dueCount : 1,
+      }),
+    };
   }
 
   function round() {
@@ -265,6 +401,7 @@ export function createGuiRequestHandlers({ proposeCc2 = null } = {}) {
     const outcome = matchOutcome(bots, session.match.turnNumber, session.config.maxTurns);
     return { status: outcome.complete ? "complete" : "active", turnNumber: session.match.turnNumber, humanSide: session.humanSide,
       mode: session.match.mode, clock: session.match.clock, config: session.config, botParameters: session.botParameters, outcome,
+      pacing: { authority: session.humanSide === null ? "synthetic" : "realtime-1p", declaredPpsByBotId: structuredClone(session.match.pace.ppsByBotId) },
       deliveries: session.match.lastStep?.deliveries ?? [], metricElapsedMs: session.match.clock.logicalFrame * 1000 / 60,
       nextStepFrames: outcome.complete ? null : botMatchNextStep(session.match).frames, bots, replayMeta: session.recording?.meta ?? null };
   }
@@ -292,15 +429,17 @@ function isCanonicalPlacement(placement) {
 function ok(body) { return { status: 200, body }; }
 function fail(status, body) { return { status, body }; }
 function messageOf(error) { return error instanceof Error ? error.message : String(error); }
+function validWallFrame(value, fallback) { return Number.isSafeInteger(value) && value >= 0 ? value : fallback; }
+function defaultWait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 function unavailable(id, label) { return { id, label, available: false, reason: "requires the local server", parameters: [] }; }
 function staticCc2Capability(id) { const capability = botParameterCapability(id); capability.description += " 公開WASM版でもTHINK TIMEを利用できます。有効時は端末性能・ブラウザ・実行時負荷によって探索量と選択手が変化します。"; return capability; }
 function cc2SearchBudget(parameters) { return {
   selectionLimit: parameters.selectionEnabled ? parameters.selectionLimit : null,
   thinkMs: parameters.thinkTimeEnabled ? parameters.thinkMs : null,
 }; }
-function staticPacedRate(botType, parameters, fairComparison) {
+function staticPacedRate(botType, parameters, fairComparison, realtime) {
   if (fairComparison) return 1;
-  return botType.startsWith("cc2-") ? ppsForCc2Parameters(parameters) : parameters.pps;
+  return botType.startsWith("cc2-") ? ppsForCc2Parameters(parameters, { realtime }) : parameters.pps;
 }
 function staticWasmVersion(parameters) {
   if (parameters.selectionEnabled && !parameters.thinkTimeEnabled) return `deterministic-wasm-${parameters.selectionLimit}`;

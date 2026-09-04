@@ -9,7 +9,6 @@ import {
 import {
   advanceMatchPlaybackDeadline,
   createMatchClock,
-  delayUntilMatchClock,
   readMatchClock,
   setMatchClockRunning,
   synchronizeMatchClock,
@@ -141,6 +140,8 @@ let lastRenderedMatchClock = "";
 let lastRenderedMatchElapsedMs = 0;
 let matchPlaybackDeadlineMs = 0;
 let matchPlaybackElapsedMs = 0;
+let matchComputeRatio = 1;
+let matchComputeLimited = false;
 const preferences = loadPreferences();
 let mode = preferences.mode ?? "analysis";
 let humanControls = preferences.humanControls ?? defaultHumanControls();
@@ -1552,6 +1553,8 @@ async function startSeriesGame() {
   lastRenderedMatchElapsedMs = 0;
   matchPlaybackDeadlineMs = performance.now();
   matchPlaybackElapsedMs = body.metricElapsedMs;
+  matchComputeRatio = 1;
+  matchComputeLimited = false;
   matchRunning = true;
   elements["match-step"].disabled = body.humanSide !== null;
   if (body.humanSide !== null) startHumanGame(body);
@@ -1569,9 +1572,9 @@ function scheduleHumanMatchBotStep(view) {
   cancelHumanMatchBotStep();
   if (human === null || !matchRunning || !matchAutoplay) return;
   if (!Number.isFinite(view.nextStepFrames)) return;
-  const targetElapsedMs = (view.clock.logicalFrame + view.nextStepFrames) * 1000 / 60;
-  const delayMs = delayUntilMatchClock(matchClock, targetElapsedMs, performance.now());
-  humanBotStepTimer = setTimeout(stepMatch, delayMs);
+  // Start thinking immediately. The handler holds an early answer until its
+  // scheduled frame and records a late answer at its actual completion frame.
+  humanBotStepTimer = setTimeout(stepMatch, 0);
 }
 
 function cancelHumanMatchBotStep() {
@@ -1586,12 +1589,19 @@ async function stepMatch() {
   matchStepInFlight = true;
   matchClock = setMatchClockRunning(matchClock, true, performance.now());
   elements["match-step"].disabled = true;
-  if (human === null) elements["match-status"].textContent = "THINKING";
+  // Once a bot-only match is known to be compute-limited, keep the measured
+  // ratio visible while the next proposal is in flight. Otherwise the zero
+  // delay retry replaces the warning with THINKING before it can be read.
+  if (human === null && !matchComputeLimited) elements["match-status"].textContent = "THINKING";
+  const stepStartedAtMs = performance.now();
+  const previousMetricElapsedMs = matchPlaybackElapsedMs;
   try {
+    const nowMs = performance.now();
+    const lockFrame = human === null ? null : Math.floor(readMatchClock(matchClock, nowMs) * 60 / 1000);
     const response = await fetch("/api/match/step", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify(lockFrame === null ? {} : { lockFrame }),
     });
     const body = await response.json();
     /* The player's own lock can finish the game while this step is on its way
@@ -1603,6 +1613,15 @@ async function stepMatch() {
        page no longer shows, so it must not repaint the cleared arena. */
     if (generation !== matchGeneration) return;
     if (body.outcome.complete && !matchRunning) return;
+    if (human === null && Number.isFinite(body.metricElapsedMs)) {
+      const wallMs = Math.max(0.001, performance.now() - stepStartedAtMs);
+      const gameMs = Math.max(0, body.metricElapsedMs - previousMetricElapsedMs);
+      matchComputeRatio = gameMs / wallMs;
+      matchComputeLimited = gameMs + 16 < wallMs;
+    } else {
+      matchComputeRatio = 1;
+      matchComputeLimited = false;
+    }
     advanceCurrentMatchPlaybackDeadline(body);
     if (!await presentMatchCommit(body, generation)) return;
     if (body.outcome.complete) finishSeriesGame(body);
@@ -1723,6 +1742,7 @@ async function presentMatchCommit(view, generation) {
 function preLockPreviewDuration(view) {
   const config = matchSeries?.config;
   const previewed = view.bots.filter((bot) => bot.preLockPreview !== null);
+  if (human !== null) return 0;
   if (config?.preLockPreview !== true || previewed.length === 0) return 0;
   const fastestPps = Math.max(...previewed.map((bot) => config[`${bot.id}Parameters`].pps));
   const cadenceMs = 1000 / fastestPps;
@@ -1757,9 +1777,7 @@ function handleMatchError(error) {
   renderMatchRunButton();
 }
 
-/* Clears the arena back to its pre-match state and hands the settings back.
-   The server keeps its last session until the next START MATCH replaces it;
-   nothing here depends on it, because a discarded generation is ignored. */
+/* Clears the arena and explicitly releases any retained bot runtime. */
 async function resetMatch() {
   if (matchRoundFinalization !== null) {
     elements["match-status"].textContent = "WAITING FOR ROUND SAVE";
@@ -1777,12 +1795,23 @@ async function resetMatch() {
   matchGeneration += 1;
   cancelHumanMatchBotStep();
   stopHumanPlay();
+  try {
+    await fetch("/api/match/close", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+  } catch {
+    // RESET remains local even if an already-failed transport cannot close.
+  }
   lastMatchView = null;
   matchClock = createMatchClock(performance.now());
   lastRenderedMatchClock = "";
   lastRenderedMatchElapsedMs = 0;
   matchPlaybackDeadlineMs = 0;
   matchPlaybackElapsedMs = 0;
+  matchComputeRatio = 1;
+  matchComputeLimited = false;
   paintMatchClock(performance.now());
   clearMatchArena();
   renderMatchSummary();
@@ -2048,7 +2077,7 @@ function renderMatch(view) {
     );
     paintMatchClock(performance.now());
   }
-  matchRoundStatus = `ROUND ${view.turnNumber} · ${view.clock.logicalFrame}f`;
+  matchRoundStatus = `ROUND ${view.turnNumber} · ${view.clock.logicalFrame}f${matchComputeLimited ? ` · COMPUTE LIMITED ${matchComputeRatio.toFixed(2)}×` : ""}`;
   renderMatchStatus();
   for (const bot of view.bots) {
     const side = bot.id;

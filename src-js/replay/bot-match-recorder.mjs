@@ -57,8 +57,25 @@ export function recordMatchLocks(recording, before, after, submissions) {
   assertMatch(after);
   if (!Array.isArray(submissions)) throw new Error("submissions must be an array");
 
-  const next = structuredClone(recording);
-  next.match = structuredClone(after);
+  // Recording growth is append-only. Clone only the containers this call can
+  // append to; cloning the complete history on every lock makes a match O(n²).
+  const next = {
+    ...recording,
+    match: structuredClone(after),
+    players: recording.players.map((player) => ({
+      ...player,
+      locks: [...player.locks],
+      ttrmLocks: [...player.ttrmLocks],
+      garbageEvents: [...player.garbageEvents],
+      visual: {
+        ...player.visual,
+        active: [...player.visual.active],
+        boards: [...player.visual.boards],
+        queues: [...player.visual.queues],
+        garbage: [...player.visual.garbage],
+      },
+    })),
+  };
   const byId = new Map(next.players.map((player) => [player.id, player]));
 
   for (const submission of submissions) {
