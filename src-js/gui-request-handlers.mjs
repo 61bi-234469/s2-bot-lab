@@ -12,12 +12,7 @@ import {
   externalLockFrameWindow,
 } from "./bot-match-controller.mjs";
 import { applyHumanFinalPlacementUnderObservedS2 } from "./human-s2-adapter.mjs";
-import { applyCc2FinalPlacementUnderObservedS2 } from "./cc2-s2-adapter.mjs";
-import { selectCc2S2HybridPlacement } from "./cc2-s2-hybrid.mjs";
-import { selectS2RenQualityPlacement } from "./s2-ren-quality-selector.mjs";
-import { selectS2ConversionQualifiedRenFinisherPlacement } from "./s2-conversion-qualified-ren-finisher-selector.mjs";
-import { selectS2F12PostTankSolvencyRescuePlacement } from "./s2-f12-post-tank-solvency-rescue-selector.mjs";
-import { selectS2ThresholdImminentB2bRetentionPlacement } from "./s2-threshold-imminent-b2b-retention-selector.mjs";
+import { resolveStaticCc2Proposal, resolveStaticCc2Submission } from "./static-cc2-proposal.mjs";
 import { calculatePlayerMetrics } from "../cc2-gui/player-metrics.mjs";
 import {
   createMatchRecording,
@@ -55,8 +50,6 @@ const CC2_LABELS = Object.freeze({
   "cc2-s2-f25": "CC2 S2 — F25 B2B retention",
   "cc2-s2-champion": "CC2 S2 — current development champion (not release-qualified)",
 });
-const SPARSE_S2_WEIGHTS = Object.freeze({ aggregateHeight:-.1,maxHeight:-.4,holes:-1,bumpiness:-.05,remainingIncoming:0,deferredIncoming:-.8,dueIncoming:0,incomingNextLock:0,confirmedIncoming:0,tankedIncoming:-.25,visibleTopOutMargin:0,outgoingBeforeCancel:0,outgoingAfterCancel:1,cancelled:.8,combo:0,b2b:.6,chargingLevel:0,surgeSent:.25 });
-
 /**
  * Transport-neutral browser API. Native CC2 engines are deliberately absent;
  * callers get a stable capability response instead of an import-time failure.
@@ -67,6 +60,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     closeSessions: async () => {},
   });
   let session = null;
+  let sessionGeneration = 0;
 
   return Object.freeze({
     async handle({ method, path, body = null }) {
@@ -99,7 +93,12 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
         if (body.engine === "s2-simple") return ok(applyHumanFinalPlacementUnderObservedS2(guiStateToCanonical(body.state), body.move));
         try {
           const engine = requireCc2Type(body.engine);
-          const result = isS2(engine) ? selectS2(body.state, body.moves ?? [body.move], engine) : applyCc2FinalPlacementUnderObservedS2(body.state, body.move, publicEngine(engine));
+          const result = resolveStaticCc2Proposal({
+            gui: body.state,
+            moves: body.moves ?? [body.move],
+            type: engine,
+            engine: publicEngine(engine),
+          });
           return result.status === "unsupported" ? fail(422, result) : ok(result);
         } catch (error) { return fail(422, { error: messageOf(error) }); }
       }
@@ -141,7 +140,12 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
           ? fairComparisonBotParameters(right, body.rightParameters)
           : normalizeBotParameters(right, body.rightParameters),
       };
+      const previousSession = session;
+      const generation = ++sessionGeneration;
+      if (previousSession !== null) previousSession.invalidated = true;
+      session = null;
       await cc2Runtime?.closeSessions({ sessionKeys: ["left", "right"] });
+      if (generation !== sessionGeneration) return fail(409, { error: "match-replaced" });
       const ttrmCompatible = body.ttrmCompatible === true;
       const queueModel = ttrmCompatible ? QUEUE_MODE_TRIANGLE_7_BAG : QUEUE_MODE_LEGACY_LCG;
       const scenario = createGame(config.seed, { queueModel });
@@ -158,7 +162,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
         },
       });
       session = {
-        types: { left, right }, humanSide, botParameters, config, ttrmCompatible, queueModel,
+        types: { left, right }, humanSide, botParameters, config, ttrmCompatible, queueModel, invalidated: false,
         mutations: createLiveMatchMutationQueue(), inFlightStep: null,
         queueSeeds: { left: scenario.bagSeed, right: scenario.bagSeed }, match, recording: createMatchRecording({
           match, meta: { origin: "s2-bot-match/1", users: [{ id: "left", username: "LEFT · ${left}" }, { id: "right", username: "RIGHT · ${right}" }],
@@ -169,7 +173,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
               bots: { left: { type: left, parameters: botParameters.left }, right: { type: right, parameters: botParameters.right } }, rulesetId: match.rulesetId } },
         }), finishedRound: null, lastSubmissions: [],
       };
-      return ok(matchView());
+      return ok(matchView(session));
     } catch (error) { return fail(400, { error: messageOf(error) }); }
   }
 
@@ -186,10 +190,10 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
 
   async function runStepMatch(activeSession, body) {
     const prepared = await activeSession.mutations.run(() => {
-      if (session !== activeSession) return null;
-      const view = matchView();
+      if (session !== activeSession || activeSession.invalidated) return null;
+      const view = matchView(activeSession);
       if (view.outcome.complete) return { complete: view.outcome };
-      refillQueues();
+      refillQueues(activeSession);
       const nextStep = botMatchNextStep(activeSession.match);
       return {
         match: activeSession.match,
@@ -215,6 +219,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
         { serial: activeSession.config.fairComparison },
       );
     } catch (error) {
+      if (session !== activeSession || activeSession.invalidated) return fail(409, { error: "match-replaced" });
       await cc2Runtime?.closeSessions({ sessionKeys: ["left", "right"] });
       return fail(422, { error: messageOf(error) });
     }
@@ -230,11 +235,47 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     }
 
     try {
-      return await activeSession.mutations.run(() => {
-        if (session !== activeSession) return fail(409, { error: "match-replaced" });
-        if (matchView().outcome.complete) return fail(409, { error: "match-complete", outcome: matchView().outcome });
-        const submissions = proposals.map((proposal) => resolveStaticProposal(activeSession, proposal));
+      let optimisticMatch = null;
+      let optimisticSubmissions = null;
+      if (activeSession.humanSide !== null) {
+        const captured = await activeSession.mutations.run(() => {
+          if (session !== activeSession || activeSession.invalidated) {
+            return { response: fail(409, { error: "match-replaced" }) };
+          }
+          const currentView = matchView(activeSession);
+          if (currentView.outcome.complete) {
+            return { response: fail(409, { error: "match-complete", outcome: currentView.outcome }) };
+          }
+          refillQueues(activeSession);
+          return { match: activeSession.match };
+        });
+        if (captured.response !== undefined) return captured.response;
+        optimisticMatch = captured.match;
+        optimisticSubmissions = await Promise.allSettled(proposals.map((proposal) =>
+          resolveStaticProposal(activeSession, optimisticMatch, proposal)));
+      }
+
+      return await activeSession.mutations.run(async () => {
+        if (session !== activeSession || activeSession.invalidated) return fail(409, { error: "match-replaced" });
+        const currentView = matchView(activeSession);
+        if (currentView.outcome.complete) return fail(409, { error: "match-complete", outcome: currentView.outcome });
         const before = activeSession.match;
+        let submissions;
+        if (optimisticMatch === before) {
+          const rejected = optimisticSubmissions.find((result) => result.status === "rejected");
+          if (rejected !== undefined) throw rejected.reason;
+          submissions = optimisticSubmissions.map((result) => result.value);
+        } else {
+          // A human lock committed while pure bot resolution was running. Drop
+          // the entire stale batch and resolve every due bot from one current
+          // snapshot while holding the final mutation boundary.
+          const forceLocal = optimisticSubmissions?.some((result) => result.status === "rejected") ?? false;
+          submissions = await Promise.all(proposals.map((proposal) =>
+            resolveStaticProposal(activeSession, before, proposal, { forceLocal })));
+        }
+        if (session !== activeSession || activeSession.invalidated) return fail(409, { error: "match-replaced" });
+        const resolvedView = matchView(activeSession);
+        if (resolvedView.outcome.complete) return fail(409, { error: "match-complete", outcome: resolvedView.outcome });
         const scheduledLockFrame = requestedWallFrame === null ? null : realtimeScheduledLockFrame({
           scheduledFrame: botMatchNextStep(before).logicalFrame,
           requestWallFrame: requestedWallFrame,
@@ -244,12 +285,14 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
         activeSession.match = advanceBotMatch(before, submissions, { scheduledLockFrame });
         activeSession.lastSubmissions = submissions;
         activeSession.recording = recordMatchLocks(activeSession.recording, before, activeSession.match, submissions);
-        finalize();
-        const view = matchView(before);
+        finalize(activeSession);
+        const view = matchView(activeSession, before);
         if (view.outcome.complete) cc2Runtime?.closeSessions({ sessionKeys: ["left", "right"] });
         return ok(view);
       });
     } catch (error) {
+      if (session !== activeSession || activeSession.invalidated) return fail(409, { error: "match-replaced" });
+      await cc2Runtime?.closeSessions({ sessionKeys: ["left", "right"] });
       return fail(422, { error: messageOf(error) });
     }
   }
@@ -261,24 +304,25 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     if (!Number.isSafeInteger(body.lockFrame) || body.lockFrame < 0) return fail(400, { error: "lockFrame must be a non-negative safe integer" });
     try {
       return await activeSession.mutations.run(() => {
-        if (session !== activeSession) return fail(409, { error: "match-replaced" });
-        if (matchView().outcome.complete) return fail(409, { error: "match-complete", outcome: matchView().outcome });
-        refillQueues();
+        if (session !== activeSession || activeSession.invalidated) return fail(409, { error: "match-replaced" });
+        const currentView = matchView(activeSession);
+        if (currentView.outcome.complete) return fail(409, { error: "match-complete", outcome: currentView.outcome });
+        refillQueues(activeSession);
         const window = externalLockFrameWindow(activeSession.match, activeSession.humanSide, { allowScheduledOverrun: true });
         const lockFrame = Math.max(body.lockFrame, window.earliest);
         const bot = activeSession.match.bots.find((candidate) => candidate.id === activeSession.humanSide);
         const result = applyHumanFinalPlacementUnderObservedS2(bot.state, body.placement);
         if (result.transition === null) return fail(422, { error: result.reasons.join(", ") });
-        const submission = submissionFor(bot, result.comparison.witness.placement, result.transition, result.comparison.score);
-        const before = activeSession.match;
+      const before = activeSession.match;
+      const submission = submissionFor(before, bot, result.comparison.witness.placement, result.transition, result.comparison.score);
         activeSession.match = advanceBotMatch(before, [submission], {
           externalLockFrame: lockFrame,
           allowScheduledOverrun: true,
         });
         activeSession.lastSubmissions = [submission];
         activeSession.recording = recordMatchLocks(activeSession.recording, before, activeSession.match, [submission]);
-        finalize();
-        const view = matchView();
+        finalize(activeSession);
+        const view = matchView(activeSession);
         if (view.outcome.complete) cc2Runtime?.closeSessions({ sessionKeys: ["left", "right"] });
         return ok(view);
       });
@@ -288,8 +332,11 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
   }
 
   async function closeMatch() {
-    await cc2Runtime?.closeSessions({ sessionKeys: ["left", "right"] });
+    const activeSession = session;
+    sessionGeneration += 1;
+    if (activeSession !== null) activeSession.invalidated = true;
     session = null;
+    await cc2Runtime?.closeSessions({ sessionKeys: ["left", "right"] });
     return ok({ closed: true });
   }
 
@@ -316,8 +363,8 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     return { botId: bot.id, type, moves: proposal.suggestion.moves };
   }
 
-  function resolveStaticProposal(activeSession, proposal) {
-    const bot = activeSession.match.bots.find((candidate) => candidate.id === proposal.botId);
+  async function resolveStaticProposal(activeSession, match, proposal, { forceLocal = false } = {}) {
+    const bot = match.bots.find((candidate) => candidate.id === proposal.botId);
     const type = activeSession.types[bot.id];
     if (type === "s2-simple") {
       const analysis = analyzeSimpleS2FinalPlacements(bot.state, {
@@ -326,14 +373,26 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       });
       const best = analysis.moves[0];
       if (!best) throw new Error(`${bot.id} has no legal final placement`);
-      return submissionFor(bot, best.placement, best.transition, best.score);
+      return submissionFor(match, bot, best.placement, best.transition, best.score);
     }
-    const gui = botMatchToGuiState(activeSession.match, bot.id);
-    const result = isS2(type)
-      ? selectS2(gui, proposal.moves, type)
-      : applyCc2FinalPlacementUnderObservedS2(gui, proposal.moves[0], publicEngine(type));
-    if (result.transition === null) throw new Error(`${bot.id} CC2 placement rejected`);
-    return submissionFor(bot, result.comparison.witness.placement, result.transition, result.comparison.score);
+    const gui = botMatchToGuiState(match, bot.id);
+    const engine = publicEngine(type);
+    const expectedFingerprint = fullStateKey(bot.state);
+    const request = { sessionKey: bot.id, gui, moves: proposal.moves, type, engine };
+    const resolved = !forceLocal && typeof cc2Runtime?.resolve === "function"
+      ? await cc2Runtime.resolve(request)
+      : resolveStaticCc2Submission(request);
+    if (resolved?.positionFingerprint !== expectedFingerprint) {
+      throw new Error(`${bot.id} CC2 resolver returned a stale transition`);
+    }
+    return submissionFor(
+      match,
+      bot,
+      resolved.placement,
+      resolved.transition,
+      resolved.score,
+      resolved.positionFingerprint,
+    );
   }
 
   function cc2MatchSearchBudget(activeSession, botId, dueCount) {
@@ -352,8 +411,12 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
 
   function round() {
     if (session === null) return fail(409, { error: "match-not-started" });
-    finalize();
-    return ok(session.finishedRound ?? finishMatchRecording(session.recording, { outcome: matchView().outcome, match: session.match }));
+    const activeSession = session;
+    finalize(activeSession);
+    return ok(activeSession.finishedRound ?? finishMatchRecording(activeSession.recording, {
+      outcome: matchView(activeSession).outcome,
+      match: activeSession.match,
+    }));
   }
 
   function importReplay(text) {
@@ -362,32 +425,34 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     catch (error) { return fail(error instanceof TtrmError ? 422 : 500, { stage: error.stage ?? "simulate", message: messageOf(error) }); }
   }
 
-  function submissionFor(bot, move, transition, score) {
-    const gui = botMatchToGuiState(session.match, bot.id);
-    return { botId: bot.id, result: { transition, comparison: { positionFingerprint: fullStateKey(bot.state) } }, move,
+  function submissionFor(match, bot, move, transition, score, positionFingerprint = fullStateKey(bot.state)) {
+    const gui = botMatchToGuiState(match, bot.id);
+    return { botId: bot.id, positionFingerprint, result: { transition }, move,
       score, lastPlaced: lockedPieceCells(gui.board, transition, move.piece) };
   }
 
-  function refillQueues() {
-    for (const bot of session.match.bots) {
-      const current = botMatchToGuiState(session.match, bot.id).queue;
-      const extended = session.queueModel === QUEUE_MODE_TRIANGLE_7_BAG
-        ? extendTriangleSeededQueue(current, session.queueSeeds[bot.id], 28)
-        : extendSeededQueue(current, session.queueSeeds[bot.id], 28);
-      session.queueSeeds[bot.id] = extended.bagSeed;
-      if (extended.queue.length !== current.length) session.match = extendBotMatchQueue(session.match, bot.id, extended.queue);
+  function refillQueues(activeSession) {
+    for (const bot of activeSession.match.bots) {
+      const current = botMatchToGuiState(activeSession.match, bot.id).queue;
+      const extended = activeSession.queueModel === QUEUE_MODE_TRIANGLE_7_BAG
+        ? extendTriangleSeededQueue(current, activeSession.queueSeeds[bot.id], 28)
+        : extendSeededQueue(current, activeSession.queueSeeds[bot.id], 28);
+      activeSession.queueSeeds[bot.id] = extended.bagSeed;
+      if (extended.queue.length !== current.length) {
+        activeSession.match = extendBotMatchQueue(activeSession.match, bot.id, extended.queue);
+      }
     }
   }
 
-  function matchView(preLockMatch = null) {
-    const submitted = new Map(session.lastSubmissions.map((entry) => [entry.botId, entry]));
-    const bots = session.match.bots.map((bot) => {
-      const gui = botMatchToGuiState(session.match, bot.id);
+  function matchView(activeSession, preLockMatch = null) {
+    const submitted = new Map(activeSession.lastSubmissions.map((entry) => [entry.botId, entry]));
+    const bots = activeSession.match.bots.map((bot) => {
+      const gui = botMatchToGuiState(activeSession.match, bot.id);
       const last = submitted.get(bot.id);
       const preLockBot = preLockMatch?.bots.find((candidate) => candidate.id === bot.id) ?? null;
       const preLockGui = preLockBot === null ? null : botMatchToGuiState(preLockMatch, bot.id);
-      return { id: bot.id, type: session.types[bot.id], board: gui.board, lastPlaced: last?.lastPlaced ?? [],
-        preLockPreview: preLockGui === null || last === undefined || session.types[bot.id] === "human"
+      return { id: bot.id, type: activeSession.types[bot.id], board: gui.board, lastPlaced: last?.lastPlaced ?? [],
+        preLockPreview: preLockGui === null || last === undefined || activeSession.types[bot.id] === "human"
           ? null
           : preLockPreview(preLockGui, last),
         current: gui.queue[0] ?? null, next: gui.queue.slice(1, 7), hold: gui.hold, holdAvailable: bot.state.pieces.holdAvailable,
@@ -395,21 +460,26 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
         combo: gui.combo, b2b: gui.s2.b2b, piecesPlaced: gui.s2.time.piecesPlaced,
         lines: last?.result?.transition?.lockResult?.lines ?? 0, lastClear: last?.result?.transition?.lockResult ?? null,
         outgoing: last?.result?.transition?.cancelResult?.outgoingAfterCancel ?? 0, score: last?.score ?? null, move: last?.move ?? null,
-        stats: bot.stats, metrics: calculatePlayerMetrics({ pieces: bot.stats.turns, attack: bot.stats.attack, garbageCleared: bot.stats.garbageCleared, elapsedFrames: session.match.clock.logicalFrame }),
+        stats: bot.stats, metrics: calculatePlayerMetrics({ pieces: bot.stats.turns, attack: bot.stats.attack, garbageCleared: bot.stats.garbageCleared, elapsedFrames: activeSession.match.clock.logicalFrame }),
         toppedOut: gui.board.slice(20).some((row) => row.some((cell) => cell !== null)) };
     });
-    const outcome = matchOutcome(bots, session.match.turnNumber, session.config.maxTurns);
-    return { status: outcome.complete ? "complete" : "active", turnNumber: session.match.turnNumber, humanSide: session.humanSide,
-      mode: session.match.mode, clock: session.match.clock, config: session.config, botParameters: session.botParameters, outcome,
-      pacing: { authority: session.humanSide === null ? "synthetic" : "realtime-1p", declaredPpsByBotId: structuredClone(session.match.pace.ppsByBotId) },
-      deliveries: session.match.lastStep?.deliveries ?? [], metricElapsedMs: session.match.clock.logicalFrame * 1000 / 60,
-      nextStepFrames: outcome.complete ? null : botMatchNextStep(session.match).frames, bots, replayMeta: session.recording?.meta ?? null };
+    const outcome = matchOutcome(bots, activeSession.match.turnNumber, activeSession.config.maxTurns);
+    return { status: outcome.complete ? "complete" : "active", turnNumber: activeSession.match.turnNumber, humanSide: activeSession.humanSide,
+      mode: activeSession.match.mode, clock: activeSession.match.clock, config: activeSession.config, botParameters: activeSession.botParameters, outcome,
+      pacing: { authority: activeSession.humanSide === null ? "synthetic" : "realtime-1p", declaredPpsByBotId: structuredClone(activeSession.match.pace.ppsByBotId) },
+      deliveries: activeSession.match.lastStep?.deliveries ?? [], metricElapsedMs: activeSession.match.clock.logicalFrame * 1000 / 60,
+      nextStepFrames: outcome.complete ? null : botMatchNextStep(activeSession.match).frames, bots, replayMeta: activeSession.recording?.meta ?? null };
   }
 
-  function finalize() {
-    if (session.finishedRound !== null) return;
-    const outcome = matchView().outcome;
-    if (outcome.complete) session.finishedRound = finishMatchRecording(session.recording, { outcome, match: session.match });
+  function finalize(activeSession) {
+    if (activeSession.finishedRound !== null) return;
+    const outcome = matchView(activeSession).outcome;
+    if (outcome.complete) {
+      activeSession.finishedRound = finishMatchRecording(activeSession.recording, {
+        outcome,
+        match: activeSession.match,
+      });
+    }
   }
 }
 
@@ -450,14 +520,4 @@ function staticBotType(value) {
   return value;
 }
 function requireCc2Type(value) { if (!(value in CC2_LABELS)) throw new Error(`unsupported CC2 engine ${value}`); return value; }
-function isS2(value) { return value.startsWith("cc2-s2"); }
 function publicEngine(id) { return { botType: id, engineId: id, label: CC2_LABELS[id], repository: id === "cc2-raw" ? "https://github.com/MinusKelvin/cold-clear-2" : id === "cc2-chouhy" ? "https://github.com/chouhy/cold-clear-2" : "https://github.com/61bi-234469/s2-analysis-engine", commit: id === "cc2-raw" ? "ed8b19327b6bd1410ddd873d8611485bd45d8fae" : id === "cc2-chouhy" ? "b20a92b0ed3230dd910d0674f7a09c552a34dd46" : "ed8b193+local-s2-reranker", comparisonSource: `${id}-final-placement` }; }
-function selectS2(gui, moves, id) {
-  const common = { candidateLimit:16,rankPenalty:25,adjustmentScale:28,weightProfileId:"sparse-s2",weights:SPARSE_S2_WEIGHTS,allowCompleteReturnedPrefix:true,engineId:id,comparisonSource:`${id}-final-placement` };
-  if (id === "cc2-s2-f11") return selectS2RenQualityPlacement(gui,moves,common);
-  if (id === "cc2-s2-f12") return selectS2ConversionQualifiedRenFinisherPlacement(gui,moves,common);
-  if (id === "cc2-s2-f14") return selectS2F12PostTankSolvencyRescuePlacement(gui,moves,common);
-  if (id === "cc2-s2-f25") return selectS2ThresholdImminentB2bRetentionPlacement(gui,moves,common);
-  if (id === "cc2-s2-champion") return selectS2F12PostTankSolvencyRescuePlacement(gui,moves,common);
-  return selectCc2S2HybridPlacement(gui,moves,publicEngine(id));
-}

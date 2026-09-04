@@ -5,6 +5,8 @@ import { createGame, toS2GuiState } from "../cc2-gui/game.mjs";
 import { createGuiRequestHandlers } from "../src-js/gui-request-handlers.mjs";
 import { guiStateToCanonical } from "../src-js/gui-state.mjs";
 import { analyzeSimpleS2FinalPlacements } from "../src-js/simple-s2-bot.mjs";
+import { applyHumanFinalPlacementUnderObservedS2 } from "../src-js/human-s2-adapter.mjs";
+import { resolveStaticCc2Submission } from "../src-js/static-cc2-proposal.mjs";
 
 async function request(handlers, method, path, body = null) {
   const result = await handlers.handle({ method, path, body });
@@ -263,6 +265,476 @@ test("static 1P keeps a human wall-clock lock while one shared bot step is in fl
   assert.equal(duplicated.status, 200, JSON.stringify(duplicated.body));
   assert.equal(stepped.body.clock.logicalFrame, 1002);
   assert.equal(proposalCalls, 1);
+});
+
+test("static 1P lets a human lock pass optimistic resolution and retries the current state", async () => {
+  let releaseProposal;
+  let proposalStarted;
+  let releaseResolution;
+  let resolutionStarted;
+  let releaseRetry;
+  let retryStarted;
+  const resolveRequests = [];
+  let proposalCalls = 0;
+  let resolveCalls = 0;
+  const proposalGate = new Promise((resolve) => { releaseProposal = resolve; });
+  const startedProposal = new Promise((resolve) => { proposalStarted = resolve; });
+  const resolutionGate = new Promise((resolve) => { releaseResolution = resolve; });
+  const startedResolution = new Promise((resolve) => { resolutionStarted = resolve; });
+  const retryGate = new Promise((resolve) => { releaseRetry = resolve; });
+  const startedRetry = new Promise((resolve) => { retryStarted = resolve; });
+  const cc2 = {
+    async propose({ state }) {
+      proposalCalls += 1;
+      proposalStarted();
+      await proposalGate;
+      const piece = state.queue[0];
+      return { suggestion: { moves: [{ location: {
+        type: piece,
+        orientation: "north",
+        x: 4,
+        y: piece === "I" ? 2 : 0,
+      }, spin: "none" }] } };
+    },
+    async resolve(input) {
+      resolveCalls += 1;
+      resolveRequests.push(structuredClone(input));
+      if (resolveCalls === 1) {
+        resolutionStarted();
+        await resolutionGate;
+      } else {
+        retryStarted();
+        await retryGate;
+      }
+      return resolveStaticCc2Submission(input);
+    },
+    async closeSessions() {},
+  };
+  const handlers = createGuiRequestHandlers({ cc2, now: () => 0, wait: async () => {} });
+  const seed = 42;
+  await request(handlers, "POST", "/api/match/start", {
+    left: "human",
+    right: "cc2-raw",
+    seed,
+    rightParameters: { ppsEnabled: true, pps: 1 },
+  });
+
+  const step = handlers.handle({ method: "POST", path: "/api/match/step", body: { lockFrame: 0 } });
+  await startedProposal;
+  const initial = guiStateToCanonical(toS2GuiState(createGame(seed)));
+  const firstPlacement = analyzeSimpleS2FinalPlacements(initial, { topN: 1 }).moves[0].placement;
+  const firstHuman = await handlers.handle({
+    method: "POST",
+    path: "/api/match/human-lock",
+    body: { lockFrame: 1001, placement: firstPlacement },
+  });
+  assert.equal(firstHuman.status, 200, JSON.stringify(firstHuman.body));
+  releaseProposal();
+  await startedResolution;
+
+  const rightAfterHuman = firstHuman.body.bots.find(({ id }) => id === "right");
+  assert.equal(resolveRequests[0].sessionKey, "right");
+  assert.equal(resolveRequests[0].type, "cc2-raw");
+  assert.equal(resolveRequests[0].engine.engineId, "cc2-raw");
+  assert.deepEqual(resolveRequests[0].gui.board, rightAfterHuman.board);
+  assert.deepEqual(resolveRequests[0].gui.queue.slice(0, 7), [rightAfterHuman.current, ...rightAfterHuman.next]);
+  assert.equal(resolveRequests[0].gui.s2.time.logicalFrame, firstHuman.body.clock.logicalFrame);
+
+  const duplicate = handlers.handle({ method: "POST", path: "/api/match/step", body: { lockFrame: 0 } });
+  const afterFirst = applyHumanFinalPlacementUnderObservedS2(initial, firstPlacement).transition.nextState;
+  const secondPlacement = analyzeSimpleS2FinalPlacements(afterFirst, { topN: 1 }).moves[0].placement;
+  let secondSettled = false;
+  const secondHuman = handlers.handle({
+    method: "POST",
+    path: "/api/match/human-lock",
+    body: { lockFrame: 1002, placement: secondPlacement },
+  }).finally(() => { secondSettled = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(secondSettled, true);
+  const second = await secondHuman;
+  assert.equal(second.status, 200, JSON.stringify(second.body));
+  assert.equal(second.body.turnNumber, 2);
+
+  releaseResolution();
+  await startedRetry;
+  const afterSecond = applyHumanFinalPlacementUnderObservedS2(afterFirst, secondPlacement).transition.nextState;
+  const thirdPlacement = analyzeSimpleS2FinalPlacements(afterSecond, { topN: 1 }).moves[0].placement;
+  let thirdSettled = false;
+  const thirdHuman = handlers.handle({
+    method: "POST",
+    path: "/api/match/human-lock",
+    body: { lockFrame: 1003, placement: thirdPlacement },
+  }).finally(() => { thirdSettled = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(thirdSettled, false);
+  releaseRetry();
+
+  const [stepped, duplicated, third] = await Promise.all([step, duplicate, thirdHuman]);
+  assert.equal(stepped.status, 200, JSON.stringify(stepped.body));
+  assert.deepEqual(duplicated, stepped);
+  assert.equal(third.status, 200, JSON.stringify(third.body));
+  assert.equal(proposalCalls, 1);
+  assert.equal(resolveCalls, 2);
+  const rightAfterSecond = second.body.bots.find(({ id }) => id === "right");
+  assert.deepEqual(resolveRequests[1].gui.board, rightAfterSecond.board);
+  assert.equal(resolveRequests[1].gui.s2.time.logicalFrame, second.body.clock.logicalFrame);
+  assert.equal(firstHuman.body.turnNumber, 1);
+  assert.equal(stepped.body.turnNumber, 3);
+  assert.equal(third.body.turnNumber, 4);
+  assert.equal(third.body.bots.find(({ id }) => id === "left").stats.turns, 3);
+  assert.equal(stepped.body.bots.find(({ id }) => id === "right").stats.turns, 1);
+});
+
+test("static 1P discards a stale failed optimistic resolution and retries locally", async () => {
+  let releaseResolution;
+  let resolutionStarted;
+  let resolveCalls = 0;
+  const gate = new Promise((resolve) => { releaseResolution = resolve; });
+  const started = new Promise((resolve) => { resolutionStarted = resolve; });
+  const handlers = createGuiRequestHandlers({ cc2: {
+    async propose({ state }) {
+      const piece = state.queue[0];
+      return { suggestion: { moves: [{ location: {
+        type: piece,
+        orientation: "north",
+        x: 4,
+        y: piece === "I" ? 2 : 0,
+      }, spin: "none" }] } };
+    },
+    async resolve() {
+      resolveCalls += 1;
+      resolutionStarted();
+      await gate;
+      throw new Error("stale worker failure");
+    },
+    async closeSessions() {},
+  }, now: () => 0, wait: async () => {} });
+  const seed = 42;
+  await request(handlers, "POST", "/api/match/start", {
+    left: "human",
+    right: "cc2-raw",
+    seed,
+    rightParameters: { ppsEnabled: true, pps: 1 },
+  });
+
+  const step = handlers.handle({ method: "POST", path: "/api/match/step", body: { lockFrame: 0 } });
+  await started;
+  const initial = guiStateToCanonical(toS2GuiState(createGame(seed)));
+  const placement = analyzeSimpleS2FinalPlacements(initial, { topN: 1 }).moves[0].placement;
+  const human = await handlers.handle({
+    method: "POST",
+    path: "/api/match/human-lock",
+    body: { lockFrame: 1001, placement },
+  });
+  assert.equal(human.status, 200, JSON.stringify(human.body));
+  releaseResolution();
+  const stepped = await step;
+  assert.equal(stepped.status, 200, JSON.stringify(stepped.body));
+  assert.equal(stepped.body.turnNumber, 2);
+  assert.equal(resolveCalls, 1);
+  assert.equal(stepped.body.bots.find(({ id }) => id === "left").stats.turns, 1);
+  assert.equal(stepped.body.bots.find(({ id }) => id === "right").stats.turns, 1);
+});
+
+test("static resolution failure is atomic and closes CC2 sessions", async () => {
+  const closed = [];
+  const handlers = createGuiRequestHandlers({ cc2: {
+    async propose({ state }) {
+      const piece = state.queue[0];
+      return { suggestion: { moves: [{ location: {
+        type: piece,
+        orientation: "north",
+        x: 4,
+        y: piece === "I" ? 2 : 0,
+      }, spin: "none" }] } };
+    },
+    async resolve() { throw new Error("resolution failed"); },
+    async closeSessions(options) { closed.push(options); },
+  } });
+  await request(handlers, "POST", "/api/match/start", { left: "cc2-raw", right: "s2-simple" });
+  closed.length = 0;
+  const before = await request(handlers, "GET", "/api/match/round");
+  const failed = await handlers.handle({ method: "POST", path: "/api/match/step", body: {} });
+  const after = await request(handlers, "GET", "/api/match/round");
+  assert.equal(failed.status, 422);
+  assert.match(failed.body.error, /resolution failed/);
+  assert.deepEqual(after, before);
+  assert.deepEqual(closed, [{ sessionKeys: ["left", "right"] }]);
+});
+
+test("static resolution rejects a wrong worker fingerprint without committing", async () => {
+  const handlers = createGuiRequestHandlers({ cc2: {
+    async propose({ state }) {
+      const piece = state.queue[0];
+      return { suggestion: { moves: [{ location: {
+        type: piece,
+        orientation: "north",
+        x: 4,
+        y: piece === "I" ? 2 : 0,
+      }, spin: "none" }] } };
+    },
+    async resolve(input) {
+      return { ...resolveStaticCc2Submission(input), positionFingerprint: "wrong-state" };
+    },
+    async closeSessions() {},
+  } });
+  await request(handlers, "POST", "/api/match/start", { left: "cc2-raw", right: "s2-simple" });
+  const before = await request(handlers, "GET", "/api/match/round");
+  const failed = await handlers.handle({ method: "POST", path: "/api/match/step", body: {} });
+  assert.equal(failed.status, 422);
+  assert.match(failed.body.error, /stale transition/);
+  assert.deepEqual(await request(handlers, "GET", "/api/match/round"), before);
+});
+
+test("closing a match invalidates an in-flight resolution before commit", async () => {
+  let release;
+  let started;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const startedGate = new Promise((resolve) => { started = resolve; });
+  const handlers = createGuiRequestHandlers({ cc2: {
+    async propose({ state }) {
+      const piece = state.queue[0];
+      return { suggestion: { moves: [{ location: {
+        type: piece,
+        orientation: "north",
+        x: 4,
+        y: piece === "I" ? 2 : 0,
+      }, spin: "none" }] } };
+    },
+    async resolve(input) {
+      started();
+      await gate;
+      return resolveStaticCc2Submission(input);
+    },
+    async closeSessions() {},
+  } });
+  await request(handlers, "POST", "/api/match/start", { left: "cc2-raw", right: "s2-simple" });
+  const stepping = handlers.handle({ method: "POST", path: "/api/match/step", body: {} });
+  await startedGate;
+  await request(handlers, "POST", "/api/match/close");
+  release();
+  const result = await stepping;
+  assert.equal(result.status, 409);
+  assert.equal(result.body.error, "match-replaced");
+  const round = await handlers.handle({ method: "GET", path: "/api/match/round" });
+  assert.equal(round.status, 409);
+});
+
+test("starting a new match invalidates an in-flight old-session resolution", async () => {
+  let release;
+  let started;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const startedGate = new Promise((resolve) => { started = resolve; });
+  const handlers = createGuiRequestHandlers({ cc2: {
+    async propose({ state }) {
+      const piece = state.queue[0];
+      return { suggestion: { moves: [{ location: {
+        type: piece,
+        orientation: "north",
+        x: 4,
+        y: piece === "I" ? 2 : 0,
+      }, spin: "none" }] } };
+    },
+    async resolve(input) {
+      started();
+      await gate;
+      return resolveStaticCc2Submission(input);
+    },
+    async closeSessions() {},
+  } });
+  await request(handlers, "POST", "/api/match/start", { left: "cc2-raw", right: "s2-simple" });
+  const oldStep = handlers.handle({ method: "POST", path: "/api/match/step", body: {} });
+  await startedGate;
+  const replacement = await request(handlers, "POST", "/api/match/start", {
+    left: "s2-simple",
+    right: "s2-simple",
+    seed: 99,
+  });
+  assert.equal(replacement.turnNumber, 0);
+  release();
+  const stale = await oldStep;
+  assert.equal(stale.status, 409);
+  assert.equal(stale.body.error, "match-replaced");
+  const current = await request(handlers, "GET", "/api/match/round");
+  assert.equal(current.players.every((player) => player.locks.length === 0), true);
+});
+
+test("an old proposal rejection cannot close a replacement match runtime", async () => {
+  let rejectProposal;
+  let proposalStarted;
+  const gate = new Promise((resolve, reject) => { rejectProposal = reject; });
+  const started = new Promise((resolve) => { proposalStarted = resolve; });
+  const closed = [];
+  const handlers = createGuiRequestHandlers({ cc2: {
+    async propose() {
+      proposalStarted();
+      return gate;
+    },
+    async closeSessions(options) { closed.push(options); },
+  } });
+  await request(handlers, "POST", "/api/match/start", { left: "cc2-raw", right: "s2-simple" });
+  const oldStep = handlers.handle({ method: "POST", path: "/api/match/step", body: {} });
+  await started;
+  await request(handlers, "POST", "/api/match/start", {
+    left: "s2-simple",
+    right: "s2-simple",
+    seed: 100,
+  });
+  closed.length = 0;
+  rejectProposal(new Error("old proposal stopped"));
+  const stale = await oldStep;
+  assert.equal(stale.status, 409);
+  assert.equal(stale.body.error, "match-replaced");
+  assert.deepEqual(closed, []);
+  const replacementStep = await request(handlers, "POST", "/api/match/step", {});
+  assert.equal(replacementStep.turnNumber, 1);
+});
+
+test("close accepted during start prevents the pending start from publishing a session", async () => {
+  let releaseFirstClose;
+  let firstCloseStarted;
+  let calls = 0;
+  const firstClose = new Promise((resolve) => { releaseFirstClose = resolve; });
+  const started = new Promise((resolve) => { firstCloseStarted = resolve; });
+  const handlers = createGuiRequestHandlers({ cc2: {
+    async propose() { throw new Error("not used"); },
+    async closeSessions() {
+      calls += 1;
+      if (calls === 1) {
+        firstCloseStarted();
+        await firstClose;
+      }
+    },
+  } });
+  const starting = handlers.handle({
+    method: "POST",
+    path: "/api/match/start",
+    body: { left: "s2-simple", right: "s2-simple", seed: 1 },
+  });
+  await started;
+  await request(handlers, "POST", "/api/match/close");
+  releaseFirstClose();
+  const staleStart = await starting;
+  assert.equal(staleStart.status, 409);
+  assert.equal(staleStart.body.error, "match-replaced");
+  assert.equal((await handlers.handle({ method: "GET", path: "/api/match/round" })).status, 409);
+});
+
+test("the latest of two concurrent starts owns the published session", async () => {
+  let releaseFirstClose;
+  let firstCloseStarted;
+  let calls = 0;
+  const firstClose = new Promise((resolve) => { releaseFirstClose = resolve; });
+  const started = new Promise((resolve) => { firstCloseStarted = resolve; });
+  const handlers = createGuiRequestHandlers({ cc2: {
+    async propose() { throw new Error("not used"); },
+    async closeSessions() {
+      calls += 1;
+      if (calls === 1) {
+        firstCloseStarted();
+        await firstClose;
+      }
+    },
+  } });
+  const first = handlers.handle({
+    method: "POST",
+    path: "/api/match/start",
+    body: { left: "s2-simple", right: "s2-simple", seed: 1 },
+  });
+  await started;
+  const latest = await request(handlers, "POST", "/api/match/start", {
+    left: "s2-simple",
+    right: "s2-simple",
+    seed: 2,
+  });
+  assert.equal(latest.config.seed, 2);
+  releaseFirstClose();
+  const stale = await first;
+  assert.equal(stale.status, 409);
+  assert.equal(stale.body.error, "match-replaced");
+  const stepped = await request(handlers, "POST", "/api/match/step", {});
+  assert.equal(stepped.config.seed, 2);
+});
+
+test("same-frame bots resolve one snapshot and commit only after all resolutions finish", async () => {
+  let bothStarted;
+  let releaseRight;
+  const startedGate = new Promise((resolve) => { bothStarted = resolve; });
+  const rightGate = new Promise((resolve) => { releaseRight = resolve; });
+  const resolveInputs = [];
+  const handlers = createGuiRequestHandlers({ cc2: {
+    async propose({ state }) {
+      const piece = state.queue[0];
+      return { suggestion: { moves: [{ location: {
+        type: piece,
+        orientation: "north",
+        x: 4,
+        y: piece === "I" ? 2 : 0,
+      }, spin: "none" }] } };
+    },
+    async resolve(input) {
+      resolveInputs.push(structuredClone(input));
+      if (resolveInputs.length === 2) bothStarted();
+      if (input.sessionKey === "right") await rightGate;
+      return resolveStaticCc2Submission(input);
+    },
+    async closeSessions() {},
+  } });
+  await request(handlers, "POST", "/api/match/start", {
+    left: "cc2-raw",
+    right: "cc2-chouhy",
+    seed: 55,
+  });
+  const before = await request(handlers, "GET", "/api/match/round");
+  const stepping = handlers.handle({ method: "POST", path: "/api/match/step", body: {} });
+  await startedGate;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(await request(handlers, "GET", "/api/match/round"), before);
+  assert.equal(resolveInputs[0].gui.s2.time.logicalFrame, resolveInputs[1].gui.s2.time.logicalFrame);
+  releaseRight();
+  const stepped = await stepping;
+  assert.equal(stepped.status, 200, JSON.stringify(stepped.body));
+  assert.equal(stepped.body.turnNumber, 1);
+  assert.equal(stepped.body.bots.every((bot) => bot.stats.turns === 1), true);
+});
+
+test("worker and main-thread resolution routes keep fixed-selection match semantics", async () => {
+  const run = async (workerResolution) => {
+    let resolveCalls = 0;
+    const cc2 = {
+      async propose({ state }) {
+        const piece = state.queue[0];
+        return { suggestion: { moves: [{ location: {
+          type: piece,
+          orientation: "north",
+          x: 4,
+          y: piece === "I" ? 2 : 0,
+        }, spin: "none" }] } };
+      },
+      async closeSessions() {},
+    };
+    if (workerResolution) cc2.resolve = async (input) => {
+      resolveCalls += 1;
+      return resolveStaticCc2Submission(input);
+    };
+    const handlers = createGuiRequestHandlers({ cc2 });
+    await request(handlers, "POST", "/api/match/start", {
+      left: "cc2-raw",
+      right: "s2-simple",
+      seed: 77,
+      leftParameters: { ppsEnabled: false, selectionEnabled: true, selectionLimit: 512, thinkTimeEnabled: false },
+    });
+    const step = await request(handlers, "POST", "/api/match/step", {});
+    const round = await request(handlers, "GET", "/api/match/round");
+    delete step.replayMeta.ts;
+    return { resolveCalls, step, round };
+  };
+  const fallback = await run(false);
+  const worker = await run(true);
+  assert.equal(fallback.resolveCalls, 0);
+  assert.equal(worker.resolveCalls, 1);
+  assert.deepEqual(worker.step, fallback.step);
+  assert.deepEqual(worker.round, fallback.round);
 });
 
 test("static bot-only match starts same-frame proposals in parallel", async () => {

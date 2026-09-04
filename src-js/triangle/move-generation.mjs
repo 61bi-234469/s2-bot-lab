@@ -64,18 +64,7 @@ export function generateReachablePlacements(
   state,
   movementRules = { kickTable: "SRS", allow180: true },
 ) {
-  assertExactMoveState(state);
-  const board = canonicalBoardToTriangle(state.board);
-  const kickTable = kickData[movementRules.kickTable];
-  if (kickTable === undefined) throw new Error(`unknown kick table ${movementRules.kickTable}`);
-  if (Object.keys(kickTable.additional_offsets ?? {}).length !== 0) {
-    throw new Error(`kick table ${movementRules.kickTable} has unsupported additional offsets`);
-  }
-
-  const sources = [{ usedHold: false, piece: state.pieces.current }];
-  if (state.pieces.holdAvailable) {
-    sources.push({ usedHold: true, piece: state.pieces.hold ?? state.pieces.known[0] ?? null });
-  }
+  const { board, kickTable, sources } = reachableInputs(state, movementRules);
 
   const placements = [];
   const placementIds = new Set();
@@ -92,7 +81,36 @@ export function generateReachablePlacements(
   return placements;
 }
 
-function reachableForSource(board, canonicalBoard, source, kickTable, movementRules) {
+// Find only the independently-generated S2 kick witness for one player lock.
+// This deliberately walks the same graph, in the same order, as the exhaustive
+// generator above. It stops once the target lock state is reached instead of
+// allocating, deduplicating, and sorting every other reachable placement.
+export function findReachableRotationPlacement(
+  state,
+  target,
+  movementRules = { kickTable: "SRS", allow180: true },
+) {
+  const { board, kickTable, sources } = reachableInputs(state, movementRules);
+  if (target?.rotationEvidence?.lastInputWasRotation !== true) return null;
+  const targetFinOrTst = isFinOrTstEvidence(target.rotationEvidence);
+  const source = sources.find((entry) =>
+    entry.piece === target.piece && entry.usedHold === target.usedHold
+  );
+  if (source === undefined || source.piece === null) return null;
+
+  for (const placement of reachableForSource(board, state.board, source, kickTable, movementRules)) {
+    if (
+      sameFinalPlacement(placement, target) &&
+      placement.rotationEvidence.lastInputWasRotation &&
+      isFinOrTstEvidence(placement.rotationEvidence) === targetFinOrTst
+    ) {
+      return placement;
+    }
+  }
+  return null;
+}
+
+function* reachableForSource(board, canonicalBoard, source, kickTable, movementRules) {
   const spawnIndex = kickTable.spawn_rotation?.[source.piece.toLowerCase()] ?? 0;
   const spawnRotations = [
     ROTATION_NAMES[spawnIndex],
@@ -100,7 +118,6 @@ function reachableForSource(board, canonicalBoard, source, kickTable, movementRu
   ];
   const queue = [];
   const visited = new Set();
-  const locked = [];
 
   // Canonical boards omit the engine's hidden spawn buffer. Seeding every
   // legal top entry models unrestricted movement above the represented field
@@ -125,7 +142,7 @@ function reachableForSource(board, canonicalBoard, source, kickTable, movementRu
 
   for (let cursor = 0; cursor < queue.length; cursor += 1) {
     const current = queue[cursor];
-    if (!isLegalAt(board, current, current.y - 1)) locked.push(current);
+    if (!isLegalAt(board, current, current.y - 1)) yield current;
 
     for (const dx of [-1, 1]) {
       const moved = {
@@ -144,7 +161,22 @@ function reachableForSource(board, canonicalBoard, source, kickTable, movementRu
       if (rotated !== null) enqueue(queue, visited, rotated);
     }
   }
-  return locked;
+}
+
+function reachableInputs(state, movementRules) {
+  assertExactMoveState(state);
+  const board = canonicalBoardToTriangle(state.board);
+  const kickTable = kickData[movementRules.kickTable];
+  if (kickTable === undefined) throw new Error(`unknown kick table ${movementRules.kickTable}`);
+  if (Object.keys(kickTable.additional_offsets ?? {}).length !== 0) {
+    throw new Error(`kick table ${movementRules.kickTable} has unsupported additional offsets`);
+  }
+
+  const sources = [{ usedHold: false, piece: state.pieces.current }];
+  if (state.pieces.holdAvailable) {
+    sources.push({ usedHold: true, piece: state.pieces.hold ?? state.pieces.known[0] ?? null });
+  }
+  return { board, kickTable, sources };
 }
 
 function rotateWithKicks(board, current, amount, kickTable) {
@@ -222,6 +254,14 @@ function isFinOrTstEvidence(evidence) {
     ((evidence.kickId === "23" || evidence.kickId === "03") && x === 1 && y === -2) ||
     ((evidence.kickId === "21" || evidence.kickId === "01") && x === -1 && y === -2)
   );
+}
+
+function sameFinalPlacement(left, right) {
+  return left.piece === right.piece &&
+    left.rotation === right.rotation &&
+    left.x === right.x &&
+    left.y === right.y &&
+    left.usedHold === right.usedHold;
 }
 
 function comparePlacements(left, right) {

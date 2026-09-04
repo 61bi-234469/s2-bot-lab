@@ -27,7 +27,13 @@ await build({
   outfile: workerPath,
   minify: true,
   plugins: [{ name: "worker-browser-boundary", setup(buildApi) { buildApi.onResolve({ filter: /.*/ }, (args) => {
-    if (forbidden.test(args.path)) throw new Error(`worker bundle cannot resolve Node dependency ${args.path}`);
+    if (args.path.replaceAll("\\", "/").endsWith("scripts/cs1.mjs")) {
+      return { path: resolve(repo, "src-js/cs1-core.mjs") };
+    }
+    if (args.path === "node:crypto") return { path: resolve(repo, "src-js/browser-crypto-shim.mjs") };
+    if (forbidden.test(args.path)) {
+      throw new Error(`worker bundle cannot resolve Node dependency ${args.path} from ${args.importer}`);
+    }
     return undefined;
   }); } }],
 });

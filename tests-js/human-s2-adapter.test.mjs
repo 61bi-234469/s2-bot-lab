@@ -4,6 +4,11 @@ import test from "node:test";
 import { createGame, toS2GuiState } from "../cc2-gui/game.mjs";
 import { guiStateToCanonical } from "../src-js/cc2-s2-adapter.mjs";
 import { applyHumanFinalPlacementUnderObservedS2 } from "../src-js/human-s2-adapter.mjs";
+import { resolvePlacementRules } from "../src-js/ruleset-profiles.mjs";
+import {
+  findReachableRotationPlacement,
+  generateReachablePlacements,
+} from "../src-js/triangle/move-generation.mjs";
 
 const NO_ROTATION = Object.freeze({ lastInputWasRotation: false, kickIndex: null });
 
@@ -100,6 +105,37 @@ test("an unwitnessed fin or TST claim falls back to a plain drop", () => {
   assert.equal(result.comparison.witness.kind, "player-final-placement-only");
   assert.ok(result.reasons.includes("human-rotation-not-independently-witnessed"));
   assert.ok(result.reasons.includes("spin-classification-limited-to-none"));
+});
+
+test("targeted rotation witnesses preserve exhaustive S2 evidence", () => {
+  const state = spinSlotState();
+  const rules = resolvePlacementRules(state.rulesetId);
+  const rotationLocks = generateReachablePlacements(state, rules).filter(
+    (placement) => placement.rotationEvidence.lastInputWasRotation,
+  );
+  assert.ok(rotationLocks.length > 0);
+  for (const expected of rotationLocks) {
+    assert.deepEqual(findReachableRotationPlacement(state, expected, rules), expected);
+  }
+});
+
+test("targeted rotation witnesses reject forged class and unreachable pose", () => {
+  const state = spinSlotState();
+  const rules = resolvePlacementRules(state.rulesetId);
+  const expected = generateReachablePlacements(state, rules).find(
+    (placement) => placement.rotationEvidence.lastInputWasRotation,
+  );
+  assert.ok(expected);
+  assert.equal(findReachableRotationPlacement(state, {
+    ...expected,
+    rotationEvidence: {
+      lastInputWasRotation: true,
+      kickIndex: 2,
+      kickId: "03",
+      kickOffset: [1, -2],
+    },
+  }, rules), null);
+  assert.equal(findReachableRotationPlacement(state, { ...expected, x: 99 }, rules), null);
 });
 
 test("an illegal placement is reported instead of being applied", () => {

@@ -47,9 +47,31 @@ export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTim
         };
         sessions.set(sessionKey, entry);
       }
-      scheduleIdleClose(sessionKey, entry);
+      clearIdleClose(entry);
       try {
-        return await entry.workerSession.suggest({ state, thinkMs });
+        const result = await entry.workerSession.suggest({ state, thinkMs });
+        if (sessions.get(sessionKey) !== entry) throw new Error("CC2 worker session was replaced");
+        scheduleIdleClose(sessionKey, entry);
+        return result;
+      } catch (error) {
+        await closeEntry(sessionKey, entry);
+        throw error;
+      }
+    },
+
+    async resolve({ sessionKey, gui, moves, type, engine }) {
+      if (typeof sessionKey !== "string" || sessionKey.length === 0) throw new Error("CC2 sessionKey is required");
+      const entry = sessions.get(sessionKey);
+      if (entry === undefined) throw new Error(`CC2 session ${sessionKey} is not initialized`);
+      if (entry.engine !== type || engine?.botType !== type || engine?.engineId !== type) {
+        throw new Error(`CC2 resolution engine identity mismatch for ${type}`);
+      }
+      clearIdleClose(entry);
+      try {
+        const result = await entry.workerSession.resolve({ gui, moves, type, engine });
+        if (sessions.get(sessionKey) !== entry) throw new Error("CC2 worker session was replaced");
+        scheduleIdleClose(sessionKey, entry);
+        return result;
       } catch (error) {
         await closeEntry(sessionKey, entry);
         throw error;
@@ -66,14 +88,19 @@ export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTim
   });
 
   function scheduleIdleClose(sessionKey, entry) {
-    if (entry.idleTimer !== null) clearTimeout(entry.idleTimer);
+    clearIdleClose(entry);
     entry.idleTimer = setTimeout(() => { void closeEntry(sessionKey, entry); }, idleTimeoutMs);
+  }
+
+  function clearIdleClose(entry) {
+    if (entry.idleTimer !== null) clearTimeout(entry.idleTimer);
+    entry.idleTimer = null;
   }
 
   async function closeEntry(sessionKey, entry) {
     if (sessions.get(sessionKey) !== entry) return;
     sessions.delete(sessionKey);
-    if (entry.idleTimer !== null) clearTimeout(entry.idleTimer);
+    clearIdleClose(entry);
     await entry.workerSession.close();
   }
 }
@@ -85,6 +112,7 @@ async function createWorkerSession({ WorkerType, engine, selectionLimit }) {
   const worker = new WorkerType(workerUrl, { type: "module" });
   let nextId = 1;
   let workerFailure = null;
+  let closed = false;
   const pending = new Map();
   const failPending = (error) => {
     workerFailure = error;
@@ -104,8 +132,8 @@ async function createWorkerSession({ WorkerType, engine, selectionLimit }) {
   };
   worker.onmessageerror = () => failPending(new Error("CC2 worker returned an unreadable message"));
   const request = (type, payload) => new Promise((resolve, reject) => {
-    if (workerFailure !== null) {
-      reject(workerFailure);
+    if (closed || workerFailure !== null) {
+      reject(workerFailure ?? new Error("CC2 worker session is closed"));
       return;
     }
     const id = nextId++;
@@ -118,19 +146,24 @@ async function createWorkerSession({ WorkerType, engine, selectionLimit }) {
       ? null
       : "./cc2-s2-spin-value-aligned.json";
   try {
-    await request("init", { wasm, configUrl, selectionLimit, searchSeed: "5994928009864282113" });
+    await request("init", { engine, wasm, configUrl, selectionLimit, searchSeed: "5994928009864282113" });
   } catch (error) {
     worker.terminate();
     throw error;
   }
   return Object.freeze({
     suggest: ({ state, thinkMs }) => request("suggest", { state, thinkMs }),
+    resolve: (payload) => request("resolve", payload),
     async close() {
-      try {
-        if (workerFailure === null) await request("close", {});
-      } finally {
-        worker.terminate();
+      if (closed) return;
+      const canNotifyWorker = workerFailure === null;
+      closed = true;
+      failPending(new Error("CC2 worker session is closed"));
+      if (canNotifyWorker) {
+        try { worker.postMessage({ id: nextId++, type: "close", payload: {} }); }
+        catch { /* Termination below is the authoritative cleanup. */ }
       }
+      worker.terminate();
     },
   });
 }

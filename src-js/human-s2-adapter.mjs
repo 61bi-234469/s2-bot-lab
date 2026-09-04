@@ -7,7 +7,7 @@ import {
 import { fullStateKey } from "./state-keys.mjs";
 import { applyTransition } from "./transition.mjs";
 import { resolvePlacementRules } from "./ruleset-profiles.mjs";
-import { generateReachablePlacements } from "./triangle/move-generation.mjs";
+import { findReachableRotationPlacement } from "./triangle/move-generation.mjs";
 
 export const HUMAN_FINAL_PLACEMENT_POLICY = Object.freeze({
   id: "human-final-placement-policy/1",
@@ -83,13 +83,8 @@ export function applyHumanFinalPlacementUnderObservedS2(state, input) {
 
 function witnessRotationLock(state, submitted) {
   const rules = resolvePlacementRules(state.rulesetId);
-  const finOrTst = isFinOrTstEvidence(submitted.rotationEvidence);
-  const candidate = generateReachablePlacements(state, rules).find((entry) =>
-    sameFinalPlacement(entry, submitted) &&
-    entry.rotationEvidence.lastInputWasRotation &&
-    isFinOrTstEvidence(entry.rotationEvidence) === finOrTst
-  );
-  if (candidate === undefined) return null;
+  const candidate = findReachableRotationPlacement(state, submitted, rules);
+  if (candidate === null) return null;
   return {
     placement: candidate,
     witness: {
@@ -157,24 +152,4 @@ function normalizeRotationEvidence(evidence) {
     kickId: evidence.kickId,
     kickOffset: [...evidence.kickOffset],
   };
-}
-
-// A T placed by a fin or TST kick keeps the full spin class even when only one
-// front corner is filled, so the witness has to agree with the submitted lock on
-// that specific kick shape and not merely on "some rotation reaches this pose".
-function isFinOrTstEvidence(evidence) {
-  if (!evidence.lastInputWasRotation || !Array.isArray(evidence.kickOffset)) return false;
-  const [x, y] = evidence.kickOffset;
-  return (
-    ((evidence.kickId === "23" || evidence.kickId === "03") && x === 1 && y === -2) ||
-    ((evidence.kickId === "21" || evidence.kickId === "01") && x === -1 && y === -2)
-  );
-}
-
-function sameFinalPlacement(left, right) {
-  return left.piece === right.piece &&
-    left.rotation === right.rotation &&
-    left.x === right.x &&
-    left.y === right.y &&
-    left.usedHold === right.usedHold;
 }

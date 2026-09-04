@@ -1,7 +1,8 @@
 /**
  * Creates a FIFO mutation boundary for one live match session. Work may do
- * asynchronous preparation before entering this queue, but snapshot reads,
- * transition resolution, commit, recording, and view creation belong inside.
+ * asynchronous pure preparation before entering this queue. Snapshot capture
+ * and final validation, any stale-snapshot retry, commit, recording, and view
+ * creation belong inside. A validated optimistic result may be adopted there.
  */
 export function createLiveMatchMutationQueue() {
   let tail = Promise.resolve();
