@@ -3,8 +3,8 @@
  *
  * Analysis, match, 1P, and replay fields are the same picture of the same 20
  * visible rows, so they are drawn by one set of functions rather than separate
- * implementations that could drift apart. Everything here is pure: it writes
- * into the container it is handed and reads nothing else.
+ * implementations that could drift apart. The derived field specification is
+ * pure; DOM builders keep only container-keyed caches and read no app state.
  */
 
 import { VISIBLE_ROWS } from "./human-play.mjs";
@@ -35,16 +35,20 @@ export const DETAIL_METRICS = Object.freeze([
   ["Inf DS", "infDs", 2],
 ]);
 
+const fieldCache = new WeakMap();
+const miniCache = new WeakMap();
+const nextCache = new WeakMap();
+const detailCache = new WeakMap();
+const rateCache = new WeakMap();
+
 export function renderDetailMetrics(container, metrics) {
-  container.replaceChildren(...DETAIL_METRICS.map(([label, key, digits]) => {
-    const row = document.createElement("div");
-    const term = document.createElement("dt");
-    const value = document.createElement("dd");
-    term.textContent = label;
-    value.textContent = formatMetric(metrics?.[key], digits);
-    row.append(term, value);
-    return row;
-  }));
+  renderMetricRows(container, metrics, DETAIL_METRICS, detailCache, {
+    rowElement: "div",
+    valueElement: "dd",
+    termElement: "dt",
+    termText: (label) => label,
+    valueFirst: false,
+  });
 }
 
 /* `overlay` carries a piece that has not locked - the one a human player is
@@ -53,24 +57,41 @@ export function renderDetailMetrics(container, metrics) {
    because the board itself is settled state. `cellElement` exists only for the
    callers that draw a field inside a button, whose content model admits
    phrasing content rather than divs. */
-export function renderMatchField(container, board, lastPlaced, overlay = null, { cellElement = "div" } = {}) {
+export function matchFieldCellSpec(board, lastPlaced, overlay = null) {
   const placed = new Set((lastPlaced ?? []).map(([x, y]) => `${x}:${y}`));
-  const cells = [];
+  const specs = [];
   for (let y = VISIBLE_ROWS - 1; y >= 0; y -= 1) {
     for (let x = 0; x < 10; x += 1) {
-      const cell = document.createElement(cellElement);
       const overlaid = overlay?.get(`${x}:${y}`) ?? null;
       const piece = overlaid?.piece ?? board[y][x];
       const isPlaced = overlaid === null && piece !== null && placed.has(`${x}:${y}`);
-      cell.className = `cell${piece ? " filled" : ""}`
+      specs.push({
+        className: `cell${piece ? " filled" : ""}`
         + (overlaid === null ? "" : `${overlaid.ghost ? " ghost" : " active"}${overlaid.edges}`)
-        + (isPlaced ? ` placed${outerEdges(placed, x, y)}` : "");
-      const marker = piece ?? null;
-      if (marker) cell.dataset.piece = marker;
-      cells.push(cell);
+        + (isPlaced ? ` placed${outerEdges(placed, x, y)}` : ""),
+        piece: piece ? String(piece) : null,
+      });
     }
   }
-  container.replaceChildren(...cells);
+  return specs;
+}
+
+export function renderMatchField(container, board, lastPlaced, overlay = null, { cellElement = "div" } = {}) {
+  const specs = matchFieldCellSpec(board, lastPlaced, overlay);
+  let cached = fieldCache.get(container);
+  if (!validFieldCache(container, cached, cellElement)) {
+    const cells = specs.map(() => document.createElement(cellElement));
+    container.replaceChildren(...cells);
+    cached = { cellElement, cells, specs: Array(specs.length).fill(null) };
+    fieldCache.set(container, cached);
+  }
+  for (let index = 0; index < specs.length; index += 1) {
+    const spec = specs[index];
+    const previous = cached.specs[index];
+    const cell = cached.cells[index];
+    if (!sameCellSpec(previous, spec) || !cellMatchesSpec(cell, spec)) applyCellSpec(cell, spec);
+  }
+  cached.specs = specs;
 }
 
 /* Only the cells inside the visible field are drawn, but the rim of a piece
@@ -84,18 +105,52 @@ export function addOverlayPiece(overlay, cells, piece, ghost) {
 }
 
 export function renderNextList(container, pieces) {
-  container.replaceChildren(...pieces.map((piece) => {
-    const item = document.createElement("div");
-    item.className = "mini-box";
-    renderMini(item, piece);
-    return item;
-  }));
+  const key = JSON.stringify(pieces);
+  let cached = nextCache.get(container);
+  if (cached?.key !== key || !validDirectChildren(container, cached?.items, "div")) {
+    const items = pieces.map((piece) => {
+      const item = document.createElement("div");
+      item.className = "mini-box";
+      renderMini(item, piece);
+      return item;
+    });
+    container.replaceChildren(...items);
+    cached = { key, items };
+    nextCache.set(container, cached);
+    return;
+  }
+  for (let index = 0; index < pieces.length; index += 1) {
+    const item = cached.items[index];
+    if (item.className !== "mini-box") item.className = "mini-box";
+    renderMini(item, pieces[index]);
+  }
 }
 
 export function renderMini(container, piece) {
-  const grid = document.createElement("div");
-  grid.className = "mini-grid";
-  grid.dataset.piece = piece ?? "";
+  const spec = miniSpec(piece);
+  let cached = miniCache.get(container);
+  if (cached?.piece !== piece || !validMiniCache(container, cached, spec.cells.length)) {
+    const grid = document.createElement("div");
+    const cells = spec.cells.map(() => document.createElement("span"));
+    grid.append(...cells);
+    container.replaceChildren(grid);
+    cached = { piece, grid, cells };
+    miniCache.set(container, cached);
+  }
+  if (cached.grid.className !== "mini-grid") cached.grid.className = "mini-grid";
+  if (cached.grid.getAttribute("data-piece") !== spec.piece) {
+    cached.grid.setAttribute("data-piece", spec.piece);
+  }
+  setStyleProperty(cached.grid, "--mini-cols", spec.cols);
+  setStyleProperty(cached.grid, "--mini-rows", spec.rows);
+  for (let index = 0; index < spec.cells.length; index += 1) {
+    if (cached.cells[index].className !== spec.cells[index]) {
+      cached.cells[index].className = spec.cells[index];
+    }
+  }
+}
+
+function miniSpec(piece) {
   const cells = piece ? previewCells(piece) : [];
   // The grid spans the piece's own bounding box rather than the full 4x2 area,
   // so a three-wide piece is not left-aligned and the flat I is not stuck to
@@ -107,17 +162,16 @@ export function renderMini(container, piece) {
     minY: Math.min(...cells.map(([, y]) => y)),
     maxY: Math.max(...cells.map(([, y]) => y)),
   };
-  grid.style.setProperty("--mini-cols", String(bounds.maxX - bounds.minX + 1));
-  grid.style.setProperty("--mini-rows", String(bounds.maxY - bounds.minY + 1));
+  const cols = String(bounds.maxX - bounds.minX + 1);
+  const rows = String(bounds.maxY - bounds.minY + 1);
   const occupied = new Set(cells.map(([x, y]) => `${x}:${y}`));
+  const cellClasses = [];
   for (let y = bounds.maxY; y >= bounds.minY; y -= 1) {
     for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
-      const cell = document.createElement("span");
-      cell.className = `mini-cell${occupied.has(`${x}:${y}`) ? " filled" : ""}`;
-      grid.append(cell);
+      cellClasses.push(`mini-cell${occupied.has(`${x}:${y}`) ? " filled" : ""}`);
     }
   }
-  container.replaceChildren(grid);
+  return { piece: piece == null ? "" : String(piece), cols, rows, cells: cellClasses };
 }
 
 export function previewCells(piece) {
@@ -171,16 +225,107 @@ export function renderGarbageGauge(container, packets, owner) {
 }
 
 export function renderFieldRateStats(container, metrics, definitions) {
-  const rows = definitions.map(([label, key, digits]) => {
-    const row = document.createElement("span");
-    const value = document.createElement("b");
-    const term = document.createElement("small");
-    value.textContent = formatMetric(metrics?.[key], digits);
-    term.textContent = ` ${label}`;
-    row.append(value, term);
-    return row;
+  renderMetricRows(container, metrics, definitions, rateCache, {
+    rowElement: "span",
+    valueElement: "b",
+    termElement: "small",
+    termText: (label) => ` ${label}`,
+    valueFirst: true,
   });
-  container.replaceChildren(...rows);
+}
+
+function validFieldCache(container, cached, cellElement) {
+  return cached?.cellElement === cellElement
+    && cached.cells.length === 200
+    && validDirectChildren(container, cached.cells, cellElement);
+}
+
+function validDirectChildren(container, children, elementName) {
+  if (!children || container.children.length !== children.length) return false;
+  const expectedTag = elementName.toUpperCase();
+  return children.every((child, index) => child.parentNode === container
+    && container.children[index] === child
+    && child.tagName === expectedTag);
+}
+
+function sameCellSpec(left, right) {
+  return left?.className === right.className && left?.piece === right.piece;
+}
+
+function cellMatchesSpec(cell, spec) {
+  return cell.className === spec.className && cell.getAttribute("data-piece") === spec.piece;
+}
+
+function applyCellSpec(cell, spec) {
+  if (cell.className !== spec.className) cell.className = spec.className;
+  const actualPiece = cell.getAttribute("data-piece");
+  if (spec.piece === null) {
+    if (actualPiece !== null) cell.removeAttribute("data-piece");
+  } else if (actualPiece !== spec.piece) {
+    cell.setAttribute("data-piece", spec.piece);
+  }
+}
+
+function validMiniCache(container, cached, cellCount) {
+  return cached?.grid?.parentNode === container
+    && container.children.length === 1
+    && container.children[0] === cached.grid
+    && cached.grid.tagName === "DIV"
+    && cached.cells?.length === cellCount
+    && validDirectChildren(cached.grid, cached.cells, "span");
+}
+
+function setStyleProperty(element, name, value) {
+  if (element.style.getPropertyValue(name) !== value) element.style.setProperty(name, value);
+}
+
+function metricSignature(definitions) {
+  return JSON.stringify(definitions);
+}
+
+function validMetricCache(container, cached, options) {
+  if (!validDirectChildren(container, cached?.rows, options.rowElement)) return false;
+  const expectedValueTag = options.valueElement.toUpperCase();
+  const expectedTermTag = options.termElement.toUpperCase();
+  return cached.rows.every((row, index) => {
+    const { value, term } = cached.fields[index];
+    const expected = options.valueFirst ? [value, term] : [term, value];
+    return row.children.length === 2
+      && row.children[0] === expected[0]
+      && row.children[1] === expected[1]
+      && value.parentNode === row
+      && term.parentNode === row
+      && value.tagName === expectedValueTag
+      && term.tagName === expectedTermTag;
+  });
+}
+
+function renderMetricRows(container, metrics, definitions, cache, options) {
+  const signature = metricSignature(definitions);
+  let cached = cache.get(container);
+  if (cached?.signature !== signature || !validMetricCache(container, cached, options)) {
+    const rows = [];
+    const fields = [];
+    for (const [label] of definitions) {
+      const row = document.createElement(options.rowElement);
+      const value = document.createElement(options.valueElement);
+      const term = document.createElement(options.termElement);
+      if (options.valueFirst) row.append(value, term);
+      else row.append(term, value);
+      rows.push(row);
+      fields.push({ value, term });
+    }
+    container.replaceChildren(...rows);
+    cached = { signature, rows, fields };
+    cache.set(container, cached);
+  }
+  definitions.forEach(([label, key, digits], index) => {
+    const { value, term } = cached.fields[index];
+    const desiredTerm = options.termText(label);
+    const desiredValue = formatMetric(metrics?.[key], digits);
+    if (term.textContent !== desiredTerm) term.textContent = desiredTerm;
+    if (value.textContent !== desiredValue) value.textContent = desiredValue;
+  });
 }
 
 export function formatMetric(value, digits) {

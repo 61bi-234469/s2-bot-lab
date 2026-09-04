@@ -1385,17 +1385,17 @@ async function humanHardDrop() {
   }
 }
 
-/* Coalesces the repaints of one input burst. A timer rather than an animation
-   frame: auto-shift already runs on the same kind of timer, and an animation
-   frame never arrives while the tab is hidden, which would leave the field
-   showing a piece that has since moved or locked. */
+/* Coalesces the repaints produced by one input task. A microtask keeps the
+   update ahead of the next timer task, avoids nested-timer clamping during
+   auto-shift, and still runs while animation frames are suspended in a hidden
+   tab. */
 function requestHumanRender() {
   if (humanRenderRequested || human === null) return;
   humanRenderRequested = true;
-  setTimeout(() => {
+  queueMicrotask(() => {
     humanRenderRequested = false;
-    renderHumanField();
-  }, 0);
+    if (human !== null) renderHumanField();
+  });
 }
 
 function renderHumanField() {
