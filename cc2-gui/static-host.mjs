@@ -24,7 +24,7 @@ export function installStaticTransport() {
   };
 }
 
-async function proposeCc2({ engine, state }) {
+async function proposeCc2({ engine, state, selectionLimit, thinkMs }) {
   if (typeof Worker !== "function" || typeof WebAssembly !== "object") throw new Error("CC2 WASM is unavailable in this browser");
   const wasm = engine === "cc2-raw" ? "./cold_clear_2_upstream.wasm" : engine === "cc2-chouhy" ? "./cold_clear_2_chouhy.wasm" : "./cold_clear_2_s2.wasm";
   const workerUrl = new URL("./cc2-worker.bundle.js", import.meta.url);
@@ -65,8 +65,8 @@ async function proposeCc2({ engine, state }) {
       : engine === "cc2-s2" || !engine.startsWith("cc2-s2")
         ? null
         : "./cc2-s2-spin-value-aligned.json";
-    await request("init", { wasm, configUrl, selectionLimit: "512", searchSeed: "5994928009864282113" });
-    return await request("suggest", { state });
+    await request("init", { wasm, configUrl, selectionLimit, searchSeed: "5994928009864282113" });
+    return await request("suggest", { state, thinkMs });
   } finally {
     try {
       if (workerFailure === null) await request("close", {});

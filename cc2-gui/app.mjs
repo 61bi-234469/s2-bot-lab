@@ -281,8 +281,8 @@ async function loadBotCapabilities() {
   }
   b2bCharging = capabilities.ruleset?.b2bCharging ?? false;
   if (capabilities.runtime?.mode === "static-wasm") {
-    elements["think-ms"].disabled = true;
-    elements["think-ms"].title = `Static WASM uses exactly ${capabilities.runtime.selectionLimit} selections`;
+    elements["think-ms"].disabled = false;
+    elements["think-ms"].title = "Public WASM time limits can vary with device, browser, and runtime load";
   }
   const byId = new Map(capabilities.bots.map((bot) => {
     const fallback = BOT_PARAMETER_DEFINITIONS[bot.id];
@@ -366,9 +366,41 @@ function openBotSettings(side) {
       control.append(suffix);
     }
     row.append(label, control);
+    if (parameter.description) {
+      const description = document.createElement("small");
+      description.className = "bot-parameter-description";
+      description.textContent = parameter.description;
+      row.append(description);
+    }
     return row;
   }));
+  syncCc2BudgetForm(capability);
   elements["bot-settings-dialog"].showModal();
+}
+
+function syncCc2BudgetForm(capability) {
+  const form = elements["bot-settings-form"];
+  const selection = form.elements.namedItem("selectionEnabled");
+  const thinkTime = form.elements.namedItem("thinkTimeEnabled");
+  if (!(selection instanceof HTMLInputElement) || !(thinkTime instanceof HTMLInputElement)) return;
+  const sync = () => {
+    // The only active limit cannot be switched off. Turning the other limit on
+    // first makes both checkboxes available again.
+    selection.disabled = selection.checked && !thinkTime.checked;
+    thinkTime.disabled = thinkTime.checked && !selection.checked;
+    for (const parameter of capability.parameters) {
+      if (!parameter.controlledBy) continue;
+      const input = form.elements.namedItem(parameter.key);
+      const controller = form.elements.namedItem(parameter.controlledBy);
+      if (input instanceof HTMLInputElement && controller instanceof HTMLInputElement) {
+        const matchPaceOverride = parameter.controlledBy === "thinkTimeEnabled" && thinkTimePaceEnabled();
+        input.disabled = parameter.disabled === true || (!controller.checked && !matchPaceOverride);
+      }
+    }
+  };
+  selection.addEventListener("change", sync);
+  thinkTime.addEventListener("change", sync);
+  sync();
 }
 
 /* The 1P settings are laid out like the `input` and `keys` tabs of the reference
@@ -958,6 +990,12 @@ function requestSuggestion(engine, cc2State) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       engine,
+      parameters: {
+        ...defaultBotParameters(engine),
+        selectionEnabled: false,
+        thinkTimeEnabled: true,
+        thinkMs: Number(elements["think-ms"].value),
+      },
       thinkMs: Number(elements["think-ms"].value),
       state: cc2State,
     }),

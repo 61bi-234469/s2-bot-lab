@@ -3,6 +3,7 @@ const decoder = new TextDecoder();
 
 export async function createCc2WasmSession({ wasmBytes, config = null, selectionLimit, searchSeed }) {
   if (!(wasmBytes instanceof ArrayBuffer) && !ArrayBuffer.isView(wasmBytes)) throw new TypeError("wasmBytes is required");
+  const normalizedSelectionLimit = normalizeSelectionLimit(selectionLimit);
   const module = await WebAssembly.compile(wasmBytes);
   const imports = WebAssembly.Module.imports(module);
   if (imports.length !== 0) throw new Error(`CC2 WASM must be import-free; found ${imports.length}`);
@@ -37,9 +38,38 @@ export async function createCc2WasmSession({ wasmBytes, config = null, selection
   return Object.freeze({
     module,
     imports,
-    async suggest({ state }) {
-      invoke({ op: "start", config, searchSelectionLimit: String(selectionLimit), searchSeed: String(searchSeed), state });
-      const suggestion = invoke({ op: "suggest" });
+    async suggest({ state, thinkMs = null }) {
+      const normalizedThinkMs = normalizeThinkMs(thinkMs);
+      if (normalizedSelectionLimit === null && normalizedThinkMs === null) {
+        throw new Error("SELECTION and THINK TIME cannot both be disabled");
+      }
+      invoke({
+        op: "start",
+        config,
+        searchSelectionLimit: normalizedSelectionLimit === null ? null : String(normalizedSelectionLimit),
+        searchSeed: String(searchSeed),
+        state,
+      });
+      let suggestion;
+      if (normalizedThinkMs === null) {
+        suggestion = invoke({ op: "suggest" });
+      } else {
+        const deadline = performance.now() + normalizedThinkMs;
+        let progress;
+        // Always perform one small unit so a very short deadline can still
+        // produce a legal candidate. The worker isolates this synchronous WASM
+        // work from rendering and input handling on the browser main thread.
+        do {
+          progress = invoke({ op: "work", selections: 8 });
+        } while (!progress.complete && performance.now() < deadline);
+        suggestion = invoke({ op: "suggest_now" });
+        suggestion.move_info = {
+          ...suggestion.move_info,
+          extra: progress.complete
+            ? "selection budget complete before time limit"
+            : `time budget complete (${normalizedThinkMs} ms)`,
+        };
+      }
       if (!Array.isArray(suggestion?.moves) || suggestion.moves.length === 0) throw new Error("CC2 returned no suggested move");
       return { suggestion, peakMemoryBytes: exports.memory.buffer.byteLength };
     },
@@ -48,4 +78,21 @@ export async function createCc2WasmSession({ wasmBytes, config = null, selection
       closed = true;
     },
   });
+}
+
+function normalizeSelectionLimit(value) {
+  if (value === null || value === undefined) return null;
+  const number = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
+  if (!Number.isSafeInteger(number) || number < 1 || number > 10_000_000) {
+    throw new Error("selectionLimit must be an integer from 1 to 10000000 or null");
+  }
+  return number;
+}
+
+function normalizeThinkMs(value) {
+  if (value === null || value === undefined) return null;
+  if (!Number.isSafeInteger(value) || value < 10 || value > 10_000) {
+    throw new Error("thinkMs must be an integer from 10 to 10000 or null");
+  }
+  return value;
 }

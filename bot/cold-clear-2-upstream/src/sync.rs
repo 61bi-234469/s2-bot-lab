@@ -42,8 +42,19 @@ impl BotSyncronizer {
     }
 
     pub fn suggest(&self) -> Option<(Vec<Placement>, MoveInfo)> {
+        self.suggest_with_limit_wait(true)
+    }
+
+    pub fn suggest_now(&self) -> Option<(Vec<Placement>, MoveInfo)> {
+        self.suggest_with_limit_wait(false)
+    }
+
+    fn suggest_with_limit_wait(&self, wait_for_limit: bool) -> Option<(Vec<Placement>, MoveInfo)> {
         let mut state = self.state.lock();
-        while state.selection_limit != u64::MAX && state.stats.selections < state.selection_limit {
+        while wait_for_limit
+            && state.selection_limit != u64::MAX
+            && state.stats.selections < state.selection_limit
+        {
             if self.bot.read().is_none() {
                 return None;
             }
@@ -59,8 +70,10 @@ impl BotSyncronizer {
                 extra: format!(
                     "{:.1}% of selections expanded, overall speed: {:.1} Mnps",
                     state.stats.expansions as f64 / state.stats.selections as f64 * 100.0,
-                    state.nodes_since_start as f64 / state.start.elapsed().as_secs_f64() / 1_000_000.0
-                )
+                    state.nodes_since_start as f64
+                        / state.start.elapsed().as_secs_f64()
+                        / 1_000_000.0
+                ),
             };
             (suggestion, info)
         })

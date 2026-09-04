@@ -72,6 +72,14 @@ pub async fn run(
                         .unwrap();
                 }
             }
+            FrontendMessage::SuggestNow => {
+                if let Some((moves, move_info)) = bot.suggest_now() {
+                    outgoing
+                        .send(BotMessage::Suggestion { moves, move_info })
+                        .await
+                        .unwrap();
+                }
+            }
             FrontendMessage::Play { mv } => {
                 bot.advance(mv);
                 puffin::GlobalProfiler::lock().new_frame();

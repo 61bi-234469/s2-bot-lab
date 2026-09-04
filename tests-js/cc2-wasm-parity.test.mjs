@@ -50,3 +50,54 @@ for (const spec of cases) test(`native/WASM deterministic parity: ${spec.id} x 2
     await Promise.allSettled([native.close(), wasm.close()]);
   }
 });
+
+test("WASM supports a time-only CC2 search", async () => {
+  const wasmPath = resolve("bot", "cold-clear-2-upstream", "target", "wasm32-unknown-unknown", "release", "cold_clear_2_upstream.wasm");
+  if (!existsSync(wasmPath)) return;
+  const wasm = await createCc2WasmSession({
+    wasmBytes: await readFile(wasmPath),
+    selectionLimit: null,
+    searchSeed: seed,
+  });
+  try {
+    const result = await wasm.suggest({ state: toCc2State(createGame(42)), thinkMs: 10 });
+    assert.ok(result.suggestion.move_info.selections > 0);
+    assert.match(result.suggestion.move_info.extra, /time budget complete/);
+  } finally {
+    await wasm.close();
+  }
+});
+
+test("WASM combined limits stop when selection is reached first", async () => {
+  const wasmPath = resolve("bot", "cold-clear-2-upstream", "target", "wasm32-unknown-unknown", "release", "cold_clear_2_upstream.wasm");
+  if (!existsSync(wasmPath)) return;
+  const wasm = await createCc2WasmSession({
+    wasmBytes: await readFile(wasmPath),
+    selectionLimit: 8,
+    searchSeed: seed,
+  });
+  try {
+    const result = await wasm.suggest({ state: toCc2State(createGame(42)), thinkMs: 1000 });
+    assert.equal(result.suggestion.move_info.selections, 8);
+    assert.match(result.suggestion.move_info.extra, /selection budget complete before time limit/);
+  } finally {
+    await wasm.close();
+  }
+});
+
+test("native CC2 returns its capped search through suggest_now", async () => {
+  const executable = resolve("bot", "cold-clear-2-upstream", "target", "release", `cold-clear-2-upstream${process.platform === "win32" ? ".exe" : ""}`);
+  if (!existsSync(executable)) return;
+  const native = await createCc2Session({
+    binary: executable,
+    expectedName: "Cold Clear 2",
+    selectionLimit: 8,
+    searchSeed: seed,
+  });
+  try {
+    const result = await native.suggest({ state: toCc2State(createGame(42)), thinkMs: 100, timeLimitEnabled: true });
+    assert.equal(result.suggestion.move_info.selections, 8);
+  } finally {
+    await native.close();
+  }
+});

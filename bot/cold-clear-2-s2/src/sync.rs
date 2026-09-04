@@ -61,8 +61,19 @@ impl BotSyncronizer {
     }
 
     pub fn suggest(&self) -> (Vec<Placement>, MoveInfo) {
+        self.suggest_with_limit_wait(true)
+    }
+
+    pub fn suggest_now(&self) -> (Vec<Placement>, MoveInfo) {
+        self.suggest_with_limit_wait(false)
+    }
+
+    fn suggest_with_limit_wait(&self, wait_for_limit: bool) -> (Vec<Placement>, MoveInfo) {
         let mut state = self.state.lock();
-        while state.selection_limit != u64::MAX && state.stats.selections < state.selection_limit {
+        while wait_for_limit
+            && state.selection_limit != u64::MAX
+            && state.stats.selections < state.selection_limit
+        {
             if self.bot.read().is_none() {
                 return (Vec::new(), empty_move_info());
             }

@@ -158,8 +158,9 @@ export async function createCc2Session({
     selectionLimit,
     searchSeed,
     isClosed() { return closed; },
-    async suggest({ state, thinkMs = 500, signal = null }) {
+    async suggest({ state, thinkMs = 500, timeLimitEnabled = selectionLimit === null, signal = null }) {
       assertRequest(state, thinkMs, selectionLimit, searchSeed);
+      if (typeof timeLimitEnabled !== "boolean") throw new Error("timeLimitEnabled must be a boolean");
       assertAbortSignal(signal);
       throwIfAborted(signal);
       if (closed) throw new Error("CC2 session is closed");
@@ -180,10 +181,10 @@ export async function createCc2Session({
         for (let index = messages.length - 1; index >= 0; index -= 1) {
           if (messages[index].type === "suggestion") messages.splice(index, 1);
         }
-        // A fixed selection budget makes the bot block `suggest` until the exact
-        // budget is spent, so the search size no longer depends on how long the
-        // caller waits. Only a time-budgeted session has to sleep.
-        if (selectionLimit === null) {
+        // A time-limited request asks the reviewed forks for their best move at
+        // the deadline. With a selection cap, the worker stops at that cap if
+        // it arrives first and remains idle until this request is made.
+        if (timeLimitEnabled) {
           await delayWithSignal(thinkMs, signal);
         }
         const suggestionPromise = waitFor(
@@ -191,7 +192,7 @@ export async function createCc2Session({
           selectionLimit === null ? 10_000 : suggestTimeoutMs,
           "suggestion",
         );
-        write(child, { type: "suggest" });
+        write(child, { type: timeLimitEnabled && selectionLimit !== null ? "suggest_now" : "suggest" });
         const suggestion = await awaitWithSignal(suggestionPromise, signal);
         // A consumed suggestion must not satisfy the following request, so it
         // leaves the backlog before the empty-suggestion check can throw.

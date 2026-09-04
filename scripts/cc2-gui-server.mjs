@@ -68,6 +68,7 @@ import {
 import { BotMatchTtrmError, buildBotMatchTtrm } from "../src-js/replay/bot-match-ttrm-export.mjs";
 
 const root = resolve(fileURLToPath(new URL("../cc2-gui", import.meta.url)));
+const GUI_CC2_SEARCH_SEED = "5994928009864282113";
 const options = parseArguments(process.argv.slice(2));
 const f11WeightConfig = JSON.parse(readFileSync("fixtures/tuning/cc2-s2-initial-weight-grid.json", "utf8"));
 const f11Weights = f11WeightConfig.weightProfiles?.find((profile) => profile.id === "sparse-s2")?.weights;
@@ -588,6 +589,8 @@ async function searchForBot(session, bot, dueCount) {
       binary: engine.binary,
       binaryArguments: s2ConfigArguments(engine.config ?? null),
       expectedName: engine.protocolName,
+      selectionLimit: parameters.selectionEnabled ? parameters.selectionLimit : null,
+      searchSeed: GUI_CC2_SEARCH_SEED,
     });
     session.cc2Sessions.set(bot.id, cc2Session);
   }
@@ -596,6 +599,9 @@ async function searchForBot(session, bot, dueCount) {
   const searchStartedAt = performance.now();
   try {
     cc2 = await cc2Session.suggest({
+      // THINK TIME PACE is an explicit match-wide override: its documented
+      // promise to give the configured time to CC2 also enables that limit.
+      timeLimitEnabled: parameters.thinkTimeEnabled || session.config.thinkTimePace,
       thinkMs: session.config.thinkTimePace
         ? parameters.thinkMs
         : realtimeCc2ThinkMs({

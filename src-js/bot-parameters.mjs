@@ -11,17 +11,20 @@ const PPS_PARAMETER = Object.freeze({
 
 const CC2_PARAMETERS = Object.freeze([
   PPS_PARAMETER,
-  Object.freeze({ key: "thinkMs", label: "THINK TIME", type: "integer", minimum: 10, maximum: 10_000, step: 10, defaultValue: 250, suffix: "ms" }),
+  Object.freeze({ key: "selectionEnabled", label: "SELECTION", type: "boolean", defaultValue: true, description: "指定した探索選択数で打ち切ります。固定値では同じ局面の探索量を揃えられます。" }),
+  Object.freeze({ key: "selectionLimit", label: "SELECTION LIMIT", type: "integer", minimum: 1, maximum: 10_000_000, step: 1, defaultValue: 512, suffix: "selections", controlledBy: "selectionEnabled" }),
+  Object.freeze({ key: "thinkTimeEnabled", label: "THINK TIME", type: "boolean", defaultValue: false, description: "有効にすると実時間で探索を打ち切るため、端末性能・ブラウザ・実行時負荷により探索量と選択手が変わります。" }),
+  Object.freeze({ key: "thinkMs", label: "THINK TIME LIMIT", type: "integer", minimum: 10, maximum: 10_000, step: 10, defaultValue: 250, suffix: "ms", controlledBy: "thinkTimeEnabled" }),
   Object.freeze({ key: "queueDepth", label: "QUEUE DEPTH", type: "integer", minimum: 1, maximum: 28, step: 1, defaultValue: 14, suffix: "pieces" }),
 ]);
 
 export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
   "cc2-raw": Object.freeze({
-    description: "MinusKelvin/cold-clear-2（raw upstream）の探索時間と参照する NEXT queue を設定します。",
+    description: "MinusKelvin/cold-clear-2（raw upstream）の探索条件と参照する NEXT queue を設定します。",
     parameters: CC2_PARAMETERS,
   }),
   "cc2-chouhy": Object.freeze({
-    description: "chouhy/cold-clear-2 fork の探索時間と参照する NEXT queue を設定します。raw upstream とは別のBotとして実行します。",
+    description: "chouhy/cold-clear-2 fork の探索条件と参照する NEXT queue を設定します。raw upstream とは別のBotとして実行します。",
     parameters: CC2_PARAMETERS,
   }),
   "cc2-s2": Object.freeze({
@@ -90,7 +93,7 @@ export function normalizeBotParameters(botType, input = {}) {
   const unknown = Object.keys(input).find((key) => !known.has(key));
   if (unknown !== undefined) throw new Error(`unsupported ${botType} parameter ${unknown}`);
 
-  return Object.freeze(Object.fromEntries(definition.parameters.map((parameter) => {
+  const normalized = Object.fromEntries(definition.parameters.map((parameter) => {
     const value = input[parameter.key] ?? parameter.defaultValue;
     if (parameter.type === "boolean") {
       if (typeof value !== "boolean") throw new Error(`${parameter.key} must be a boolean`);
@@ -106,7 +109,11 @@ export function normalizeBotParameters(botType, input = {}) {
       throw new Error(`${parameter.key} must be an integer from ${parameter.minimum} to ${parameter.maximum}`);
     }
     return [parameter.key, value];
-  })));
+  }));
+  if ("selectionEnabled" in normalized && !normalized.selectionEnabled && !normalized.thinkTimeEnabled) {
+    throw new Error("SELECTION and THINK TIME cannot both be disabled");
+  }
+  return Object.freeze(normalized);
 }
 
 function definitionFor(botType) {

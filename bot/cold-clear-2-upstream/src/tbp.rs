@@ -17,6 +17,7 @@ pub enum FrontendMessage {
         piece: Piece,
     },
     Suggest,
+    SuggestNow,
     Stop,
     Quit,
     #[serde(other)]
@@ -37,7 +38,7 @@ pub enum BotMessage {
     Suggestion {
         moves: Vec<Placement>,
         move_info: MoveInfo,
-    }
+    },
 }
 
 #[derive(Deserialize)]

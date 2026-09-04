@@ -63,7 +63,7 @@ export function createGuiRequestHandlers({ proposeCc2 = null } = {}) {
   return Object.freeze({
     async handle({ method, path, body = null }) {
       if (method === "GET" && path === "/api/bots") return ok({
-        runtime: { mode: "static-wasm", selectionLimit: 512, searchSeed: "5994928009864282113" },
+        runtime: { mode: "static-wasm", defaultSelectionLimit: 512, searchSeed: "5994928009864282113", timeBudget: "worker-clock-chunked" },
         ruleset: { id: RULESET_IDS.s2Observed, b2bCharging: resolvePlacementRules(RULESET_IDS.s2Observed).b2bCharging },
         bots: [
           ...Object.entries(CC2_LABELS).map(([id, label]) => proposeCc2 === null ? unavailable(id, label) : ({ id, label, available: true, ...staticCc2Capability(id) })),
@@ -81,7 +81,10 @@ export function createGuiRequestHandlers({ proposeCc2 = null } = {}) {
       if (method === "POST" && path === "/api/suggest") {
         if (proposeCc2 === null) return fail(503, { error: "CC2 WASM is unavailable" });
         const engine = requireCc2Type(body.engine ?? "cc2-raw");
-        try { return ok({ ...(await proposeCc2({ engine, state: body.state })), info: { version: "deterministic-wasm-512" }, engine: publicEngine(engine) }); }
+        try {
+          const parameters = normalizeBotParameters(engine, body.parameters);
+          return ok({ ...(await proposeCc2({ engine, state: body.state, ...cc2SearchBudget(parameters) })), info: { version: staticWasmVersion(parameters) }, engine: publicEngine(engine) });
+        }
         catch (error) { return fail(422, { error: messageOf(error) }); }
       }
       if (method === "POST" && path === "/api/apply-s2") {
@@ -116,8 +119,9 @@ export function createGuiRequestHandlers({ proposeCc2 = null } = {}) {
     try {
       const left = staticBotType(body.left ?? "s2-simple");
       const right = staticBotType(body.right ?? "s2-simple");
+      if (right === "human") throw new Error("You (1P) is available only on the left side");
       if (left === "human" && right === "human") throw new Error("only one side can be played by a human");
-      const humanSide = left === "human" ? "left" : right === "human" ? "right" : null;
+      const humanSide = left === "human" ? "left" : null;
       const config = normalizeBotMatchOptions(body);
       if (humanSide !== null && config.fairComparison) throw new Error("fair comparison cannot include a human player");
       const botParameters = {
@@ -169,7 +173,7 @@ export function createGuiRequestHandlers({ proposeCc2 = null } = {}) {
         const engine = session.types[botId];
         const gui = botMatchToGuiState(session.match, bot.id);
         const state = { board: gui.board, queue: gui.queue.slice(0, session.botParameters[botId].queueDepth), hold: gui.hold, combo: gui.combo, back_to_back: gui.back_to_back, randomizer: { type: "seven_bag", bag_state: [] } };
-        const proposal = await proposeCc2({ engine, state });
+        const proposal = await proposeCc2({ engine, state, ...cc2SearchBudget(session.botParameters[botId], session.config.thinkTimePace) });
         const result = isS2(engine) ? selectS2(gui, proposal.suggestion.moves, engine) : applyCc2FinalPlacementUnderObservedS2(gui, proposal.suggestion.moves[0], publicEngine(engine));
         if (result.transition === null) return fail(422, { error: `${botId} CC2 placement rejected` });
         submissions.push(submissionFor(bot, result.comparison.witness.placement, result.transition, result.comparison.score));
@@ -264,7 +268,15 @@ function ok(body) { return { status: 200, body }; }
 function fail(status, body) { return { status, body }; }
 function messageOf(error) { return error instanceof Error ? error.message : String(error); }
 function unavailable(id, label) { return { id, label, available: false, reason: "requires the local server", parameters: [] }; }
-function staticCc2Capability(id) { const capability = botParameterCapability(id); capability.description += " Static WASM uses a fixed 512-selection budget; THINK TIME is ignored."; capability.parameters = capability.parameters.map((parameter) => parameter.key === "thinkMs" ? { ...parameter, disabled: true, disabledReason: "Static WASM uses exactly 512 selections" } : parameter); return capability; }
+function staticCc2Capability(id) { const capability = botParameterCapability(id); capability.description += " 公開WASM版でもTHINK TIMEを利用できます。有効時は端末性能・ブラウザ・実行時負荷によって探索量と選択手が変化します。"; return capability; }
+function cc2SearchBudget(parameters, forceThinkTime = false) { return {
+  selectionLimit: parameters.selectionEnabled ? parameters.selectionLimit : null,
+  thinkMs: parameters.thinkTimeEnabled || forceThinkTime ? parameters.thinkMs : null,
+}; }
+function staticWasmVersion(parameters) {
+  if (parameters.selectionEnabled && !parameters.thinkTimeEnabled) return `deterministic-wasm-${parameters.selectionLimit}`;
+  return "time-budgeted-wasm";
+}
 function staticBotType(value) {
   if (value !== "s2-simple" && value !== "human" && !(value in CC2_LABELS)) throw new Error(`unsupported static bot ${value}`);
   return value;

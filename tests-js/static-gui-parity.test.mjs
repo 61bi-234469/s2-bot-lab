@@ -47,10 +47,37 @@ test("bot-vs-bot selectors expose the current development champion", async () =>
   }
 });
 
+test("bot-vs-bot exposes You (1P) only in the left-player selector", async () => {
+  const html = await readFile(new URL("../cc2-gui/index.html", import.meta.url), "utf8");
+  const right = html.match(/<select id="right-bot">([\s\S]*?)<\/select>/)?.[1] ?? "";
+  assert.doesNotMatch(right, /value="human"/);
+  assert.match(html, /LEFT BOTで <strong>You \(1P\)<\/strong> を選ぶ/);
+});
+
+test("bot-vs-bot defaults to a random seed and unlimited turns", async () => {
+  const html = await readFile(new URL("../cc2-gui/index.html", import.meta.url), "utf8");
+  assert.match(html, /<input id="match-seed"[^>]* disabled>/);
+  assert.match(html, /<input id="match-random-seed" type="checkbox" checked>/);
+  assert.match(html, /<input id="match-max-turns"[^>]* disabled>/);
+  assert.match(html, /<input id="match-unlimited-turns" type="checkbox" checked>/);
+});
+
 test("static CC2 suggestion preserves the GUI response identity contract", async () => {
-  const handlers = createGuiRequestHandlers({ proposeCc2: async () => ({ suggestion: { moves: [{ location: { type: "T", orientation: "north", x: 0, y: 0 }, spin: "none" }], move_info: { nodes: 512, nps: 512 } }, peakMemoryBytes: 65536 }) });
+  let proposalRequest;
+  const handlers = createGuiRequestHandlers({ proposeCc2: async (request) => { proposalRequest = request; return { suggestion: { moves: [{ location: { type: "T", orientation: "north", x: 0, y: 0 }, spin: "none" }], move_info: { nodes: 512, nps: 512 } }, peakMemoryBytes: 65536 }; } });
   const body = await request(handlers, "POST", "/api/suggest", { engine: "cc2-raw", state: {} });
   assert.equal(body.info.version, "deterministic-wasm-512");
   assert.equal(body.engine.botType, "cc2-raw");
   assert.equal(body.suggestion.move_info.nodes, 512);
+  assert.equal(proposalRequest.selectionLimit, 512);
+  assert.equal(proposalRequest.thinkMs, null);
+});
+
+test("static CC2 supports a time-only search budget", async () => {
+  let proposalRequest;
+  const handlers = createGuiRequestHandlers({ proposeCc2: async (request) => { proposalRequest = request; return { suggestion: { moves: [{}], move_info: {} }, peakMemoryBytes: 65536 }; } });
+  const body = await request(handlers, "POST", "/api/suggest", { engine: "cc2-chouhy", state: {}, parameters: { selectionEnabled: false, thinkTimeEnabled: true, thinkMs: 250 } });
+  assert.equal(body.info.version, "time-budgeted-wasm");
+  assert.equal(proposalRequest.selectionLimit, null);
+  assert.equal(proposalRequest.thinkMs, 250);
 });

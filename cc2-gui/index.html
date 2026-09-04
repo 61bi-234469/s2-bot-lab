@@ -214,7 +214,6 @@
                 <option value="cc2-s2-champion">CC2 S2 — current development champion (not release-qualified)</option>
                 <option value="cc2-raw">Raw CC2 — MinusKelvin upstream</option>
                 <option value="s2-simple">S2 placement bot — canonical simulator baseline</option>
-                <option value="human">You (1P)</option>
               </select>
               <button class="bot-settings-button" id="right-bot-settings" type="button" aria-label="右Botの個別設定">SETTINGS</button>
             </div>
@@ -241,15 +240,15 @@
           <div class="match-setting">
             <label for="match-seed">SEED</label>
             <div class="match-limit-control">
-              <input id="match-seed" type="number" min="0" max="4294967295" step="1" value="1506">
-              <label class="random-seed-toggle"><input id="match-random-seed" type="checkbox">RND</label>
+              <input id="match-seed" type="number" min="0" max="4294967295" step="1" value="1506" disabled>
+              <label class="random-seed-toggle"><input id="match-random-seed" type="checkbox" checked>RND</label>
             </div>
           </div>
           <div class="match-setting">
             <label for="match-max-turns">MAX TURNS</label>
             <div class="match-limit-control">
               <input id="match-max-turns" type="number" min="1" max="10000" step="1" value="500" disabled>
-              <label class="infinity-toggle"><input id="match-unlimited-turns" type="checkbox">∞</label>
+              <label class="infinity-toggle"><input id="match-unlimited-turns" type="checkbox" checked>∞</label>
             </div>
           </div>
           <label>FIRST TO
@@ -320,8 +319,8 @@
             <dl class="match-metrics" id="match-right-metrics" aria-label="Right bot detailed metrics"></dl>
           </article>
         </div>
-        <p class="match-note" id="match-human-note">LEFT/RIGHT BOTのどちらかに <strong>You (1P)</strong> を選ぶと自分で対戦できます。既定の操作は ← → 移動、↓ ソフトドロップ、Space ハードドロップ、Z/X 回転、A 180度回転、C HOLD、Esc リセット。DAS・ARR・DCD・SDF とキー割り当ては SETTINGS で変更できます。自然落下はありません。ハードドロップした瞬間の共有クロックがそのミノのロック時刻になるので、置くのが遅いほど自分のPPSが下がります。</p>
-        <p class="match-note" id="match-bot-note">START MATCH begins the series; pressing the same button again pauses it, and once more resumes. Both bots share one game clock. THINK TIME PACE derives each CC2 bot's PPS from its configured THINK TIME (1000 ms = 1 PPS) and gives that full time to the search. FAIR COMPARISON instead fixes both bots at 1 PPS and runs simultaneous searches serially to avoid direct CPU contention; it cannot be combined with THINK TIME PACE. Bot-specific parameters are configured independently from each SETTINGS button. QUEUE MODEL is a match setting, not an output one: TTRM QUEUE generates pieces with the 7-bag randomiser and, for non-simple bots, uses the deterministic no-HOLD input controller so each lock can be emitted as a verified TETR.IO input log. Therefore a TTRM QUEUE match is replay-compatible rather than a byte-for-byte CC2 final-placement match. EXPORT becomes available once a round has advanced — SAVE .json writes this engine's own match record, and SAVE .ttrm writes a server-verified TETR.IO replay.</p>
+        <p class="match-note" id="match-human-note">LEFT BOTで <strong>You (1P)</strong> を選ぶと自分で対戦できます。既定の操作は ← → 移動、↓ ソフトドロップ、Space ハードドロップ、Z/X 回転、A 180度回転、C HOLD、Esc リセット。DAS・ARR・DCD・SDF とキー割り当ては SETTINGS で変更できます。自然落下はありません。ハードドロップした瞬間の共有クロックがそのミノのロック時刻になるので、置くのが遅いほど自分のPPSが下がります。</p>
+        <p class="match-note" id="match-bot-note">START MATCH begins the series; pressing the same button again pauses it, and once more resumes. Both bots share one game clock. CC2 SETTINGS can stop search by SELECTION, THINK TIME, or whichever enabled limit is reached first; at least one must remain enabled. THINK TIME is off by default because real-time search can vary with device, browser, and runtime load. THINK TIME PACE is a match-wide override that enables THINK TIME, derives each CC2 bot's PPS from its configured limit (1000 ms = 1 PPS), and gives that full time to the search. FAIR COMPARISON instead fixes both bots at 1 PPS and runs simultaneous searches serially to avoid direct CPU contention; it cannot be combined with THINK TIME PACE. Bot-specific parameters are configured independently from each SETTINGS button. QUEUE MODEL is a match setting, not an output one: TTRM QUEUE generates pieces with the 7-bag randomiser and, for non-simple bots, uses the deterministic no-HOLD input controller so each lock can be emitted as a verified TETR.IO input log. Therefore a TTRM QUEUE match is replay-compatible rather than a byte-for-byte CC2 final-placement match. EXPORT becomes available once a round has advanced — SAVE .json writes this engine's own match record, and SAVE .ttrm writes a server-verified TETR.IO replay.</p>
       </section>
     </div>
 

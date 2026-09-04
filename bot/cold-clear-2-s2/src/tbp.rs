@@ -17,6 +17,7 @@ pub enum FrontendMessage {
         piece: Piece,
     },
     Suggest,
+    SuggestNow,
     Stop,
     Quit,
     #[serde(other)]
