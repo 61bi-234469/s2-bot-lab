@@ -9,6 +9,7 @@ import {
 import {
   advanceMatchPlaybackDeadline,
   createMatchClock,
+  delayUntilMatchClock,
   readMatchClock,
   setMatchClockRunning,
   synchronizeMatchClock,
@@ -1576,7 +1577,7 @@ function scheduleHumanMatchBotStep(view) {
   if (human === null || !matchRunning || !matchAutoplay) return;
   if (!Number.isFinite(view.nextStepFrames)) return;
   const targetElapsedMs = (view.clock.logicalFrame + view.nextStepFrames) * 1000 / 60;
-  const delayMs = Math.max(0, targetElapsedMs - readMatchClock(matchClock, performance.now())) / matchClock.rate;
+  const delayMs = delayUntilMatchClock(matchClock, targetElapsedMs, performance.now());
   humanBotStepTimer = setTimeout(stepMatch, delayMs);
 }
 

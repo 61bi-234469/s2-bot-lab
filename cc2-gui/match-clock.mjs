@@ -13,6 +13,13 @@ export function readMatchClock(clock, nowMs) {
     : Math.min(projected, clock.maximumElapsedMs);
 }
 
+// A 1P opponent is scheduled against this same real-time clock. Its lock is
+// due at the requested elapsed match time; there is no playback-rate layer.
+export function delayUntilMatchClock(clock, targetElapsedMs, nowMs) {
+  assertTimestamp(targetElapsedMs, "targetElapsedMs");
+  return Math.max(0, targetElapsedMs - readMatchClock(clock, nowMs));
+}
+
 export function setMatchClockRunning(clock, running, nowMs) {
   if (typeof running !== "boolean") throw new Error("running must be boolean");
   const elapsedMs = readMatchClock(clock, nowMs);

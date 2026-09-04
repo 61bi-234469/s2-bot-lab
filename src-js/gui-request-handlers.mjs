@@ -185,7 +185,7 @@ export function createGuiRequestHandlers({ proposeCc2 = null } = {}) {
     session.lastSubmissions = submissions;
     session.recording = recordMatchLocks(session.recording, before, session.match, submissions);
     finalize();
-    return ok(matchView());
+    return ok(matchView(before));
   }
 
   function humanLock(body) {
@@ -236,12 +236,17 @@ export function createGuiRequestHandlers({ proposeCc2 = null } = {}) {
     }
   }
 
-  function matchView() {
+  function matchView(preLockMatch = null) {
     const submitted = new Map(session.lastSubmissions.map((entry) => [entry.botId, entry]));
     const bots = session.match.bots.map((bot) => {
       const gui = botMatchToGuiState(session.match, bot.id);
       const last = submitted.get(bot.id);
-      return { id: bot.id, type: session.types[bot.id], board: gui.board, lastPlaced: last?.lastPlaced ?? [], preLockPreview: null,
+      const preLockBot = preLockMatch?.bots.find((candidate) => candidate.id === bot.id) ?? null;
+      const preLockGui = preLockBot === null ? null : botMatchToGuiState(preLockMatch, bot.id);
+      return { id: bot.id, type: session.types[bot.id], board: gui.board, lastPlaced: last?.lastPlaced ?? [],
+        preLockPreview: preLockGui === null || last === undefined || session.types[bot.id] === "human"
+          ? null
+          : preLockPreview(preLockGui, last),
         current: gui.queue[0] ?? null, next: gui.queue.slice(1, 7), hold: gui.hold, holdAvailable: bot.state.pieces.holdAvailable,
         garbage: { pending: gui.s2.garbage.packets.reduce((total, packet) => total + packet.amount, 0), packets: gui.s2.garbage.packets },
         combo: gui.combo, b2b: gui.s2.b2b, piecesPlaced: gui.s2.time.piecesPlaced,
@@ -262,6 +267,19 @@ export function createGuiRequestHandlers({ proposeCc2 = null } = {}) {
     const outcome = matchView().outcome;
     if (outcome.complete) session.finishedRound = finishMatchRecording(session.recording, { outcome, match: session.match });
   }
+}
+
+function preLockPreview(gui, submission) {
+  const placement = submission.result?.comparison?.witness?.placement ?? submission.move;
+  if (!isCanonicalPlacement(placement)) return null;
+  return { board: gui.board, placement: structuredClone(placement) };
+}
+
+function isCanonicalPlacement(placement) {
+  return placement !== null && typeof placement === "object" &&
+    ["I", "O", "T", "L", "J", "S", "Z"].includes(placement.piece) &&
+    ["spawn", "right", "reverse", "left"].includes(placement.rotation) &&
+    Number.isSafeInteger(placement.x) && Number.isSafeInteger(placement.y);
 }
 
 function ok(body) { return { status: 200, body }; }

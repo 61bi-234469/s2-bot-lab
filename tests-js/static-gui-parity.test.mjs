@@ -81,3 +81,19 @@ test("static CC2 supports a time-only search budget", async () => {
   assert.equal(proposalRequest.selectionLimit, null);
   assert.equal(proposalRequest.thinkMs, 250);
 });
+
+test("static matches expose the selected placement over the pre-lock board", async () => {
+  const handlers = createGuiRequestHandlers();
+  await request(handlers, "POST", "/api/match/start", {
+    left: "s2-simple",
+    right: "s2-simple",
+    preLockPreview: true,
+  });
+  const stepped = await request(handlers, "POST", "/api/match/step");
+  for (const bot of stepped.bots) {
+    assert.ok(bot.preLockPreview);
+    assert.ok(bot.preLockPreview.board.every((row) => row.every((cell) => cell === null)));
+    assert.equal(typeof bot.preLockPreview.placement.piece, "string");
+    assert.ok(bot.lastPlaced.length > 0);
+  }
+});
