@@ -47,6 +47,23 @@ test("bot-vs-bot selectors expose the current development champion", async () =>
   }
 });
 
+test("bot-vs-bot selectors keep one automated-bot order and hide retired development variants", async () => {
+  const html = await readFile(new URL("../cc2-gui/index.html", import.meta.url), "utf8");
+  const optionsFor = (id) => html.match(new RegExp(`<select id="${id}">([\\s\\S]*?)</select>`))?.[1] ?? "";
+  const botIds = (id) => [...optionsFor(id).matchAll(/<option value="([^"]+)">/g)]
+    .map((match) => match[1])
+    .filter((botId) => botId !== "human");
+  const expected = ["cc2-raw", "cc2-chouhy", "cc2-s2-gen017", "cc2-s2-f14", "cc2-s2-f25", "cc2-s2-champion", "s2-simple"];
+
+  assert.deepEqual(botIds("left-bot"), expected);
+  assert.deepEqual(botIds("right-bot"), expected);
+  for (const id of ["left-bot", "right-bot"]) {
+    assert.doesNotMatch(optionsFor(id), /value="cc2-s2"/);
+    assert.doesNotMatch(optionsFor(id), /value="cc2-s2-f11"/);
+    assert.doesNotMatch(optionsFor(id), /value="cc2-s2-f12"/);
+  }
+});
+
 test("bot-vs-bot exposes You (1P) only in the left-player selector", async () => {
   const html = await readFile(new URL("../cc2-gui/index.html", import.meta.url), "utf8");
   const optionsFor = (id) => html.match(new RegExp(`<select id="${id}">([\\s\\S]*?)</select>`))?.[1] ?? "";

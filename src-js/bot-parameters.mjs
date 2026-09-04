@@ -34,11 +34,11 @@ const CC2_PARAMETERS = Object.freeze([
 
 export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
   "cc2-raw": Object.freeze({
-    description: "MinusKelvin版 Cold Clear 2 です。探索の打ち切り条件と、参照するNEXTの数を設定します。",
+    description: "純テトリス向けの MinusKelvin版 Cold Clear 2 です。探索の打ち切り条件と、参照するNEXTの数を設定します。",
     parameters: CC2_PARAMETERS,
   }),
   "cc2-chouhy": Object.freeze({
-    description: "chouhy版 Cold Clear 2 です。MinusKelvin版とは別のBotとして動きます。探索の打ち切り条件と、参照するNEXTの数を設定します。",
+    description: "S2向けの chouhy版 Cold Clear 2 です。MinusKelvin版とは別のBotとして動きます。探索の打ち切り条件と、参照するNEXTの数を設定します。",
     parameters: CC2_PARAMETERS,
   }),
   "cc2-s2": Object.freeze({

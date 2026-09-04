@@ -8,6 +8,11 @@ import {
   normalizeBotParameters,
 } from "../src-js/bot-parameters.mjs";
 
+test("raw and chouhy CC2 descriptions state their intended rulesets", () => {
+  assert.match(botParameterCapability("cc2-raw").description, /純テトリス/);
+  assert.match(botParameterCapability("cc2-chouhy").description, /S2向け/);
+});
+
 test("the current development champion has configurable CC2 search budgets", () => {
   assert.deepEqual(defaultBotParameters("cc2-s2-champion"), {
     ppsEnabled: true, pps: 1, selectionEnabled: true, selectionLimit: 512,
