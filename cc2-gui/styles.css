@@ -204,8 +204,8 @@ footer { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line-di
 /* Auto-fit rather than a fixed column count: this row has gained settings twice,
    and a fixed count strands the overflow item alone on a second line. */
 .match-settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 7px; margin-top: 7px; }
-.fair-comparison-setting span:last-child, .pre-lock-preview-setting span:last-child, .ttrm-compatible-setting span:last-child { display: flex; align-items: center; gap: 6px; min-height: 30px; color: var(--text); }
-.fair-comparison-setting input, .pre-lock-preview-setting input, .ttrm-compatible-setting input { accent-color: var(--accent); }
+.fair-comparison-setting span:last-child, .pre-lock-preview-setting span:last-child { display: flex; align-items: center; gap: 6px; min-height: 30px; color: var(--text); }
+.fair-comparison-setting input, .pre-lock-preview-setting input { accent-color: var(--accent); }
 .bot-picker { display: grid; gap: 4px; min-width: 0; }
 .bot-picker-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; }
 .bot-settings-button { padding-inline: 9px; font-size: 9px; }
@@ -344,9 +344,6 @@ input[type="number"]:disabled { border-color: var(--line-dim); color: #4a504a; c
 /* A key binding field shows the key it captured and is never typed into. */
 .bot-parameter-control .key-binding { width: 100%; text-align: center; text-transform: none; caret-color: transparent; cursor: pointer; }
 .bot-parameter-control .key-binding:focus { border-color: var(--accent); color: var(--accent); }
-.dialog-effects { display: grid; gap: 7px; margin: 0; padding: 11px 15px 4px 30px; color: var(--text); font-size: 11px; line-height: 1.6; }
-.dialog-effects li::marker { color: var(--muted); }
-.dialog-effects li.warning { color: var(--accent); }
 .dialog-actions { display: flex; justify-content: end; gap: 6px; padding: 10px 15px 14px; border-top: 1px solid var(--line); }
 
 /* The seven tetrominoes, flat. */

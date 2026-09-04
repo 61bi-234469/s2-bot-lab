@@ -190,12 +190,9 @@ elements["match-run"].addEventListener("click", toggleMatchRun);
 elements["match-step"].addEventListener("click", stepMatch);
 elements["match-reset"].addEventListener("click", resetMatch);
 elements["match-save-replay"].addEventListener("click", saveMatchReplay);
-elements["match-save-ttrm"].addEventListener("click", saveMatchTtrm);
 elements["match-unlimited-turns"].addEventListener("change", syncMaxTurnsControl);
 elements["match-random-seed"].addEventListener("change", syncRandomSeedControl);
 elements["match-fair-comparison"].addEventListener("change", syncFairComparisonControls);
-elements["match-ttrm-compatible"].addEventListener("click", confirmTtrmQueue);
-elements["ttrm-queue-confirm"].addEventListener("click", enableTtrmQueue);
 for (const side of BOT_SIDES) {
   elements[`${side}-bot`].addEventListener("change", () => {
     renderBotSettingsSummary(side);
@@ -296,7 +293,7 @@ async function loadBotCapabilities() {
   b2bCharging = capabilities.ruleset?.b2bCharging ?? false;
   if (capabilities.runtime?.mode === "static-wasm") {
     elements["think-ms"].disabled = false;
-    elements["think-ms"].title = "Public WASM time limits can vary with device, browser, and runtime load";
+    elements["think-ms"].title = "ブラウザ版の探索時間は、端末やブラウザの状態によって結果が変わります";
   }
   const byId = new Map(capabilities.bots.map((bot) => {
     const fallback = BOT_PARAMETER_DEFINITIONS[bot.id];
@@ -322,7 +319,7 @@ async function loadBotCapabilities() {
   }
   const unavailable = [...byId.values()].filter((bot) => bot.available === false);
   if (unavailable.length > 0) {
-    elements["match-bot-note"].textContent += ` Unavailable: ${unavailable.map((bot) => `${bot.label}: ${bot.reason}`).join("; ")}`;
+    elements["match-bot-note"].textContent += `　現在使えないBot: ${unavailable.map((bot) => `${bot.label}（${bot.reason}）`).join("、")}`;
   }
   renderAnalysisEngineIdentity();
   for (const side of BOT_SIDES) renderBotSettingsSummary(side);
@@ -336,7 +333,7 @@ function openBotSettings(side) {
   elements["bot-settings-side"].textContent = botType === "human" ? `${side.toUpperCase()} PLAYER` : `${side.toUpperCase()} BOT`;
   elements["bot-settings-title"].textContent = capability.label ?? botType;
   const fairNote = fairComparisonEnabled() && botType.startsWith("cc2-")
-    ? " FAIR COMPARISON中の対局ではSELECTION 512のみを探索条件に使い、1 PPSで配置します。保存済みの個別設定は上書きされず、FAIR解除後に戻ります。"
+    ? " いまは FAIR COMPARISON がONのため、対局中は SELECTION 512・1 PPS に揃えられます。ここでの設定は上書きされず、OFFに戻すと元に戻ります。"
     : "";
   elements["bot-settings-description"].textContent = `${capability.description ?? ""}${fairNote}`;
   setBotSettingsValidation("");
@@ -508,7 +505,7 @@ function syncBotSettingsForm(capability) {
       const fairPpsOverride = parameter.key === "pps" && fairComparisonEnabled();
       input.disabled = parameter.disabled === true || !controller.checked || fairPpsOverride;
       if (fairPpsOverride) input.value = 1;
-      setBotParameterState(parameter.key, controlledLimitStateText(parameter, capability, controller, fairPpsOverride));
+      setBotParameterState(parameter.key, controlledLimitStateText(parameter, fairPpsOverride));
     }
     if (selection instanceof HTMLInputElement && thinkTime instanceof HTMLInputElement) {
       const validation = selection.checked || thinkTime.checked ? "" : SEARCH_BUDGET_VALIDATION_NOTE;
@@ -523,13 +520,14 @@ function syncBotSettingsForm(capability) {
   sync();
 }
 
-function controlledLimitStateText(parameter, capability, controller, fairPpsOverride) {
+/* A limit whose own toggle is off says nothing: the greyed-out field is already
+   the explanation, and a line that appears and disappears with every toggle
+   moves the rest of the card under the pointer. Only a lock the card cannot
+   show by itself is spelled out. */
+function controlledLimitStateText(parameter, fairPpsOverride) {
   if (parameter.disabled === true) return parameter.disabledReason ?? "この実行環境では利用できません。";
   if (fairPpsOverride) return "FAIR COMPARISON が両Botを 1 PPS に固定しています。";
-  if (controller.checked) return "";
-  const controllerLabel = capability.parameters
-    .find((candidate) => candidate.key === parameter.controlledBy)?.label ?? parameter.controlledBy;
-  return `${controllerLabel} がOFFのため編集できません。`;
+  return "";
 }
 
 function setBotSettingsValidation(message) {
@@ -1420,7 +1418,7 @@ function stopHumanPlay(view = null) {
    through to the browser (for example, Space must not scroll the page). */
 function humanInputEnabled() {
   return human !== null && mode === "match" && matchRunning &&
-    !elements["bot-settings-dialog"].open && !elements["ttrm-queue-dialog"].open;
+    !elements["bot-settings-dialog"].open;
 }
 
 function isKeyboardEditingTarget(target) {
@@ -1510,7 +1508,6 @@ function createMatchSeries() {
         ? null
         : readBoundedInteger("match-max-turns", 1, 10_000),
       firstTo: readBoundedInteger("match-count", 1, 100),
-      ttrmCompatible: elements["match-ttrm-compatible"].checked,
       preLockPreview: elements["match-pre-lock-preview"].checked,
     },
     completed: 0,
@@ -1542,7 +1539,6 @@ async function startSeriesGame() {
       seed,
       maxTurns: config.maxTurns,
       firstTo: config.firstTo,
-      ttrmCompatible: config.ttrmCompatible,
     }),
   });
   const body = await response.json();
@@ -1881,26 +1877,17 @@ function renderMatchSummary() {
   renderMatchSaveButton();
 }
 
-/* Both exports spend most of their life disabled, and the reason is never local
-   to the button: .ttrm depends on QUEUE MODEL, a match setting chosen before
-   START that setMatchSettingsDisabled then locks for the duration of the match.
-   A player who forgot it cannot recover without a RESET, so the reason rides on
-   the button as a title rather than leaving a dead control unexplained. */
+/* The export spends most of its life disabled, and the reason is not visible on
+   the button itself, so it rides along as a title rather than leaving a dead
+   control unexplained. */
 function renderMatchSaveButton() {
   const hasCurrent = matchRunning && (lastMatchView?.turnNumber ?? 0) > 0;
   const hasCompleted = (matchSeries?.rounds?.length ?? 0) > 0;
   const blocked = matchSaveInFlight ? "保存中です"
-    : matchRoundFinalization !== null ? "ラウンドの確定を待っています"
-    : !(hasCurrent || hasCompleted) ? "保存できる手番がまだありません。START MATCH で対局を進めてください"
+    : matchRoundFinalization !== null ? "対局の記録をまとめています"
+    : !(hasCurrent || hasCompleted) ? "まだ保存できる手がありません。START MATCH で対局を進めてください"
     : "";
-  setMatchExportButton("match-save-replay", blocked, "この対局を S2 内部形式 (.json) で保存します");
-  setMatchExportButton(
-    "match-save-ttrm",
-    blocked !== "" ? blocked
-      : matchSeries?.config?.ttrmCompatible === true ? ""
-      : "QUEUE MODEL を TTRM QUEUE にして開始した対局だけが .ttrm を出力できます",
-    "サーバで検証した TETR.IO リプレイ (.ttrm) を保存します",
-  );
+  setMatchExportButton("match-save-replay", blocked, "この対局の記録を .json ファイルで保存します");
 }
 
 function setMatchExportButton(id, blockedReason, enabledTitle) {
@@ -1960,39 +1947,6 @@ async function saveMatchReplay() {
   }
 }
 
-async function saveMatchTtrm() {
-  if (matchSaveInFlight || matchSeries === null || !matchSeries.config.ttrmCompatible) return;
-  matchSaveInFlight = true;
-  setMatchExportMessage(null, "EXPORTING .ttrm …");
-  renderMatchSaveButton();
-  try {
-    if (matchRoundFinalization !== null) await matchRoundFinalization;
-    const response = await fetch("/api/match/ttrm");
-    if (!response.ok) {
-      let body = null;
-      try { body = await response.json(); } catch { /* the server may have closed without JSON */ }
-      throw new Error(body?.message ?? body?.error ?? "TTRM export failed");
-    }
-    const text = await response.text();
-    const seed = matchSeries.replayMeta?.match?.seed ?? matchSeries.config.seed;
-    const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-    const name = `s2-match-${seed}-${stamp}.ttrm`;
-    const blob = new Blob([text], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = name;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 0);
-    setMatchExportMessage("saved", `SAVED ${name} · SERVER VERIFIED`);
-  } catch (error) {
-    setMatchExportMessage("failed", `TTRM EXPORT FAILED · ${error instanceof Error ? error.message : String(error)}`);
-  } finally {
-    matchSaveInFlight = false;
-    renderMatchSaveButton();
-  }
-}
-
 function matchSeriesWinner() {
   if (matchSeries === null) return null;
   const { firstTo } = matchSeries.config;
@@ -2005,7 +1959,6 @@ function setMatchSettingsDisabled(disabled) {
   for (const id of [
     "left-bot", "right-bot", "left-bot-settings", "right-bot-settings",
     "match-fair-comparison", "match-pre-lock-preview", "match-seed", "match-max-turns", "match-unlimited-turns", "match-count",
-    "match-ttrm-compatible",
   ]) elements[id].disabled = disabled;
   elements["match-max-turns"].disabled = disabled || elements["match-unlimited-turns"].checked;
   syncRandomSeedControl(disabled);
@@ -2056,65 +2009,6 @@ function syncFairComparisonControls() {
     if (fairComparisonEnabled()) ppsInput.value = 1;
   }
   for (const side of BOT_SIDES) renderBotSettingsSummary(side);
-}
-
-/* TTRM QUEUE reads like an export format switch, but it also replaces the
-   placement of every engine that is not the S2 placement bot with the
-   deterministic no-HOLD controller the server needs to emit a real input log.
-   Two CC2 engines under that controller play the same game from the same seed,
-   which looks like the wrong bot was selected. The confirmation spells out what
-   the current selection turns into before the box stays ticked. */
-function confirmTtrmQueue(event) {
-  // Turning the mode off needs no warning, and neither does the confirmation
-  // ticking the box itself.
-  if (!elements["match-ttrm-compatible"].checked) return;
-  /* The box stays off while the warning is open rather than being reverted
-     afterwards: dismissing the dialog by Escape or by the close button then
-     needs no undo path of its own. */
-  event.preventDefault();
-  elements["ttrm-queue-effects"].replaceChildren(...ttrmQueueEffects().map((effect) => {
-    const item = document.createElement("li");
-    if (effect.warning) item.className = "warning";
-    item.textContent = effect.text;
-    return item;
-  }));
-  elements["ttrm-queue-dialog"].showModal();
-}
-
-function enableTtrmQueue() {
-  elements["match-ttrm-compatible"].checked = true;
-  elements["match-ttrm-compatible"].dispatchEvent(new Event("change"));
-}
-
-function ttrmQueueEffects() {
-  const overridden = BOT_SIDES.filter((side) => ttrmQueueOverridesPlacement(elements[`${side}-bot`].value));
-  const effects = [
-    { text: "ピース生成が legacy LCG から 7-bag (triangle-7-bag) に変わります。" },
-    { text: "対局終了後に SAVE .ttrm が使えるようになり、サーバ検証済みの TETR.IO リプレイを出力できます。" },
-  ];
-  if (overridden.length === 0) {
-    effects.push({ text: "選択中のプレイヤーはどちらも着手を置き換えられません。S2 placement bot と 1P は自分の着手のまま打ちます。" });
-    return effects;
-  }
-  const names = overridden
-    .map((side) => `${side.toUpperCase()} (${botLabelFor(elements[`${side}-bot`].value)})`)
-    .join(" と ");
-  effects.push({
-    warning: true,
-    text: `${names} は、エンジンが返した着手を破棄し、決定論的な no-HOLD コントローラ (s2-simple-no-hold/1) の着手に置き換えられます。HOLD を使う最終配置は入力列に復元できないためです。`,
-  });
-  if (overridden.length === 2) {
-    effects.push({
-      warning: true,
-      text: "その結果、左右は同じ着手選択器と同じキューで打つことになり、盤面も指標も完全に一致します。Bot同士の強さ比較には使えません。比較したい場合はこの設定を OFF のままにしてください。",
-    });
-  }
-  return effects;
-}
-
-/** Mirrors the server's TTRM placement override (`scripts/cc2-gui-server.mjs`). */
-function ttrmQueueOverridesPlacement(botType) {
-  return botType !== "s2-simple" && botType !== "human";
 }
 
 function botLabelFor(botType) {
@@ -2330,9 +2224,9 @@ function renderComparison(raw, comparison) {
 function renderUnavailableComparison(raw, s2) {
   elements["raw-score"].textContent = raw.comparison.score.toFixed(2);
   elements["raw-comparison-status"].textContent = raw.status;
-  elements["s2-best-move"].textContent = "未対応: engine-frame到達性";
+  elements["s2-best-move"].textContent = "この局面では比較できません";
   elements["s2-score"].textContent = s2.degraded?.join(", ") ?? s2.status;
-  elements["score-gap"].textContent = "比較保留";
+  elements["score-gap"].textContent = "—";
 }
 
 function resetComparison() {

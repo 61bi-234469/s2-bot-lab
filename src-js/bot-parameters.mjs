@@ -15,7 +15,7 @@ const CC2_PPS_ENABLED_PARAMETER = Object.freeze({
   group: "pace",
   type: "boolean",
   defaultValue: true,
-  description: "有効にすると指定PPSで配置間隔を制限します。無効時は探索が終了した時点で配置します。",
+  description: "ONにすると指定したPPSの間隔で置きます。OFFのときは探索が終わり次第すぐ置きます。",
 });
 
 /* `group` and `shortLabel` carry no validation meaning: they only tell the GUI
@@ -25,52 +25,52 @@ const CC2_PPS_ENABLED_PARAMETER = Object.freeze({
 const CC2_PARAMETERS = Object.freeze([
   CC2_PPS_ENABLED_PARAMETER,
   Object.freeze({ ...PPS_PARAMETER, label: "PPS LIMIT", shortLabel: "LIMIT", group: "pace", controlledBy: "ppsEnabled" }),
-  Object.freeze({ key: "selectionEnabled", label: "SELECTION", group: "budget", type: "boolean", defaultValue: true, description: "指定した探索選択数で打ち切ります。固定値では同じ局面の探索量を揃えられます。" }),
+  Object.freeze({ key: "selectionEnabled", label: "SELECTION", group: "budget", type: "boolean", defaultValue: true, description: "指定した探索数で打ち切ります。固定しておくと、同じ局面での探索量を揃えられます。" }),
   Object.freeze({ key: "selectionLimit", label: "SELECTION LIMIT", shortLabel: "LIMIT", group: "budget", type: "integer", minimum: 1, maximum: 10_000_000, step: 1, defaultValue: 512, suffix: "selections", controlledBy: "selectionEnabled" }),
-  Object.freeze({ key: "thinkTimeEnabled", label: "THINK TIME", group: "budget", type: "boolean", defaultValue: false, description: "有効にすると実時間で探索を打ち切るため、端末性能・ブラウザ・実行時負荷により探索量と選択手が変わります。" }),
+  Object.freeze({ key: "thinkTimeEnabled", label: "THINK TIME", group: "budget", type: "boolean", defaultValue: false, description: "指定した時間で探索を打ち切ります。端末やブラウザの状態によって、探索量と選ぶ手が変わります。" }),
   Object.freeze({ key: "thinkMs", label: "THINK TIME LIMIT", shortLabel: "LIMIT", group: "budget", type: "integer", minimum: 10, maximum: 10_000, step: 10, defaultValue: 250, suffix: "ms", controlledBy: "thinkTimeEnabled" }),
   Object.freeze({ key: "queueDepth", label: "QUEUE DEPTH", group: "input", type: "integer", minimum: 1, maximum: 28, step: 1, defaultValue: 14, suffix: "pieces" }),
 ]);
 
 export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
   "cc2-raw": Object.freeze({
-    description: "MinusKelvin/cold-clear-2（raw upstream）の探索条件と参照する NEXT queue を設定します。",
+    description: "MinusKelvin版 Cold Clear 2 です。探索の打ち切り条件と、参照するNEXTの数を設定します。",
     parameters: CC2_PARAMETERS,
   }),
   "cc2-chouhy": Object.freeze({
-    description: "chouhy/cold-clear-2 fork の探索条件と参照する NEXT queue を設定します。raw upstream とは別のBotとして実行します。",
+    description: "chouhy版 Cold Clear 2 です。MinusKelvin版とは別のBotとして動きます。探索の打ち切り条件と、参照するNEXTの数を設定します。",
     parameters: CC2_PARAMETERS,
   }),
   "cc2-s2": Object.freeze({
-    description: "CC2の深い探索候補をcanonical S2 Simulatorで再採点するS2特化ハイブリッドです。",
+    description: "Cold Clear 2 が挙げた候補を、S2のルールで評価し直して選ぶS2向けのBotです。",
     parameters: CC2_PARAMETERS,
   }),
   "cc2-s2-gen017": Object.freeze({
-    description: "Gen 017のmini-spin価値整合configを使うS2特化ハイブリッドです（開発用）。",
+    description: "Gen 017：ミニスピンの価値をS2に合わせた調整版です（開発中）。",
     parameters: CC2_PARAMETERS,
   }),
   "cc2-s2-f11": Object.freeze({
-    description: "Gen 017 alignedを土台に、相互排他的なREN品質評価器を加えたF11開発botです。release候補ではありません。",
+    description: "F11：Gen 017 をもとに、RENの質を評価する仕組みを加えた開発中のBotです。",
     parameters: CC2_PARAMETERS,
   }),
   "cc2-s2-f12": Object.freeze({
-    description: "Gen 017 alignedを土台に、B2B継続RENと高Surge放出だけを優先するF12開発botです。release候補ではありません。",
+    description: "F12：B2Bを保ったままのRENと、大きな攻撃の放出を優先する開発中のBotです。",
     parameters: CC2_PARAMETERS,
   }),
   "cc2-s2-f14": Object.freeze({
-    description: "F12を土台に、post-tank後の盤面余力から残留garbage debtを差し引くF14開発botです。release候補ではありません。",
+    description: "F14：せり上がりを受けたあとの盤面の余力を見て、立て直しを優先する開発中のBotです。",
     parameters: CC2_PARAMETERS,
   }),
   "cc2-s2-f25": Object.freeze({
-    description: "F14を土台に、B2B閾値直前で継続を守るF25開発botです。release候補ではありません。",
+    description: "F25：B2Bのボーナスが上がる直前で、B2Bの継続を優先する開発中のBotです。",
     parameters: CC2_PARAMETERS,
   }),
   "cc2-s2-champion": Object.freeze({
-    description: "現在の開発champion（F14 selector + substrate v2 + search-state）です。release-qualifiedではありません。",
+    description: "いま開発中でいちばん強いBot（champion）です。調整途中の版で、公式に検証済み（release-qualified）ではありません。",
     parameters: CC2_PARAMETERS,
   }),
   "s2-simple": Object.freeze({
-    description: "S2最終配置botがHOLD候補を探索するかを設定します。",
+    description: "S2のルールだけで置き場所を決める、比較の基準になるBotです。HOLDを候補に入れるかを設定します。",
     parameters: Object.freeze([
       PPS_PARAMETER,
       Object.freeze({ key: "allowHold", label: "ALLOW HOLD", type: "boolean", defaultValue: true }),
@@ -82,7 +82,7 @@ export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
   // handling, so they stay entirely on the front end instead of being validated
   // here as if the match depended on them.
   human: Object.freeze({
-    description: "自分でプレイします。操作設定（DAS/ARR/DCD/SDF・キー割り当て）はこのブラウザだけで完結し、対戦の進行はハードドロップした実時間で決まります。",
+    description: "自分でプレイします。操作設定（DAS・ARR・DCD・SDF とキー割り当て）はこのブラウザにだけ保存され、手番はハードドロップした時点で進みます。",
     parameters: Object.freeze([]),
   }),
 });

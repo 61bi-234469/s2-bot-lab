@@ -23,8 +23,8 @@
     </header>
 
      <section class="rule-boundary" aria-label="Static mode notice">
-      <strong>CC2 PROPOSERS</strong>
-      <span>MinusKelvinのraw upstreamとchouhy forkは、探索順とseedを固定した決定性移植版です。別Botとして扱い、最終配置をS2 Simulatorで再検証します。公開WASM版は時間ではなく512 selection固定で動作します。</span>
+      <strong>ABOUT</strong>
+      <span>Botが選ぶのは「どこに置くか」だけです。ライン消去・攻撃・B2B・REN・相殺・せり上がりは、すべてS2 Simulator（TETR.IO Season 2 のルール再現）が判定します。Raw CC2とchouhy forkは、探索を固定して結果が毎回同じになるようにした別々のBotです。</span>
        <em>STATIC MODE · BROWSER LOCAL</em>
     </section>
 
@@ -39,7 +39,7 @@
           <small>2体を対戦させて比較・自分でも戦える</small>
         </button>
         <button class="mode-tab" id="mode-tab-replay" type="button" role="tab" aria-selected="false" aria-controls="mode-panel-replay" tabindex="-1">
-          <span class="mode-tab-label">REPLAY (.ttrm)</span>
+          <span class="mode-tab-label">REPLAY</span>
           <small>実戦リプレイを同じ盤面で再生</small>
         </button>
       </div>
@@ -118,7 +118,7 @@
             <div>
               <span>SCORE GAP</span>
               <strong id="score-gap">—</strong>
-              <small>同一局面内のみ比較可</small>
+              <small>同じ局面どうしでのみ比較できます</small>
             </div>
           </div>
         </div>
@@ -166,7 +166,7 @@
           <span id="candidate-status">READY</span>
         </div>
         <div class="candidate-list" id="candidate-list"></div>
-        <p class="candidate-note">選択中のANALYSIS BOTが返した上位候補です。順位はそのbotが返した順で、サムネは現在のフィールドに候補の配置を重ねたものです。クリックするとその候補がフィールドのカレント提案になり、「提案を適用」で確定します。数値はいずれもS2 Simulatorが検証した結果で、検証できなかった候補は理由を添えて選択不可のまま残ります。何手返すかはbot側の仕様で、Raw CC2とchouhy forkの決定性移植版は実際に指す1手しか返さないため一覧も1行になります。</p>
+        <p class="candidate-note">選択中のANALYSIS BOTが返した候補です。並びはBotが返した順で、クリックすると盤面のプレビューが切り替わり、「提案を適用」で確定します。数値はS2 Simulatorで検証した結果で、検証できなかった候補は理由を表示したまま選べません。Raw CC2とchouhy forkは実際に指す1手しか返さないため、候補は1行だけになります。</p>
       </section>
     </div>
 
@@ -230,10 +230,6 @@
           <label class="pre-lock-preview-setting">PRE-LOCK PREVIEW
             <span><input id="match-pre-lock-preview" type="checkbox"> GHOST</span>
           </label>
-          <label class="ttrm-compatible-setting" title="外すとlegacy LCGキューになります。TTRM QUEUEでは実入力に復元できるno-HOLDコントローラを使い、.ttrm を検証して出力できます。">
-            <span>QUEUE MODEL</span>
-            <span><input id="match-ttrm-compatible" type="checkbox"> TTRM QUEUE</span>
-          </label>
           <div class="match-setting">
             <label for="match-seed">SEED</label>
             <div class="match-limit-control">
@@ -257,7 +253,6 @@
           <div class="match-exports" role="group" aria-label="対局の保存">
             <span class="export-label">EXPORT</span>
             <button id="match-save-replay" class="quiet" type="button" disabled>SAVE .json</button>
-            <button id="match-save-ttrm" class="quiet" type="button" disabled>SAVE .ttrm</button>
           </div>
         </div>
         <output id="match-export-message" class="match-export-message" hidden></output>
@@ -316,8 +311,8 @@
             <dl class="match-metrics" id="match-right-metrics" aria-label="Right bot detailed metrics"></dl>
           </article>
         </div>
-        <p class="match-note" id="match-human-note">LEFT BOTで <strong>You (1P)</strong> を選ぶと自分で対戦できます。既定の操作は ← → 移動、↓ ソフトドロップ、Space ハードドロップ、Z/X 回転、A 180度回転、C HOLD、Esc リセット。DAS・ARR・DCD・SDF とキー割り当ては SETTINGS で変更できます。自然落下はありません。ハードドロップした瞬間の共有クロックがそのミノのロック時刻になるので、置くのが遅いほど自分のPPSが下がります。</p>
-        <p class="match-note" id="match-bot-note">START MATCH begins the series; pressing the same button again pauses it, and once more resumes. Both bots share one game clock. CC2 SETTINGS independently enable PPS pacing, SELECTION, and THINK TIME. Search stops at the first enabled search limit; PPS OFF places as soon as that search finishes. At least one of SELECTION and THINK TIME must remain enabled. THINK TIME is off by default because real-time search can vary with device, browser, and runtime load. FAIR COMPARISON temporarily standardizes every CC2 bot to SELECTION 512 ON, PPS OFF, THINK TIME OFF, then places both sides at 1 PPS and runs simultaneous searches serially. Saved per-bot settings return when FAIR is disabled. Bot-specific parameters are configured independently from each SETTINGS button. QUEUE MODEL is a match setting, not an output one: TTRM QUEUE generates pieces with the 7-bag randomiser and, for non-simple bots, uses the deterministic no-HOLD input controller so each lock can be emitted as a verified TETR.IO input log. Therefore a TTRM QUEUE match is replay-compatible rather than a byte-for-byte CC2 final-placement match. EXPORT becomes available once a round has advanced — SAVE .json writes this engine's own match record, and SAVE .ttrm writes a server-verified TETR.IO replay.</p>
+        <p class="match-note" id="match-human-note">LEFT BOTで <strong>You (1P)</strong> を選ぶと自分で対戦できます。操作は ← → 移動、↓ ソフトドロップ、Space ハードドロップ、Z/X 回転、A 180度回転、C ホールド、Esc リセット。キー割り当てと操作感（DAS・ARR・DCD・SDF）は SETTINGS で変更できます。自然落下はなく、ハードドロップした時点がそのミノの着地時刻になるので、置くのが遅いほど自分のPPSが下がります。</p>
+        <p class="match-note" id="match-bot-note">START MATCH で対局が始まります。もう一度押すと一時停止、さらに押すと再開します。左右のBotは1つの共通クロックで進み、SEED が同じなら同じ対局を何度でも再現できます。Botごとの探索条件は各 SETTINGS で設定します。SELECTION（探索数）と THINK TIME（探索時間）は少なくとも一方をONにする必要があり、先に達した方で探索を打ち切ります。THINK TIME は端末やブラウザの状態で結果が変わるため、既定はOFFです。PPS をOFFにすると、探索が終わり次第すぐ置きます。FAIR COMPARISON をONにすると、CC2系のBotを SELECTION 512・1 PPS に揃え、同じタイミングの探索を順番に実行して条件差をなくします。保存した個別設定は上書きされず、OFFに戻すと元に戻ります。対局が1手でも進むと EXPORT の SAVE .json でこの対局の記録を保存できます。</p>
       </section>
     </div>
 
@@ -325,14 +320,14 @@
       <section class="match-deck replay-deck" aria-label="TETR.IO replay playback">
         <div class="match-heading">
           <div>
-            <p class="deck-label">TETR.IO .ttrm REPLAY</p>
+            <p class="deck-label">TETR.IO REPLAY</p>
             <h2>REPLAY</h2>
           </div>
           <span id="replay-status">NO FILE</span>
         </div>
         <div class="match-controls replay-source">
           <label class="replay-file-control">
-            <span>.ttrm ファイル</span>
+            <span>リプレイファイル</span>
             <input id="replay-file" type="file" accept=".ttrm,.json,application/json">
           </label>
           <div class="bot-picker">
@@ -427,7 +422,7 @@
             <dl class="match-metrics" id="replay-right-metrics" aria-label="Right player detailed metrics"></dl>
           </article>
         </div>
-        <p class="match-note" id="replay-note">.ttrm を読み込むと、記録された入力を固定版Triangle Engineで再生してReplayIRを作り、その盤面をここに描画します。タイムラインは共通フレーム軸で、赤＝被弾・緑＝相殺のマーカーは左プレイヤーのものです。◀◀ / ▶▶ は左プレイヤーの手番送りで、接地直前の姿勢で止まります。Space で再生/一時停止、←→ で手番送り。ガベージ量とゲージはEngine基準の値で、TETR.IO集計の received は復元できないため表示しません。</p>
+        <p class="match-note" id="replay-note">TETR.IOのリプレイファイルを読み込むと、記録された操作をそのまま再生し、対戦画面と同じ2面で表示します。タイムラインは左右共通の時間軸で、下のマーカーは左プレイヤー基準（赤＝せり上がったガベージ、緑＝相殺したガベージ）です。◀◀ / ▶▶ は左プレイヤーの手番送りで、接地直前の姿勢で止まります。Space で再生・一時停止、← → で手番送り。ガベージの数値とゲージは再生から求めた値で、TETR.IO の集計値そのものではありません。</p>
       </section>
     </div>
 
@@ -450,27 +445,9 @@
       </form>
     </dialog>
 
-    <dialog id="ttrm-queue-dialog" class="bot-settings-dialog" aria-labelledby="ttrm-queue-title">
-      <form id="ttrm-queue-form" method="dialog">
-        <header>
-          <div>
-            <p class="deck-label">QUEUE MODEL</p>
-            <h2 id="ttrm-queue-title">TTRM QUEUE を有効にします</h2>
-          </div>
-          <button class="dialog-close" value="cancel" formmethod="dialog" aria-label="閉じる">×</button>
-        </header>
-        <p class="bot-settings-description">TTRM QUEUE は出力形式の設定ではなく、対局そのものを変える設定です。有効にすると次が起こります。</p>
-        <ul class="dialog-effects" id="ttrm-queue-effects"></ul>
-        <div class="dialog-actions">
-          <button value="cancel" formmethod="dialog">CANCEL</button>
-          <button class="primary" id="ttrm-queue-confirm" value="confirm">TTRM QUEUE を有効にする</button>
-        </div>
-      </form>
-    </dialog>
-
     <footer>
-      <span id="engine-version">Cold Clear 2 · waiting for handshake</span>
-      <span>↑ 20 visible rows / 40-row state</span>
+      <span id="engine-version">Cold Clear 2 · 接続待ち</span>
+      <span>表示は上から20行（内部の盤面は40行）</span>
     </footer>
   </main>
   <script type="module" src="app.bundle.js"></script>
