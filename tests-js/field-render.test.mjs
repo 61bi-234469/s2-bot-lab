@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
+import { createInputExecutionRound } from "../src-js/input-execution-round.mjs";
 
 import {
   DETAIL_METRICS,
+  addOverlayPiece,
+  inputPieceOverlay,
   matchFieldCellSpec,
   renderDetailMetrics,
   renderFieldRateStats,
@@ -12,6 +15,48 @@ import {
 } from "../cc2-gui/field-render.mjs";
 
 const originalDocument = globalThis.document;
+
+test("input ghost matches actual hard-drop cells after HOLD and on a stack, respects visibility and active precedence", () => {
+  const round = createInputExecutionRound({ seed: 42 });
+  const tap = key => round.tick({ left: ["keydown", "keyup"].map(type => ({
+    frame: round.frame, type, data: { key, subframe: 0 },
+  })) });
+  for (const hold of [false, true, false]) {
+    if (hold) tap("hold");
+    const player = round.refereeView().players[0];
+    const before = JSON.stringify(player);
+    const overlay = inputPieceOverlay(player.board, player.activeCells, player.current);
+    const ghost = [...overlay].filter(([, cell]) => cell.ghost).map(([key]) => key).sort();
+    assert.equal(ghost.length, 4);
+    assert.equal([...inputPieceOverlay(player.board, player.activeCells, player.current, false).values()].filter(cell => cell.ghost).length, 0);
+    assert.equal(JSON.stringify(player), before);
+    tap("hardDrop");
+    const cells = round.refereeLastLock("left").cells;
+    assert.deepEqual(ghost, cells.map(([x, y]) => `${x}:${y}`).sort());
+    const resting = inputPieceOverlay(player.board, cells, player.current);
+    assert.equal([...resting.values()].filter(cell => cell.ghost).length, 0);
+    assert.equal(resting.size, 4);
+  }
+});
+
+test("input spawn stays visible immediately after HOLD and lock; legacy field size restores", () => {
+  const round = createInputExecutionRound({ seed: 42 });
+  const container = new FakeElement("section");
+  for (const key of [null, "hold", "hardDrop"]) {
+    if (key) round.tick({ left: ["keydown", "keyup"].map(type => ({
+      frame: round.frame, type, data: { key, subframe: 0 },
+    })) });
+    const player = round.refereeView().players[0];
+    const overlay = new Map();
+    addOverlayPiece(overlay, player.activeCells, player.current, false);
+    assert.equal(matchFieldCellSpec(player.board, [], overlay).filter(cell => cell.className.includes(" active")).length, 0);
+    renderMatchField(container, player.board, [], overlay, { rows: 23 });
+    assert.equal(container.children.length, 230);
+    assert.equal(container.children.filter(cell => cell.className.includes(" active")).length, 4);
+    renderMatchField(container, player.board, [], overlay);
+    assert.equal(container.children.length, 200);
+  }
+});
 
 before(() => {
   globalThis.document = { createElement: (name) => new FakeElement(name) };
