@@ -79,8 +79,11 @@ for (const packageName of nodeModulePackages) {
   if (!licenses.includes(packageName)) throw new Error(`missing third-party notice for bundled package ${packageName}`);
 }
 const index = await readFile(resolve(repo, "cc2-gui/index.html"), "utf8");
-await writeFile(resolve(site, "index.html"), preparePagesIndex(index, appVersion));
-await cp(resolve(repo, "cc2-gui/styles.css"), resolve(site, "styles.css"));
+const stylesPath = resolve(repo, "cc2-gui/styles.css");
+const styles = await readFile(stylesPath);
+const stylesVersion = createHash("sha256").update(styles).digest("hex").slice(0, 12);
+await writeFile(resolve(site, "index.html"), preparePagesIndex(index, appVersion, stylesVersion));
+await cp(stylesPath, resolve(site, "styles.css"));
 await cp(resolve(repo, "fixtures/tuning/cc2-s2-spin-value-aligned.json"), resolve(site, "cc2-s2-spin-value-aligned.json"));
 await cp(resolve(repo, "fixtures/tuning/cc2-s2-spawn-integrity-substrate-v2.json"), resolve(site, "cc2-s2-spawn-integrity-substrate-v2.json"));
 const wasmArtifacts = ["cold_clear_2_s2", "cold_clear_2_upstream", "cold_clear_2_chouhy"];
