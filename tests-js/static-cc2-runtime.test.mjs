@@ -119,6 +119,27 @@ test("static CC2 runtime sends suggest and resolve through one retained worker",
   assert.equal(messages.at(-1).type, "close");
 });
 
+test("static runtime forwards native-order Raw/chouhy requests to the worker", async () => {
+  const messages = [];
+  class FakeWorker {
+    postMessage(message) {
+      messages.push(message);
+      queueMicrotask(() => this.onmessage({ data: { id: message.id, ok: true, value: {} } }));
+    }
+    terminate() {}
+  }
+  const runtime = createStaticCc2Runtime({ WorkerType: FakeWorker });
+  try {
+    for (const type of ["cc2-raw", "cc2-chouhy"]) {
+      await runtime.propose({ sessionKey: type, engine: type, state: {}, selectionLimit: 512 });
+      const request = { ...qualifiedResolution(type), id: "cc2-input-decision-request/1",
+        type, engine: { botType: type, engineId: type } };
+      await runtime.resolve(request);
+      assert.deepEqual(messages.at(-1).payload, request);
+    }
+  } finally { await runtime.closeSessions(); }
+});
+
 test("static CC2 runtime replaces a worker when its engine configuration changes", async () => {
   const workers = [];
   class FakeWorker {

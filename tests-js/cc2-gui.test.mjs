@@ -46,6 +46,15 @@ test("CC2 coordinates map to the same cells as its upstream data model", () => {
   assert.deepEqual(placementCells(move("T", "east", 4, 2)), [[4, 3], [4, 2], [4, 1], [5, 2]]);
 });
 
+test("analysis TBP state preserves numeric B2B without exposing internal garbage", () => {
+  const game = createGame(42);
+  game.s2 = { ...game.s2, b2b: 7 };
+  const state = toCc2State(game);
+  assert.equal(state.b2b, 7);
+  assert.equal(Object.hasOwn(state, "s2"), false);
+  assert.equal(Object.hasOwn(state, "garbage"), false);
+});
+
 test("an empty HOLD suggestion consumes current and next exactly once", () => {
   const game = createGame();
   game.queue = ["T", "I", "O", ...game.queue.slice(3)];

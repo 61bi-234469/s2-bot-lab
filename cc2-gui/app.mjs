@@ -871,7 +871,7 @@ async function think() {
       const info = body.suggestion.move_info;
       elements["engine-version"].textContent = `${body.engine.label} · ${body.info.version} · ${body.engine.commit.slice(0, 7)}`;
       elements["nodes-value"].textContent = compact(info.nodes);
-      elements["nps-value"].textContent = compact(Math.round(info.nps));
+      elements["nps-value"].textContent = Number.isFinite(info.nps) ? compact(Math.round(info.nps)) : "—";
     }
     elements["suggestion-move"].textContent = formatMove(pendingMove);
     elements["suggestion-detail"].textContent = `S2: ${clear} · ${attack} attack${cc2Diagnostic}`;
@@ -2331,10 +2331,7 @@ async function saveMatchReplay() {
     }
     if (rounds.length === 0) { setMatchExportMessage(null, ""); return; }
     const meta = {
-      origin: "s2-bot-match/1",
       gamemode: "s2-bot-match",
-      version: 1,
-      parseMs: 0,
       ...(structuredClone(matchSeries.replayMeta ?? {})),
       origin: "s2-bot-match/1",
       version: 1,

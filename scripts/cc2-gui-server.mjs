@@ -1074,7 +1074,8 @@ function parseArguments(args) {
   const chouhyBinaryArgument = args.find((arg) => arg.startsWith("--cc2-chouhy="));
   const s2BinaryArgument = args.find((arg) => arg.startsWith("--cc2-s2="));
   const portArgument = args.find((arg) => arg.startsWith("--port="));
-  const s2Fallback = fileURLToPath(new URL("../bot/cold-clear-2-s2/target/release/cold-clear-2-s2.exe", import.meta.url));
+  const executableSuffix = process.platform === "win32" ? ".exe" : "";
+  const s2Fallback = fileURLToPath(new URL(`../bot/cold-clear-2-s2/target/release/cold-clear-2-s2${executableSuffix}`, import.meta.url));
   const resolveOptionalPath = (value) => value === undefined ? null : resolve(value);
   const rawBinary = resolveOptionalPath(
     rawBinaryArgument?.slice("--cc2-raw=".length)

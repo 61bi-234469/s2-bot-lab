@@ -1,5 +1,5 @@
 import { createCc2WasmSession } from "../src-js/cc2-wasm-engine.mjs";
-import { resolveQualifiedStaticCc2Submission } from "../src-js/s2-amount-only-public-resolver.mjs";
+import { resolveGuiStaticSubmission as resolveQualifiedStaticCc2Submission } from "../src-js/gui-static-public-resolver.mjs";
 import { resolveInputJob } from '../src-js/input-public-job.mjs';
 
 let session = null;

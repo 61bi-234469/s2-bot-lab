@@ -1,5 +1,5 @@
 import { createGuiRequestHandlers } from "../src-js/gui-request-handlers.mjs";
-import { amountOnlyDecisionFingerprint } from "../src-js/s2-amount-only-decision-request.mjs";
+import { inputDecisionFingerprint as amountOnlyDecisionFingerprint } from "../src-js/input-decision-request.mjs";
 
 let installed = false;
 

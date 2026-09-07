@@ -4,7 +4,15 @@ import test from "node:test";
 import { convertEngineBoard } from "../src-js/replay/board-converter.mjs";
 import { buildEngineConfig } from "../src-js/replay/engine-config.mjs";
 import { FIELD_CELLS, PIECE, minoToPiece, pieceName } from "../src-js/replay/pieces.mjs";
-import { MAX_TTRM_TEXT_LENGTH, TtrmError, parseTtrm } from "../src-js/replay/ttrm-parser.mjs";
+import {
+  MAX_TTRM_EVENTS_PER_PLAYER,
+  MAX_TTRM_FRAMES_PER_PLAYER,
+  MAX_TTRM_TEXT_LENGTH,
+  MAX_TTRM_TOTAL_EVENTS,
+  MAX_TTRM_TOTAL_FRAMES,
+  TtrmError,
+  parseTtrm,
+} from "../src-js/replay/ttrm-parser.mjs";
 import { DEFAULT_TTRM_OPTIONS, resolveTtrmOptions } from "../src-js/replay/ttrm-options.mjs";
 import { buildReplayIR, simulatePlayerRound } from "../src-js/replay/ttrm-simulator.mjs";
 
@@ -44,7 +52,7 @@ test("a wrapped export is unwrapped to the level that owns the rounds", () => {
   assert.equal(file.replay.rounds[0][0].id, "alpha");
 });
 
-test("only the verified multiplayer format is accepted", () => {
+test("only the supported multiplayer format is accepted", () => {
   const cases = [
     [JSON.stringify({ version: 2, replay: { rounds: [[playerRound("alpha")]] } }), "version"],
     [JSON.stringify({ version: 1, replay: { rounds: [] } }), "structure"],
@@ -68,6 +76,82 @@ test("a replay whose events or frame counts are unusable is refused before any e
       (error) => error instanceof TtrmError && error.stage === "structure",
     );
   }
+});
+
+test("frame values must be safe, bounded, and within the declared replay", () => {
+  const unsafeFrames = playerRound("alpha", { frames: Number.MAX_SAFE_INTEGER + 1 });
+  const unsafeEvent = playerRound("alpha", { events: [{ frame: Number.MAX_SAFE_INTEGER + 1, type: "start" }] });
+  const giantFrames = playerRound("alpha", { frames: MAX_TTRM_FRAMES_PER_PLAYER + 1 });
+  const giantEvent = playerRound("alpha", { events: [{ frame: MAX_TTRM_FRAMES_PER_PLAYER + 1, type: "start" }] });
+  const eventAfterReplay = playerRound("alpha", { events: [{ frame: 91, type: "start" }] });
+
+  for (const player of [unsafeFrames, unsafeEvent]) {
+    assert.throws(
+      () => parseTtrm(ttrmText([[player]])),
+      (error) => error instanceof TtrmError && error.stage === "structure",
+    );
+  }
+  for (const player of [giantFrames, giantEvent]) {
+    assert.throws(
+      () => parseTtrm(ttrmText([[player]])),
+      (error) => error instanceof TtrmError && error.stage === "size",
+    );
+  }
+  assert.throws(
+    () => parseTtrm(ttrmText([[eventAfterReplay]])),
+    (error) => error instanceof TtrmError && error.stage === "structure",
+  );
+});
+
+test("same-frame event order is preserved while descending frames are refused", () => {
+  const events = [
+    { frame: 0, type: "first" },
+    { frame: 0, type: "second" },
+    { frame: 2, type: "third" },
+  ];
+  const parsed = parseTtrm(ttrmText([[playerRound("alpha", { events })]]));
+  assert.deepEqual(parsed.replay.rounds[0][0].replay.events, events);
+
+  const descending = playerRound("alpha", {
+    events: [{ frame: 2, type: "first" }, { frame: 1, type: "second" }],
+  });
+  assert.throws(
+    () => parseTtrm(ttrmText([[descending]])),
+    (error) => error instanceof TtrmError && error.stage === "structure",
+  );
+});
+
+test("per-player and cumulative frame/event budgets refuse oversized imports", () => {
+  const tooManyEvents = playerRound("alpha", {
+    events: Array.from({ length: MAX_TTRM_EVENTS_PER_PLAYER + 1 }, () => ({ frame: 0, type: "noop" })),
+  });
+  assert.throws(
+    () => parseTtrm(ttrmText([[tooManyEvents]])),
+    (error) => error instanceof TtrmError && error.stage === "size",
+  );
+
+  const tooManyFrames = [[
+    playerRound("alpha", { frames: MAX_TTRM_FRAMES_PER_PLAYER }),
+    playerRound("bravo", { frames: MAX_TTRM_FRAMES_PER_PLAYER }),
+    playerRound("charlie", { frames: 1 }),
+  ]];
+  assert.ok(MAX_TTRM_TOTAL_FRAMES < MAX_TTRM_FRAMES_PER_PLAYER * 3);
+  assert.throws(
+    () => parseTtrm(ttrmText(tooManyFrames)),
+    (error) => error instanceof TtrmError && error.stage === "size",
+  );
+
+  const eventsAtPlayerLimit = Array.from({ length: MAX_TTRM_EVENTS_PER_PLAYER }, () => ({ frame: 0, type: "noop" }));
+  const tooManyTotalEvents = [[
+    playerRound("alpha", { events: eventsAtPlayerLimit }),
+    playerRound("bravo", { events: eventsAtPlayerLimit }),
+    playerRound("charlie", { events: [{ frame: 0, type: "noop" }] }),
+  ]];
+  assert.equal(MAX_TTRM_TOTAL_EVENTS, MAX_TTRM_EVENTS_PER_PLAYER * 2);
+  assert.throws(
+    () => parseTtrm(ttrmText(tooManyTotalEvents)),
+    (error) => error instanceof TtrmError && error.stage === "size",
+  );
 });
 
 test("a file past the accepted size is refused without being parsed", () => {
@@ -120,9 +204,10 @@ test("mino symbols and cell codes round-trip through the shared vocabulary", () 
   assert.equal(pieceName(PIECE.EMPTY), null);
 });
 
-test("a player round replays through the pinned engine into a verified ReplayIR", () => {
+test("a player round replays through the pinned engine with three recorded aggregates matched", () => {
   const player = simulatePlayerRound(playerRound("alpha"));
   assert.equal(player.verification.matched, true);
+  assert.equal(player.verification.scope, "pieces-lines-sent");
   assert.equal(player.locks.length, 0, "this scenario records no placement");
   assert.equal(player.terminal.frame, 90, "the engine keeps ticking to replay.frames");
   assert.equal(player.initial.frame, 0);
@@ -149,10 +234,11 @@ test("the whole file becomes rounds carrying both players and the recorded resul
   assert.equal(round.result.winnerId, "alpha", "the first recorded winner is the round winner");
   assert.deepEqual(ir.meta.users.map((user) => user.id), ["alpha", "bravo"]);
   assert.equal(ir.meta.gamemode, "league");
+  assert.equal(Object.hasOwn(ir.meta, "origin"), false);
   assert.ok(Number.isInteger(ir.meta.parseMs));
 });
 
-test("a round the engine cannot reproduce is reported instead of played", () => {
+test("a round with mismatched recorded aggregates or unsupported options is reported instead of played", () => {
   const disagreeing = playerRound("alpha");
   disagreeing.replay.results.stats.piecesplaced = 3;
   const ir = buildReplayIR(parseTtrm(ttrmText([[disagreeing]])));

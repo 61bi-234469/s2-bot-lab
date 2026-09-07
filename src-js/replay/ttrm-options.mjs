@@ -1,3 +1,6 @@
+import { TtrmError } from "./ttrm-parser.mjs";
+import { validateReplayOptions } from "./engine-config.mjs";
+
 /**
  * `.ttrm` option resolution.
  *
@@ -41,9 +44,17 @@ export const DEFAULT_TTRM_OPTIONS = Object.freeze({
   gmargin: 0,
   b2bchaining: false,
   b2bcharging: false,
+  b2bcharge_at: 4,
   b2bcharge_base: 3,
+  b2bextras: false,
+  allclears: true,
   allclear_b2b: 0,
+  allclear_b2b_sends: true,
+  allclear_b2b_dupes: false,
+  allclear_charges: false,
   allclear_garbage: 0,
+  are: 0,
+  lineclear_are: 0,
   allowharddrop: true,
   allow180: true,
   display_hold: true,
@@ -75,5 +86,14 @@ export function resolveTtrmOptions(playerReplay) {
     }
   }
 
-  return { warnings, options: { ...DEFAULT_TTRM_OPTIONS, ...endOptions, ...replayOptions } };
+  const options = { ...DEFAULT_TTRM_OPTIONS, ...endOptions, ...replayOptions };
+  const unsupported = validateReplayOptions(options);
+  if (unsupported.length > 0) {
+    const details = unsupported
+      .map(({ key, expected, actual }) =>
+        `${key ?? "options"}=${JSON.stringify(actual)} (expected ${JSON.stringify(expected)})`)
+      .join(", ");
+    throw new TtrmError("validate", `unsupported replay option value: ${details}`);
+  }
+  return { warnings, options };
 }

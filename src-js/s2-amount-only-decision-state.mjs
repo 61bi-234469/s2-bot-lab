@@ -1,4 +1,5 @@
 import { projectS2AmountOnlyIncomingSnapshot } from "./s2-amount-only-incoming-snapshot.mjs";
+import { INPUT_DECISION_REQUEST_ID, assertInputDecisionRequest } from "./input-decision-request.mjs";
 import {
   S2_AMOUNT_ONLY_DECISION_REQUEST_ID,
   S2_AMOUNT_ONLY_DECISION_STATE_ID,
@@ -7,6 +8,23 @@ import {
 } from "./s2-amount-only-decision-request.mjs";
 
 export { S2_AMOUNT_ONLY_DECISION_STATE_ID, S2_AMOUNT_ONLY_DECISION_REQUEST_ID, isAdr062QualifiedStaticType };
+
+export function isGuiStaticType(type) {
+  return type === "cc2-raw" || type === "cc2-chouhy" || isAdr062QualifiedStaticType(type);
+}
+
+export function createGuiStaticDecisionRequest(options) {
+  if (options.type !== "cc2-raw" && options.type !== "cc2-chouhy") {
+    return createS2AmountOnlyDecisionRequest(options);
+  }
+  const request = {
+    id: INPUT_DECISION_REQUEST_ID, sessionKey: options.sessionKey,
+    decision: createS2AmountOnlyDecisionState(options.state), moves: structuredClone(options.moves),
+    type: options.type, engine: { botType: options.engine.botType, engineId: options.engine.engineId },
+  };
+  assertInputDecisionRequest(request);
+  return Object.freeze(request);
+}
 
 export function createS2AmountOnlyDecisionState(state) {
   const incoming = projectS2AmountOnlyIncomingSnapshot(state);

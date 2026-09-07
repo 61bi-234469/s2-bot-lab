@@ -62,7 +62,12 @@ export function evaluatePlacement(
   placement,
   rules = FOUNDATION_PLACEMENT_RULES,
   trace = null,
+  options = {},
 ) {
+  const lockSource = options.lockSource ?? "hard-drop";
+  if (lockSource !== "hard-drop" && lockSource !== "natural") {
+    throw new Error(`unsupported placement lock source ${lockSource}`);
+  }
   const invalid = validatePlacementInput(state, placement, rules);
   if (invalid) {
     record(trace, "legality", { legal: false, reason: invalid });
@@ -101,6 +106,7 @@ export function evaluatePlacement(
   const clearedRows = fullRowsAfterPlacement(board, blocks);
   board.add(...blocks.map(([x, y]) => [{ mino: piece.symbol, connections: 0 }, x, y]));
   const cleared = board.clearLines();
+  const lockBoardCells = triangleBoardToCanonicalCells(board);
   const perfectClear = board.perfectClear;
   const clear = {
     lines: cleared.lines,
@@ -148,7 +154,7 @@ export function evaluatePlacement(
       {
         frame: state.time.logicalFrame,
         cap: resolveDynamicValue(rules.garbageCap, state.time),
-        hard: true,
+        hard: lockSource === "hard-drop",
       },
       garbageOptions,
     );
@@ -193,7 +199,7 @@ export function evaluatePlacement(
     nextState.time.logicalFrame += 1;
   }
 
-  return {
+  const receipt = {
     legality: { legal: true, reason: null },
     lockResult: {
       clearedRows,
@@ -207,6 +213,14 @@ export function evaluatePlacement(
     tankResult,
     nextState,
   };
+  if (options.includeLockBoardCells === true) {
+    return { ...receipt, lockBoardCells };
+  }
+  return receipt;
+}
+
+export function evaluatePlacementWithLockBoard(state, placement, rules = FOUNDATION_PLACEMENT_RULES) {
+  return evaluatePlacement(state, placement, rules, null, { includeLockBoardCells: true });
 }
 
 function validatePlacementInput(state, placement, rules) {
