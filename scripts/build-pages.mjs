@@ -9,6 +9,7 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const site = resolve(repo, "_site");
 const forbidden = /^(?:node:|fs$|path$|crypto$|child_process$|util$|url$)/;
 const shared = new Map([
+  ["/shared/input-bot-contract.mjs", resolve(repo, "src-js/input-bot-contract.mjs")],
   ["/shared/bot-parameters.mjs", resolve(repo, "src-js/bot-parameters.mjs")],
   ["/shared/bot-match-options.mjs", resolve(repo, "src-js/bot-match-options.mjs")],
   ["/shared/pieces.mjs", resolve(repo, "src-js/replay/pieces.mjs")],

@@ -4,8 +4,8 @@
  * Ported from `fumen-mobile-fork` (`src/lib/ttrm/simulator.ts`, MIT) onto this
  * repository's own `@haelp/teto` 4.2.7 dependency.  The produced
  * `PlayerRoundIR` is the same shape `src-js/replay-lock-conformance.mjs`
- * consumes, so a replay imported by the GUI and a replay verified against the
- * canonical Simulator are the same object.
+ * consumes. GUI import checks three recorded aggregates; comparison against the
+ * canonical Simulator is a separate, stronger validation of this object.
  *
  * Raw `.ttrm` event frames are input scheduling frames: a placement's real lock
  * frame only exists once the engine has replayed the log, which is why locks
@@ -15,9 +15,13 @@
 import { Engine } from "@haelp/teto/engine";
 
 import { convertEngineBoard } from "./board-converter.mjs";
-import { buildEngineConfig } from "./engine-config.mjs";
+import { buildEngineConfig, inputExecutionOptions, INPUT_EXECUTION_PROFILE } from "./engine-config.mjs";
+import { createInputLockConformance } from "../triangle/input-lock-conformance.mjs";
+import { projectInputPublicMovement } from "../triangle/input-public-movement.mjs";
+import { triangleSnapshotToCanonical } from "../triangle/garbage-adapter.mjs";
+import { createS2AmountOnlyDecisionState } from "../s2-amount-only-decision-state.mjs";
 import { PIECE, isMinoPiece, minoToPiece } from "./pieces.mjs";
-import { TtrmError } from "./ttrm-parser.mjs";
+import { TtrmError, validateTtrmPlayerRound, MAX_TTRM_EVENTS_PER_PLAYER } from "./ttrm-parser.mjs";
 import { resolveTtrmOptions } from "./ttrm-options.mjs";
 
 export function nowMs() {
@@ -87,7 +91,7 @@ function sameActive(a, b) {
 
 function sameBoard(a, b) {
   return a.sourceHeight === b.sourceHeight && a.clippedRowCount === b.clippedRowCount &&
-    sameNumbers(a.field, b.field);
+    sameNumbers(a.field, b.field) && sameNumbers(a.fullField, b.fullField);
 }
 
 function sameQueue(a, b) {
@@ -142,7 +146,7 @@ function rawConfirmSenderFrames(playerRound) {
 function readInitialPoint(engine) {
   const read = () => ({
     frame: 0,
-    field: convertEngineBoard(engine.board.state).field,
+    ...convertEngineBoard(engine.board.state),
     hold: engine.held !== null && engine.held !== undefined ? minoToPiece(engine.held) : null,
     current: readFalling(engine),
     next: readQueue(engine),
@@ -176,22 +180,112 @@ function collectOpponents(playerRound) {
  * terminal state includes post-lock garbage.  The losing side's killing garbage
  * lands after its final lock and no lock point captures it.
  */
-export function simulatePlayerRound(playerRound) {
-  const { options, warnings } = resolveTtrmOptions(playerRound.replay);
-
-  if ((options.boardwidth ?? 10) !== 10) {
-    throw new TtrmError("validate", `unsupported board width: ${options.boardwidth}`);
+export function simulatePlayerRound(playerRound, options = {}) {
+  const runtime = createInputReplaySession(playerRound, options);
+  // `end` events are skipped and the engine keeps ticking to `replay.frames`.
+  const events = playerRound.replay.events;
+  let eventIndex = 0;
+  while (eventIndex < events.length) {
+    while (runtime.frame < events[eventIndex].frame) {
+      runtime.tick([]);
+    }
+    while (eventIndex < events.length && events[eventIndex].frame < runtime.frame) eventIndex += 1;
+    const toTick = [];
+    while (eventIndex < events.length && events[eventIndex].frame === runtime.frame) {
+      const event = events[eventIndex++];
+      if (event.type === "end") continue;
+      toTick.push(event);
+    }
+    runtime.tick(toTick);
+  }
+  while (runtime.frame < playerRound.replay.frames) {
+    runtime.tick([]);
   }
 
-  const engine = new Engine(buildEngineConfig(options, collectOpponents(playerRound)));
+  return runtime.finish();
+}
+
+/** Referee-owned input runtime. The replay importer is also a production caller.
+ * Session snapshots and observations are not policy input.
+ */
+export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, signal = null, now = nowMs, canonicalProfile = null } = {}) {
+  validateTtrmPlayerRound(playerRound);
+  if (!Number.isFinite(maxTimeMs) || maxTimeMs <= 0 || maxTimeMs > 10_000) {
+    throw new TtrmError("budget", "replay time budget must be positive and at most 10000ms");
+  }
+  if (typeof now !== "function") throw new TtrmError("budget", "input session clock must be a function");
+  const constructionStart = now();
+  let processingMs = 0;
+  playerRound = structuredClone(playerRound);
+  const checkBudget = () => {
+    if (signal?.aborted) throw new TtrmError("cancel", "replay cancelled");
+    if (processingMs > maxTimeMs) throw new TtrmError("budget", "replay exceeded its processing time budget");
+  };
+  checkBudget();
+  const { options, warnings } = resolveTtrmOptions(playerRound.replay);
+
+  if ((options.boardwidth ?? 10) !== 10 || (options.boardheight ?? 20) !== 20) {
+    throw new TtrmError("validate", "replay requires a 10 by 20 board with the fixed 20-row buffer");
+  }
+
+  const config = buildEngineConfig(options, collectOpponents(playerRound));
+  // Bound work *inside* a tick too: tiny positive ARR makes the pinned Engine
+  // iterate floor(elapsed / ARR) shifts before a deadline can be checked.
+  for (const key of ["arr", "das", "dcd", "sdf"]) {
+    const value = config.handling[key];
+    if (!Number.isFinite(value) || value < 0 || value > 60 ||
+        (key === "arr" && value > 0 && value < 0.01)) {
+      throw new TtrmError("validate", `unsupported handling ${key}`);
+    }
+  }
+  if (canonicalProfile !== null) {
+    const expected = inputExecutionOptions({ seed: options.seed, profileId: canonicalProfile, handling: options.handling });
+    for (const key of Object.keys(expected)) {
+      if (JSON.stringify(options[key]) !== JSON.stringify(expected[key])) {
+        throw new TtrmError("profile", `canonical input profile option mismatch: ${key}`);
+      }
+    }
+  }
+  const engine = new Engine(config);
+  if (canonicalProfile === INPUT_EXECUTION_PROFILE.id) {
+    // Queue#shift replenishes before consuming; keep one extra item buffered
+    // so the public queue still exposes the profile's full NEXT window after a shift.
+    engine.queue.minLength = INPUT_EXECUTION_PROFILE.publicNext + 1;
+  }
+  const conformance = canonicalProfile === null ? null : createInputLockConformance(engine, INPUT_EXECUTION_PROFILE.rulesetId);
 
   // The starting position is overwritten by the first tick, so it is read here.
   const initial = readInitialPoint(engine);
 
   const locks = [];
+  let heldSinceLock = false;
+  const hold = engine.hold.bind(engine);
+  engine.hold = (...args) => {
+    const result = hold(...args);
+    if (result) heldSinceLock = true;
+    return result;
+  };
+  const outgoing = [];
+  const send = engine.igeHandler.send.bind(engine.igeHandler);
+  engine.igeHandler.send = (packet) => {
+    send(packet);
+    if (packet.amount === 0) return;
+    const snapshot = engine.igeHandler.snapshot();
+    outgoing.push({ frame: engine.frame, amount: packet.amount,
+      target: packet.playerID, iid: snapshot.iid,
+      ackiid: snapshot.players[packet.playerID].incoming,
+      // A visual beam anchor only: convert the observed lock's block centroid
+      // from bottom-up Engine rows to TETR.IO's top-down board coordinates.
+      x: preLock.cells.reduce((sum, [x]) => sum + x, 0) / preLock.cells.length,
+      y: engine.board.state.length - 1 - preLock.cells.reduce((sum, [, y]) => sum + y, 0) / preLock.cells.length,
+    });
+  };
   const garbageEvents = [];
   const visual = { active: [], boards: [], queues: [], garbage: [] };
-  const confirmSenderFrames = rawConfirmSenderFrames(playerRound);
+  const confirmSenderFrames = new Map();
+  const countedConfirms = new Set();
+  let receivedAtConfirm = 0;
+  let cancelledRows = 0;
   let totalLines = 0;
   let prevAttack = 0;
   let prevGarbageCleared = 0;
@@ -215,27 +309,29 @@ export function simulatePlayerRound(playerRound) {
   recordQueue(0, { frame: 0, hold: initial.hold, current: initial.current, next: initial.next });
   recordGarbage(0);
 
-  // Triangle emits `falling.lock.pre` after it has merged the active piece into
-  // the board. Capture the board immediately before each Engine tick instead;
-  // that is the actual pre-lock field, including any garbage already tanked by
-  // an earlier frame.
-  let boardBeforeTick = readBoardFrame(engine, engine.frame);
+  // Pinned Engine 4.2.7 calls Board.add exactly once per lock, before
+  // line clearing and garbage. Its lock.pre event occurs after those changes.
+  // Observe this instance's merge boundary so even two locks in one tick have
+  // distinct true pre-states. Never modify the shared Board prototype.
   let preLock = null;
-
-  engine.events.on("falling.lock.pre", () => {
+  let lastPlacedBlocks = new Set();
+  const add = engine.board.add;
+  engine.board.add = function (...args) {
+    const rotationEvidence = conformance?.beforeMerge() ?? null;
+    lastPlacedBlocks = new Set(args.map(([block]) => block));
     preLock = {
-      fieldBefore: boardBeforeTick,
+      rotationEvidence,
+      usedHold: heldSinceLock,
+      fieldBefore: readBoardFrame(engine, engine.frame),
+      subframe: engine.subframe,
       piece: minoToPiece(engine.falling.symbol),
       rotation: engine.falling.rotation,
       x: engine.falling.x,
       y: engine.falling.y,
-      // The engine board keeps state[0] as the bottom row, the same orientation
-      // ReplayIR uses, so these absolute cells carry over unchanged. They, and
-      // not piece/rotation/x/y, are what identifies the placement: the engine
-      // and fumen disagree on the rotation-centre origin.
       cells: engine.falling.absoluteBlocks.map(([x, y]) => [x, y]),
     };
-  });
+    return add.apply(this, args);
+  };
 
   // HOLD and the post-lock spawn take effect on this raw frame rather than at
   // the end of the tick. Several spawns inside one frame collapse to the last.
@@ -248,6 +344,8 @@ export function simulatePlayerRound(playerRound) {
   });
 
   engine.events.on("falling.lock", (res) => {
+    conformance?.afterLock(res);
+    if (preLock === null) throw new TtrmError("observe", "lock arrived without a pre-merge observation");
     const after = convertEngineBoard(engine.board.state);
     totalLines += res.lines || 0;
     const attack = Math.max(0, (res.stats.garbage.attack ?? 0) - prevAttack);
@@ -260,17 +358,18 @@ export function simulatePlayerRound(playerRound) {
       garbageCleared,
       pieceIndex: locks.length,
       frame: engine.frame,
-      // Despite the name this is not the pre-placement board: at
-      // `falling.lock.pre` the engine has already merged the piece, and it
-      // measured identical to `fieldAfter` on every lock. The board before the
-      // placement is `boardAtFrame(player, frame - 1)` on the visual timeline.
-      fieldBefore: preLock ? preLock.fieldBefore.field : after.field,
+      ordinal: locks.length > 0 && locks.at(-1).frame === engine.frame ? locks.at(-1).ordinal + 1 : 0,
+      subframe: preLock?.subframe ?? 0,
+      fieldBefore: preLock.fieldBefore.field,
+      fullFieldBefore: preLock.fieldBefore.fullField,
+      fullFieldAfter: after.fullField,
       fieldAfter: after.field,
       piece: preLock ? preLock.piece : minoToPiece(res.mino),
       rotation: preLock ? preLock.rotation : 0,
       x: preLock ? preLock.x : 0,
       y: preLock ? preLock.y : 0,
       cells: preLock ? preLock.cells : undefined,
+      ...(preLock.rotationEvidence === null ? {} : { rotationEvidence: preLock.rotationEvidence, usedHold: preLock.usedHold }),
       hold: queue.hold,
       current: queue.current,
       next: queue.next,
@@ -290,6 +389,7 @@ export function simulatePlayerRound(playerRound) {
     recordQueue(engine.frame, queue);
     recordGarbage(engine.frame);
     preLock = null;
+    heldSinceLock = false;
   });
 
   // The gauge identity (receive - cancel - tank == garbageQueue.size) holds for
@@ -299,6 +399,13 @@ export function simulatePlayerRound(playerRound) {
     recordGarbage(engine.frame);
   });
   engine.events.on("garbage.confirm", (event) => {
+    const identity = `${event.gameid}:${event.iid}`;
+    if (!countedConfirms.has(identity)) {
+      receivedAtConfirm += engine.garbageQueue.snapshot().queue
+        .filter(packet => packet.gameid === event.gameid && packet.cid === event.iid)
+        .reduce((sum, packet) => sum + packet.amount, 0);
+      countedConfirms.add(identity);
+    }
     const senderFrames = confirmSenderFrames.get(`${event.gameid}:${event.iid}`);
     const senderFrame = senderFrames !== undefined && senderFrames.length > 0 ? senderFrames.shift() : undefined;
     garbageEvents.push({
@@ -324,6 +431,7 @@ export function simulatePlayerRound(playerRound) {
     recordGarbage(engine.frame);
   });
   engine.events.on("garbage.cancel", (event) => {
+    cancelledRows += event.amount ?? 0;
     garbageEvents.push({
       frame: engine.frame,
       kind: "cancel",
@@ -334,73 +442,147 @@ export function simulatePlayerRound(playerRound) {
     recordGarbage(engine.frame);
   });
 
-  const tickEngine = (frames) => {
-    boardBeforeTick = readBoardFrame(engine, engine.frame);
-    engine.tick(frames);
-  };
-
-  // `end` events are skipped and the engine keeps ticking to `replay.frames`.
-  const events = playerRound.replay.events.slice();
-  while (events.length > 0) {
-    while (engine.frame < events[0].frame) {
-      tickEngine([]);
-      recordActive(engine.frame);
-    }
-    while (events.length && events[0].frame < engine.frame) events.shift();
-    const toTick = [];
-    while (events.length && events[0].frame === engine.frame) {
-      const event = events.shift();
-      if (event.type === "end") continue;
-      toTick.push(event);
-    }
-    tickEngine(toTick);
-    recordActive(engine.frame);
-  }
-  while (engine.frame < playerRound.replay.frames) {
-    tickEngine([]);
-    recordActive(engine.frame);
-  }
-
-  const terminalBoard = convertEngineBoard(engine.board.state);
-  const terminalQueue = readQueueFrame(engine, engine.frame);
-  recordBoard(engine.frame, terminalBoard);
-  recordQueue(engine.frame, terminalQueue);
-  recordGarbage(engine.frame);
-  const stats = playerRound.replay.results.stats;
-  const actualSent = engine.stats.garbage.sent ?? 0;
-  const verification = {
-    piecesplaced: { expected: stats.piecesplaced, actual: locks.length },
-    lines: { expected: stats.lines, actual: totalLines },
-    sent: { expected: stats.garbage.sent, actual: actualSent },
-    matched: stats.piecesplaced === locks.length &&
-      stats.lines === totalLines &&
-      stats.garbage.sent === actualSent,
-  };
-
+  processingMs += now() - constructionStart;
+  checkBudget();
+  let status = "active";
+  let finished = null;
+  let failure = null;
+  const executedEvents = [];
   return {
-    initial,
-    locks,
-    garbageEvents,
-    verification,
-    visual,
-    id: playerRound.id,
-    username: playerRound.username,
-    resolvedOptions: options,
-    optionWarnings: warnings,
-    terminal: {
-      frame: engine.frame,
-      field: terminalBoard.field,
-      sourceHeight: terminalBoard.sourceHeight,
-      clippedRowCount: terminalBoard.clippedRowCount,
-      garbageGauge: engine.garbageQueue.size ?? 0,
-      hold: terminalQueue.hold,
-      current: terminalQueue.current,
-      next: terminalQueue.next,
-      reason: playerRound.replay.results.gameoverreason,
-      alive: playerRound.alive,
+    get frame() { return engine.frame; },
+    get canonicalProfile() { return canonicalProfile; },
+    get status() { return status; },
+    get failure() { return failure; },
+    get lockCount() { return locks.length; },
+    get processingMs() { return processingMs; },
+    get toppedOut() { return engine.toppedOut; },
+    refereeLastLock() { return structuredClone(locks.at(-1) ?? null); },
+    refereeView() {
+      return { board: engine.board.state.map(row => row.map(cell => cell === null ? null :
+        cell.mino.length === 1 ? cell.mino.toUpperCase() : 'G')),
+        lastPlaced: engine.board.state.flatMap((row, y) => row.flatMap((cell, x) => lastPlacedBlocks.has(cell) ? [[x, y]] : [])),
+        current: engine.falling.symbol.toUpperCase(), hold: engine.held?.toUpperCase() ?? null,
+        next: Array.from(engine.queue).slice(0, 14).map(value => value.toUpperCase()),
+        activeCells: engine.falling.absoluteBlocks.map(cell => [...cell]),
+        holdAvailable: !engine.holdLocked, toppedOut: engine.toppedOut,
+        stats: structuredClone(engine.stats), lastLock: structuredClone(locks.at(-1) ?? null),
+        // Display-only amounts/readiness. No packet identity, hole or RNG is exposed.
+        // Readiness means arrival for a hard drop now; cap/FIFO/clear blocking
+        // still determine how many rows actually rise. Natural locks use frame - 1.
+        pendingRows: engine.garbageQueue.size,
+        pendingChunks: engine.garbageQueue.queue.map(packet => ({ amount: packet.amount,
+          ready: packet.frame + engine.garbageQueue.options.garbage.speed <= engine.frame })),
+        cancelledRows,
+        received: receivedAtConfirm };
+    },
+    publicState() {
+      if (canonicalProfile === null || status !== 'active') throw new TtrmError('profile', 'active input profile required');
+      const state = {
+        rulesetId: INPUT_EXECUTION_PROFILE.rulesetId,
+        board: { width: 10, height: 40, visibleHeight: 20, fidelity: 'exact',
+          cells: engine.board.state.flatMap(row => row.map(cell => cell === null ? '_' :
+            cell.mino.length === 1 ? cell.mino.toUpperCase() : 'G')).join('') },
+        pieces: { current: engine.falling.symbol.toUpperCase(), hold: engine.held?.toUpperCase() ?? null,
+          holdAvailable: !engine.holdLocked, known: Array.from(engine.queue).slice(0, INPUT_EXECUTION_PROFILE.publicNext).map(value => value.toUpperCase()), fidelity: 'exact' },
+        chain: { combo: Math.max(0, engine.stats.combo + 1), b2b: Math.max(0, engine.stats.b2b + 1), fidelity: 'exact' },
+        time: { logicalFrame: engine.frame, piecesPlaced: engine.stats.pieces, frameSemantics: 'engine-frame', fidelity: 'exact' },
+        garbage: triangleSnapshotToCanonical(engine.garbageQueue.snapshot(), { capState: { consumedThisTick: 0 }, fidelity: 'exact' }),
+      };
+      return { decision: createS2AmountOnlyDecisionState(state), movement: projectInputPublicMovement(engine) };
+    },
+    executedEvents() { return structuredClone(executedEvents); },
+    takeOutgoing() { return outgoing.splice(0); },
+    tick(events) {
+      if (status !== "active") throw new TtrmError("execute", "input session is not active");
+      const startedAt = now();
+      try {
+        checkBudget();
+        validateTtrmPlayerRound({ id: playerRound.id, replay: {
+          frames: engine.frame, events, options: {}, results: { stats: {} },
+        } });
+        if (events.some(event => event.frame !== engine.frame)) {
+          throw new TtrmError("execute", "input event does not belong to the current frame");
+        }
+        if (executedEvents.length + events.length > MAX_TTRM_EVENTS_PER_PLAYER) {
+          throw new TtrmError("size", "input session event budget exceeded");
+        }
+        const consumed = structuredClone(events);
+        for (const [key, frames] of rawConfirmSenderFrames({ replay: { events: consumed } })) {
+          const pendingFrames = confirmSenderFrames.get(key) ?? [];
+          pendingFrames.push(...frames);
+          confirmSenderFrames.set(key, pendingFrames);
+        }
+        conformance?.beforeTick(consumed);
+        engine.tick(consumed);
+        conformance?.checkBoundary();
+        executedEvents.push(...consumed);
+        recordActive(engine.frame);
+        processingMs += now() - startedAt;
+        checkBudget();
+      } catch (error) {
+        status = "invalid";
+        failure = error instanceof Error ? error.message : String(error);
+        throw error;
+      }
+    },
+    finish() {
+      if (status === "invalid") throw new TtrmError("execute", "invalid input session cannot be finalized");
+      if (finished !== null) return structuredClone(finished);
+      checkBudget();
+      conformance?.checkBoundary();
+      const terminalBoard = convertEngineBoard(engine.board.state);
+      const terminalQueue = readQueueFrame(engine, engine.frame);
+      recordBoard(engine.frame, terminalBoard);
+      recordQueue(engine.frame, terminalQueue);
+      recordGarbage(engine.frame);
+      const stats = playerRound.replay.results.stats;
+      const actualSent = engine.stats.garbage.sent ?? 0;
+      const verification = {
+        scope: "pieces-lines-sent",
+        piecesplaced: { expected: stats.piecesplaced, actual: locks.length },
+        lines: { expected: stats.lines, actual: totalLines },
+        sent: { expected: stats.garbage.sent, actual: actualSent },
+        matched: stats.piecesplaced === locks.length &&
+          stats.lines === totalLines &&
+          stats.garbage.sent === actualSent,
+      };
+
+      finished = {
+        observedStats: structuredClone(engine.stats),
+        recordedStats: { piecesplaced: locks.length, lines: totalLines, garbage: {
+          attack: engine.stats.garbage.attack, sent: engine.stats.garbage.sent,
+          received: receivedAtConfirm, cleared: engine.stats.garbage.cleared,
+        } },
+        canonicalLockVerification: conformance === null ? null : { comparedLocks: conformance.comparedLocks, scope: "lock-and-garbage-queue", matched: true },
+        initial,
+        locks,
+        garbageEvents,
+        verification,
+        visual,
+        id: playerRound.id,
+        username: playerRound.username,
+        resolvedOptions: options,
+        optionWarnings: warnings,
+        terminal: {
+          frame: engine.frame,
+          field: terminalBoard.field,
+          fullField: terminalBoard.fullField,
+          sourceHeight: terminalBoard.sourceHeight,
+          clippedRowCount: terminalBoard.clippedRowCount,
+          garbageGauge: engine.garbageQueue.size ?? 0,
+          hold: terminalQueue.hold,
+          current: terminalQueue.current,
+          next: terminalQueue.next,
+          reason: playerRound.replay.results.gameoverreason,
+          alive: playerRound.alive,
+    },
+  };
+  status = "finished";
+  return structuredClone(finished);
     },
   };
 }
+
 
 function buildRound(round, index) {
   const reasons = {};
@@ -430,6 +612,8 @@ function buildRound(round, index) {
         },
       };
     }
+    // Import success means Engine replay and the three aggregate checks passed;
+    // it does not assert canonical lock, garbage, or full terminal-state equality.
     return { ...base, players, status: "ok" };
   } catch (error) {
     return {
@@ -450,6 +634,9 @@ export function buildReplayIR(file, startedAt = nowMs()) {
   return {
     rounds,
     meta: {
+      // Preserve the known self-declared display marker, not arbitrary metadata
+      // or a claim that the file's origin has been authenticated.
+      ...(file.meta?.origin === "s2-bot-lab-generated" ? { origin: file.meta.origin } : {}),
       users: (file.users ?? []).map((user) => ({ id: user.id, username: user.username })),
       gamemode: file.gamemode ?? "",
       ts: file.ts ?? "",

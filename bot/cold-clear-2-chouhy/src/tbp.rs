@@ -43,6 +43,9 @@ pub enum BotMessage {
 
 #[derive(Deserialize)]
 pub struct Start {
+    /// Input adapter requests a bounded ranked prefix; ordinary TBP stays top-one.
+    #[serde(default)]
+    pub input_candidates: bool,
     pub board: Board,
     pub queue: Vec<Piece>,
     pub hold: Option<Piece>,

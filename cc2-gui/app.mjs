@@ -1,3 +1,4 @@
+import { INPUT_BOT_PROFILES } from '/shared/input-bot-contract.mjs';
 import {
   applyS2Transition,
   clearLabel,
@@ -54,10 +55,12 @@ import {
 } from "./human-controls.mjs";
 import {
   addOverlayPiece,
+  inputPieceOverlay,
   renderChainCounter,
   renderDetailMetrics,
   renderFieldRateStats,
   renderGarbageGauge,
+  formatInputExecutionTooltip,
   renderMatchField,
   renderMini,
   renderNextList,
@@ -76,8 +79,22 @@ import {
   shiftedToEnd,
   spawnPlacement,
 } from "./human-play.mjs";
+
 const elements = Object.fromEntries([...document.querySelectorAll("[id]")].map((node) => [node.id, node]));
 const BOT_SIDES = Object.freeze(["left", "right"]);
+const INPUT_EXECUTION_PROFILE = "s2-input-execution/1";
+const INPUT_MATCH_ENDPOINT = "/api/input-match";
+const INPUT_SUPPORTED_TYPES = new Set(["human", ...Object.keys(INPUT_BOT_PROFILES)]);
+const INPUT_ACTION_KEYS = Object.freeze({
+  MoveLeft: "moveLeft",
+  MoveRight: "moveRight",
+  SoftDrop: "softDrop",
+  HardDrop: "hardDrop",
+  RotateLeft: "rotateCCW",
+  RotateRight: "rotateCW",
+  Rotate180: "rotate180",
+  Hold: "hold",
+});
 // Headings for the `group` ids the parameter schema declares. The schema says
 // which group a parameter belongs to; what that group is called, and the rule
 // printed under it, are presentation and stay here.
@@ -165,6 +182,11 @@ let humanBotStepTimer = null;
    round's first step. */
 let matchStepGeneration = null;
 let lastMatchView = null;
+/* The input-profile session owns the real Engine clock. The page clock only
+   decides how far the next nonblocking pump may advance it; queued events keep
+   their original intended frame until the server accepts them. */
+let inputMatchState = null;
+let inputEventSequence = 0;
 
 applyStoredPreferences();
 render();
@@ -195,9 +217,20 @@ elements["match-run"].addEventListener("click", toggleMatchRun);
 elements["match-step"].addEventListener("click", stepMatch);
 elements["match-reset"].addEventListener("click", resetMatch);
 elements["match-save-replay"].addEventListener("click", saveMatchReplay);
+elements["match-save-ttrm"].addEventListener("click", saveMatchTtrm);
 elements["match-unlimited-turns"].addEventListener("change", syncMaxTurnsControl);
-elements["match-random-seed"].addEventListener("change", syncRandomSeedControl);
+elements["match-random-seed"].addEventListener("change", () => syncRandomSeedControl());
 elements["match-fair-comparison"].addEventListener("change", syncFairComparisonControls);
+elements["match-ttrm-compatible"].addEventListener("change", () => {
+  clampInputQueueDepths();
+  syncHumanMatchControls();
+  syncFairComparisonControls();
+  renderMatchSaveButton();
+  if (lastMatchView === null) renderEmptyMatchFields();
+  // The generic toggle listener has already saved the checkbox. Save once more
+  // so queue caps applied here are persisted in the same user action.
+  savePreferences();
+});
 for (const side of BOT_SIDES) {
   elements[`${side}-bot`].addEventListener("change", () => {
     renderBotSettingsSummary(side);
@@ -210,8 +243,14 @@ elements["bot-settings-form"].addEventListener("submit", saveBotSettings);
 window.addEventListener("keydown", handleHumanKeyDown);
 window.addEventListener("keyup", handleHumanKeyUp);
 /* A key released while the page is in the background never reports its keyup,
-   so every hold is dropped rather than repeating forever. */
-window.addEventListener("blur", () => pieceRepeat.endAll());
+   so every hold is dropped rather than repeating forever. Input taps are also
+   discarded: a queued event must never be replayed after the user's focus or
+   the local clock has moved on. */
+window.addEventListener("blur", () => {
+  pieceRepeat.endAll();
+  clearInputEvents({ releaseHeld: true });
+  requestInputPump(0);
+});
 syncMaxTurnsControl();
 syncRandomSeedControl();
 syncHumanMatchControls();
@@ -220,6 +259,7 @@ syncFairComparisonControls();
    filled in once before the first match rather than only on the next render. */
 renderMatchSaveButton();
 renderMatchRunButton();
+renderEmptyMatchFields();
 for (const side of BOT_SIDES) renderBotSettingsSummary(side);
 renderAnalysisEngineIdentity();
 loadBotCapabilities();
@@ -266,7 +306,23 @@ function applyStoredPreferences() {
       if (botType in botParameters[side]) botParameters[side][botType] = { ...values };
     }
   }
+  if (clampInputQueueDepths()) savePreferences();
   elements["think-value"].textContent = elements["think-ms"].value;
+}
+
+/* Input execution can expose current + 14 NEXT pieces. Persist the cap for
+   every admitted bot on both sides so switching bots while input mode remains
+   enabled cannot restore an invalid queue depth. */
+function clampInputQueueDepths() {
+  if (!inputModeSelected()) return false;
+  let changed = false;
+  for (const side of BOT_SIDES) for (const botType of Object.keys(INPUT_BOT_PROFILES)) {
+    const values = botParameters[side][botType];
+    if (values?.queueDepth <= 15) continue;
+    botParameters[side][botType] = { ...values, queueDepth: 15 };
+    changed = true;
+  }
+  return changed;
 }
 
 /* A stored value only wins when this build still offers it, so a removed bot or
@@ -331,6 +387,10 @@ async function loadBotCapabilities() {
 }
 
 function openBotSettings(side) {
+  if (inputHumanActive()) {
+    clearInputEvents({ releaseHeld: true });
+    requestInputPump(0);
+  }
   const botType = elements[`${side}-bot`].value;
   const capability = botCapabilities.get(botType) ?? BOT_PARAMETER_DEFINITIONS[botType];
   const values = botParameters[side][botType];
@@ -428,6 +488,7 @@ function botParameterRow(parameter, values, { nested = false, describe = true, s
     input.type = "number";
     input.min = parameter.minimum;
     input.max = parameter.maximum;
+    if (parameter.key === "queueDepth" && inputModeSelected()) input.max = 15;
     input.step = parameter.step;
     input.value = values[parameter.key];
   }
@@ -1186,6 +1247,9 @@ async function performStartMatch({ excludedRandomSeed = null } = {}) {
   matchRunning = false;
   matchSeries = null;
   matchGeneration += 1;
+  cancelInputPump();
+  clearInputEvents();
+  inputMatchState = null;
   cancelHumanMatchBotStep();
   stopHumanPlay();
   matchClock = createMatchClock(performance.now());
@@ -1195,8 +1259,11 @@ async function performStartMatch({ excludedRandomSeed = null } = {}) {
   elements["match-reset"].disabled = false;
   elements["match-status"].textContent = "STARTING";
   try {
-    if (selectedHumanSide() !== null) await ensurePlacementGeometry();
     matchSeries = createMatchSeries({ excludedRandomSeed });
+    if (matchSeries.config.ttrmCompatible) assertInputMatchConfig(matchSeries.config);
+    if (!matchSeries.config.ttrmCompatible && selectedHumanSide() !== null) {
+      await ensurePlacementGeometry();
+    }
     setMatchSettingsDisabled(true);
     renderMatchSummary();
     matchAutoplay = true;
@@ -1227,6 +1294,26 @@ async function beginSeriesGame() {
 
 function selectedHumanSide() {
   return BOT_SIDES.find((side) => elements[`${side}-bot`].value === "human") ?? null;
+}
+
+function inputModeSelected() {
+  return elements["match-ttrm-compatible"]?.checked === true;
+}
+
+function inputModeActive() {
+  return matchSeries?.config?.ttrmCompatible === true;
+}
+
+function inputHumanActive() {
+  return inputModeActive() && lastMatchView?.humanSide === "left" &&
+    inputMatchState !== null && inputMatchState.generation === matchGeneration;
+}
+
+function assertInputMatchConfig(config) {
+  if (!INPUT_SUPPORTED_TYPES.has(config.left) || !INPUT_SUPPORTED_TYPES.has(config.right) ||
+      config.right === "human") {
+    throw new Error("TTRM INPUT requires registered input bots (You is allowed on the left)");
+  }
 }
 
 /* The placement geometry is the contract between what the player moves on
@@ -1355,6 +1442,10 @@ function currentHumanLockFrame() {
 }
 
 async function humanHardDrop() {
+  if (inputHumanActive()) {
+    enqueueInputTap("hardDrop");
+    return;
+  }
   if (!humanCanAct()) return;
   const landed = dropped(placementGeometry, human.board, human.active);
   human.active = landed;
@@ -1433,7 +1524,8 @@ function stopHumanPlay(view = null) {
    Settings fields remain editable, but a configured game key never falls
    through to the browser (for example, Space must not scroll the page). */
 function humanInputEnabled() {
-  return human !== null && mode === "match" && matchRunning &&
+  if (inputHumanActive() && !matchAutoplay) return false;
+  return (inputHumanActive() || human !== null) && mode === "match" && matchRunning &&
     !elements["bot-settings-dialog"].open;
 }
 
@@ -1457,6 +1549,10 @@ function handleHumanKeyDown(event) {
   if (!humanInputEnabled()) return;
   if (event.repeat) return;
   const handling = humanHandling(humanControls);
+  if (inputHumanActive()) {
+    handleInputAction(action);
+    return;
+  }
   switch (action) {
     case "MoveLeft":
     case "MoveRight": {
@@ -1497,13 +1593,26 @@ function handleHumanKeyDown(event) {
 }
 
 function handleHumanKeyUp(event) {
-  if (human === null) return;
+  if (!inputHumanActive() && human === null) return;
   const action = actionForCode(humanControls, event.code);
-  if (action !== null) pieceRepeat.end(action);
+  if (inputHumanActive()) {
+    handleInputAction(action, "keyup");
+  } else if (action !== null) pieceRepeat.end(action);
+}
+
+function handleInputAction(action, type = "keydown") {
+  const key = INPUT_ACTION_KEYS[action];
+  if (key === undefined) return;
+  const wallFrame = readMatchClock(matchClock, performance.now()) * 60 / 1000;
+  const frame = currentInputEventFrame();
+  const subframe = Math.floor(wallFrame) === frame ? wallFrame - frame : 0;
+  enqueueInputEvent(frame, type, key, subframe);
+  requestInputPump(0);
 }
 
 function createMatchSeries({ excludedRandomSeed = null } = {}) {
-  const fairComparison = fairComparisonEnabled();
+  const ttrmCompatible = inputModeSelected();
+  const fairComparison = ttrmCompatible ? false : fairComparisonEnabled();
   const leftType = elements["left-bot"].value;
   const rightType = elements["right-bot"].value;
   const leftParameters = { ...(fairComparison
@@ -1519,6 +1628,7 @@ function createMatchSeries({ excludedRandomSeed = null } = {}) {
       leftParameters,
       rightParameters,
       fairComparison,
+      ttrmCompatible,
       seed: elements["match-random-seed"].checked
         ? randomUint32Except(excludedRandomSeed)
         : readBoundedInteger("match-seed", 0, 0xffff_ffff),
@@ -1546,11 +1656,12 @@ async function startSeriesGame() {
   const generation = ++matchGeneration;
   const gameNumber = matchSeries.completed + 1;
   const config = matchSeries.config;
+  const inputMode = config.ttrmCompatible === true;
   const seed = (config.seed + matchSeries.completed) >>> 0;
   matchSeries.currentSeed = seed;
   lastStartedMatchSeed = seed;
   elements["match-status"].textContent = `GAME ${gameNumber} · FT${config.firstTo} · STARTING · SEED ${seed}`;
-  const response = await fetch("/api/match/start", {
+  const response = await fetch(inputMode ? `${INPUT_MATCH_ENDPOINT}/start` : "/api/match/start", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -1559,6 +1670,7 @@ async function startSeriesGame() {
       leftParameters: config.leftParameters,
       rightParameters: config.rightParameters,
       fairComparison: config.fairComparison,
+      ...(inputMode ? { ttrmCompatible: true, humanControls: structuredClone(humanControls) } : {}),
       seed,
       maxTurns: config.maxTurns,
       firstTo: config.firstTo,
@@ -1578,11 +1690,31 @@ async function startSeriesGame() {
   matchComputeRatio = 1;
   matchComputeLimited = false;
   matchRunning = true;
-  elements["match-step"].disabled = body.humanSide !== null;
-  if (body.humanSide !== null) startHumanGame(body);
+  if (inputMode) {
+    inputMatchState = {
+      sessionId: body.sessionId,
+      generation,
+      pending: [],
+      heldKeys: new Set(),
+      releaseOnResume: false,
+      pumpTimer: null,
+      inFlight: false,
+      inFlightTarget: null,
+      pumpRequested: false,
+    };
+    inputEventSequence = 0;
+    elements["match-step"].disabled = false;
+  } else {
+    elements["match-step"].disabled = body.humanSide !== null;
+    if (body.humanSide !== null) startHumanGame(body);
+  }
   renderMatch(body);
   matchClock = setMatchClockRunning(matchClock, matchAutoplay, performance.now());
   if (!matchAutoplay) return;
+  if (inputMode) {
+    requestInputPump(0);
+    return;
+  }
   // A match against a bot alone replays as fast as its playback deadline
   // allows. A match a human is playing runs on the shared clock instead, so the
   // opponent's first lock waits for the real time that lock frame stands for.
@@ -1605,7 +1737,144 @@ function cancelHumanMatchBotStep() {
   humanBotStepTimer = null;
 }
 
+function cancelInputPump() {
+  if (inputMatchState?.pumpTimer !== null && inputMatchState?.pumpTimer !== undefined) {
+    clearTimeout(inputMatchState.pumpTimer);
+    inputMatchState.pumpTimer = null;
+  }
+  if (inputMatchState !== null) inputMatchState.pumpRequested = false;
+}
+
+function clearInputEvents({ releaseHeld = false } = {}) {
+  if (inputMatchState === null) return;
+  inputMatchState.pending = [];
+  inputMatchState.releaseOnResume = releaseHeld;
+  if (!releaseHeld) inputMatchState.heldKeys.clear();
+}
+
+function currentInputEventFrame() {
+  const serverFrame = lastMatchView?.clock?.logicalFrame;
+  if (!Number.isSafeInteger(serverFrame)) return 0;
+  if (!matchAutoplay) return serverFrame;
+  return Math.max(serverFrame, inputMatchState?.inFlightTarget ?? 0,
+    Math.floor(readMatchClock(matchClock, performance.now()) * 60 / 1000));
+}
+
+function enqueueInputEvent(frame, type, key, subframe = 0) {
+  if (!inputHumanActive() || !Number.isSafeInteger(frame) || frame < 0) return;
+  inputMatchState.pending.push({
+    sequence: ++inputEventSequence,
+    frame,
+    type,
+    data: { key, subframe },
+  });
+  inputMatchState.pending.sort((left, right) => left.frame - right.frame || left.data.subframe - right.data.subframe || left.sequence - right.sequence);
+}
+
+function inputTargetFrame(manual) {
+  const current = lastMatchView?.clock?.logicalFrame;
+  if (!Number.isSafeInteger(current)) return null;
+  if (manual) return current + 1;
+  const wallFrame = Math.floor(readMatchClock(matchClock, performance.now()) * 60 / 1000);
+  const dueInput = inputMatchState?.pending.some(event => event.frame <= wallFrame) === true;
+  const target = Math.min(current + 120, Math.max(current, wallFrame + (dueInput ? 1 : 0)));
+  return target > current ? target : null;
+}
+
+function inputEventsBefore(target) {
+  return (inputMatchState?.pending ?? []).filter((event) => event.frame < target);
+}
+
+function requestInputPump(delayMs = 16) {
+  if (!inputModeActive() || !matchRunning || !matchAutoplay || inputMatchState === null) return;
+  if (inputMatchState.inFlight) {
+    inputMatchState.pumpRequested = true;
+    return;
+  }
+  if (inputMatchState.pumpTimer !== null) return;
+  inputMatchState.pumpTimer = setTimeout(() => {
+    inputMatchState.pumpTimer = null;
+    void stepInputMatch();
+  }, Math.max(0, delayMs));
+}
+
+async function stepInputMatch({ manual = false } = {}) {
+  const state = inputMatchState;
+  const generation = matchGeneration;
+  if (!inputModeActive() || !matchRunning || state === null || state.generation !== generation) return;
+  if (!matchAutoplay && !manual) return;
+  if (state.inFlight) {
+    state.pumpRequested = true;
+    return;
+  }
+  const target = inputTargetFrame(manual);
+  if (target === null) { requestInputPump(16); return; }
+  queueInputReleases(state, lastMatchView.clock.logicalFrame);
+  const sent = inputEventsBefore(target);
+  const sentSequences = new Set(sent.map((event) => event.sequence));
+  state.inFlight = true;
+  state.inFlightTarget = target;
+  state.pumpRequested = false;
+  elements["match-step"].disabled = true;
+  try {
+    const response = await fetch(`${INPUT_MATCH_ENDPOINT}/step`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: state.sessionId,
+        frame: target,
+        inputs: sent.map(({ sequence: _sequence, ...event }) => event),
+      }),
+    });
+    const body = await response.json();
+    if (generation !== matchGeneration || inputMatchState !== state) return;
+    if (!response.ok) throw new Error(body.error ?? "input match step failed");
+    state.pending = state.pending.filter((event) => !sentSequences.has(event.sequence));
+    recordAcceptedInputEvents(state, sent, body);
+    renderMatch(body);
+    if (manual) {
+      matchClock = synchronizeMatchClock(matchClock, body.metricElapsedMs, performance.now());
+      matchClock = setMatchClockRunning(matchClock, matchAutoplay, performance.now());
+    }
+    if (body.outcome?.complete) finishSeriesGame(body);
+  } catch (error) {
+    if (generation === matchGeneration && inputMatchState === state) handleMatchError(error);
+  } finally {
+    if (inputMatchState !== state) return;
+    state.inFlight = false;
+    state.inFlightTarget = null;
+    if (generation !== matchGeneration) return;
+    elements["match-step"].disabled = !matchRunning || matchAutoplay;
+    if (state.pumpRequested) {
+      state.pumpRequested = false;
+      requestInputPump(0);
+    } else {
+      requestInputPump(16);
+    }
+  }
+}
+
+function recordAcceptedInputEvents(state, sent, body) {
+  for (const event of sent) {
+    if (event.type === "keydown") state.heldKeys.add(event.data.key);
+    else state.heldKeys.delete(event.data.key);
+  }
+  queueInputReleases(state, body.clock?.logicalFrame);
+}
+
+function queueInputReleases(state, frame) {
+  if (!state.releaseOnResume) return;
+  if (!Number.isSafeInteger(frame)) return;
+  state.releaseOnResume = false;
+  for (const key of state.heldKeys) {
+    enqueueInputEvent(frame, "keyup", key);
+  }
+}
+
 async function stepMatch() {
+  if (inputModeActive()) {
+    return stepInputMatch({ manual: !matchAutoplay });
+  }
   const generation = matchGeneration;
   if (!matchRunning || matchStepGeneration === generation) return;
   matchStepGeneration = generation;
@@ -1670,6 +1939,10 @@ async function finishSeriesGame(view) {
   matchClock = setMatchClockRunning(matchClock, false, performance.now());
   matchRunning = false;
   cancelHumanMatchBotStep();
+  if (inputModeActive()) {
+    cancelInputPump();
+    clearInputEvents();
+  }
   stopHumanPlay(view);
   if (view.outcome.proposalResult?.status === "failure" ||
       view.outcome.reason === "proposal-failure") {
@@ -1722,7 +1995,12 @@ async function finishSeriesGame(view) {
 }
 
 async function finalizeCurrentRound() {
-  const response = await fetch("/api/match/round");
+  const input = inputModeActive();
+  const sessionId = inputMatchState?.sessionId ?? lastMatchView?.sessionId ?? null;
+  const path = input
+    ? `${INPUT_MATCH_ENDPOINT}/round?sessionId=${encodeURIComponent(sessionId ?? "")}`
+    : "/api/match/round";
+  const response = await fetch(path);
   const body = await response.json();
   if (!response.ok) throw new Error(body.error ?? "match round export failed");
   return body;
@@ -1786,17 +2064,27 @@ function renderMatchPreLockPreview(view) {
 }
 
 function handleMatchError(error) {
+  const completedInputSeries = inputModeActive() && (matchSeries?.rounds?.length ?? 0) > 0 ? matchSeries : null;
+  const failedInputSession = inputMatchState?.sessionId;
   matchClock = setMatchClockRunning(matchClock, false, performance.now());
   matchAutoplay = false;
   matchRunning = false;
   matchStarting = false;
-  matchSeries = null;
+  matchSeries = completedInputSeries;
+  if (matchSeries) matchSeries.failed = true;
   cancelHumanMatchBotStep();
+  cancelInputPump();
+  clearInputEvents();
+  inputMatchState = null;
+  if (failedInputSession) void fetch(`${INPUT_MATCH_ENDPOINT}/close`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: failedInputSession }),
+  }).catch(() => {});
   stopHumanPlay(lastMatchView);
   elements["match-step"].disabled = true;
   elements["match-status"].textContent = error instanceof Error ? error.message : String(error);
   setMatchSettingsDisabled(false);
   renderMatchRunButton();
+  renderMatchSaveButton();
 }
 
 /* Clears the arena and explicitly releases any retained bot runtime. In 1P,
@@ -1822,19 +2110,31 @@ async function resetMatch({ restartCurrentGame = false, rerollRandomSeed = false
     }
   }
   pauseMatchAutoplay();
+  const inputSessionId = inputMatchState?.sessionId ?? lastMatchView?.sessionId ?? null;
   matchRunning = false;
   matchStarting = restartCurrentGame;
   matchSeries = preservedSeries;
   matchRoundStatus = "";
   matchGeneration += 1;
   cancelHumanMatchBotStep();
+  cancelInputPump();
+  clearInputEvents();
+  inputMatchState = null;
   stopHumanPlay();
   try {
-    await fetch("/api/match/close", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({}),
-    });
+    if (inputSessionId === null) {
+      await fetch("/api/match/close", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+    } else {
+      await fetch(`${INPUT_MATCH_ENDPOINT}/close`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: inputSessionId }),
+      });
+    }
   } catch {
     // RESET remains local even if an already-failed transport cannot close.
   }
@@ -1900,12 +2200,17 @@ function clearMatchArena() {
       elements[`match-${side}-${id}`].replaceChildren();
     }
   }
+  renderEmptyMatchFields();
 }
 
 function pauseMatchAutoplay() {
   if (!matchAutoplay) return;
   matchAutoplay = false;
   cancelHumanMatchBotStep();
+  if (inputModeActive()) {
+    cancelInputPump();
+    clearInputEvents({ releaseHeld: true });
+  }
   pieceRepeat.endAll();
   matchClock = setMatchClockRunning(matchClock, false, performance.now());
   renderMatchRunButton();
@@ -1914,7 +2219,7 @@ function pauseMatchAutoplay() {
 /* A series is over once either side reaches the configured FT score: the run
    button then goes back to offering a fresh START MATCH rather than a resume. */
 function matchSeriesActive() {
-  return matchSeries !== null && matchSeriesWinner() === null;
+  return matchSeries !== null && !matchSeries.failed && matchSeriesWinner() === null;
 }
 
 /* One button covers the whole match lifecycle: start, pause, resume. An
@@ -1936,6 +2241,10 @@ function toggleMatchRun() {
   renderMatchRunButton();
   if (!matchRunning) {
     beginSeriesGame().catch(handleMatchError);
+    return;
+  }
+  if (inputModeActive()) {
+    requestInputPump(0);
     return;
   }
   if (human === null) stepMatch();
@@ -1975,13 +2284,20 @@ function renderMatchSummary() {
    the button itself, so it rides along as a title rather than leaving a dead
    control unexplained. */
 function renderMatchSaveButton() {
-  const hasCurrent = matchRunning && (lastMatchView?.turnNumber ?? 0) > 0;
+  const hasCurrent = !inputModeActive() && matchRunning && (lastMatchView?.turnNumber ?? 0) > 0;
   const hasCompleted = (matchSeries?.rounds?.length ?? 0) > 0;
   const blocked = matchSaveInFlight ? "保存中です"
     : matchRoundFinalization !== null ? "対局の記録をまとめています"
     : !(hasCurrent || hasCompleted) ? "まだ保存できる手がありません。START MATCH で対局を進めてください"
     : "";
   setMatchExportButton("match-save-replay", blocked, "この対局の記録を .json ファイルで保存します");
+  const ttrmRecords = (matchSeries?.rounds ?? []).filter((round) => round.executedTtrm?.text);
+  const ttrmBlocked = matchSaveInFlight ? "保存中です"
+    : matchRoundFinalization !== null ? "対局の記録をまとめています"
+      : !inputModeActive() ? "TTRM INPUT をONにして開始した対局だけが .ttrm を出力できます"
+        : ttrmRecords.length === 0 ? "保存できる完了ラウンドがまだありません"
+          : "";
+  setMatchExportButton("match-save-ttrm", ttrmBlocked, "実際に消費した入力を検証済みの .ttrm として保存します");
 }
 
 function setMatchExportButton(id, blockedReason, enabledTitle) {
@@ -2010,7 +2326,7 @@ async function saveMatchReplay() {
     if (matchRoundFinalization !== null) await matchRoundFinalization;
     if (matchSeries === null) { setMatchExportMessage(null, ""); return; }
     const rounds = [...matchSeries.rounds];
-    if (matchRunning && (lastMatchView?.turnNumber ?? 0) > 0) {
+    if (!inputModeActive() && matchRunning && (lastMatchView?.turnNumber ?? 0) > 0) {
       rounds.push({ ...(await finalizeCurrentRound()), index: rounds.length });
     }
     if (rounds.length === 0) { setMatchExportMessage(null, ""); return; }
@@ -2020,6 +2336,9 @@ async function saveMatchReplay() {
       version: 1,
       parseMs: 0,
       ...(structuredClone(matchSeries.replayMeta ?? {})),
+      origin: "s2-bot-match/1",
+      version: 1,
+      parseMs: 0,
     };
     const text = JSON.stringify({ $schema: MATCH_REPLAY_SCHEMA, meta, rounds }, null, 2);
     const seed = meta.match?.seed ?? matchSeries.config.seed;
@@ -2041,6 +2360,85 @@ async function saveMatchReplay() {
   }
 }
 
+function renderEmptyMatchFields() {
+  for (const side of BOT_SIDES) {
+    const field = elements[`match-${side}-field`];
+    field.classList.toggle("input-spawn-field", inputModeSelected());
+    const board = Array.from({ length: 40 }, () => Array(10).fill(null));
+    renderMatchField(field, board, [], null, { rows: inputModeSelected() ? 23 : 20 });
+  }
+}
+
+async function saveMatchTtrm() {
+  if (matchSaveInFlight || matchSeries === null || !inputModeActive()) return;
+  matchSaveInFlight = true;
+  setMatchExportMessage(null, "EXPORTING .ttrm …");
+  renderMatchSaveButton();
+  try {
+    if (matchRoundFinalization !== null) await matchRoundFinalization;
+    if (matchSeries === null) return;
+    const records = matchSeries.rounds
+      .map((round) => round.executedTtrm)
+      .filter((record) => record?.text);
+    if (records.length === 0) throw new Error("a completed input round is required before saving .ttrm");
+    const file = aggregateInputTtrm(records);
+    const text = JSON.stringify(file, null, 2);
+    const seed = matchSeries.replayMeta?.match?.seed ?? matchSeries.config.seed;
+    const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+    const name = `s2-input-match-${seed}-${stamp}.ttrm`;
+    const blob = new Blob([text], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+    setMatchExportMessage("saved", `SAVED ${name} · ${records.length} ROUND(S)`);
+  } catch (error) {
+    handleMatchError(error);
+  } finally {
+    matchSaveInFlight = false;
+    renderMatchSaveButton();
+  }
+}
+
+function aggregateInputTtrm(records) {
+  const files = records.map((record) => JSON.parse(record.text));
+  const first = files[0];
+  const users = new Map();
+  const rounds = [];
+  const provenance = [];
+  for (const [index, file] of files.entries()) {
+    for (const user of file.users ?? []) if (!users.has(user.id)) users.set(user.id, structuredClone(user));
+    rounds.push(...(file.replay?.rounds ?? []).map((round) => structuredClone(round)));
+    provenance.push(structuredClone(records[index].provenance ?? null));
+  }
+  const firstProvenance = provenance.find((value) => value !== null) ?? {};
+  // The native TETR.IO match viewer reads this before it opens any round.
+  const leaderboard = [...users.values()].map(({ id, username }, naturalorder) => {
+    const played = rounds.flatMap(round => round.filter(player => player.id === id));
+    const lifetime = played.reduce((sum, player) => sum + player.lifetime, 0);
+    const stats = Object.fromEntries(['apm', 'pps', 'vsscore'].map(key => [key,
+      lifetime === 0 ? 0 : played.reduce((sum, player) => sum + player.stats[key] * player.lifetime, 0) / lifetime,
+    ]));
+    return { id, username, active: true, naturalorder,
+      wins: played.filter(player => player.active && player.alive).length, stats };
+  });
+  return {
+    version: first.version,
+    gamemode: first.gamemode ?? "league",
+    users: [...users.values()],
+    replay: { leaderboard, rounds },
+    meta: {
+      origin: firstProvenance.origin ?? "s2-bot-lab-generated",
+      executionProfile: firstProvenance.profile ?? INPUT_EXECUTION_PROFILE,
+      verification: firstProvenance.verification ?? null,
+      releaseEvidence: firstProvenance.releaseEvidence === true,
+      provenance,
+    },
+  };
+}
+
 function matchSeriesWinner() {
   if (matchSeries === null) return null;
   const { firstTo } = matchSeries.config;
@@ -2052,7 +2450,7 @@ function matchSeriesWinner() {
 function setMatchSettingsDisabled(disabled) {
   for (const id of [
     "left-bot", "right-bot", "left-bot-settings", "right-bot-settings",
-    "match-fair-comparison", "match-pre-lock-preview", "match-seed", "match-max-turns", "match-unlimited-turns", "match-count",
+    "match-fair-comparison", "match-pre-lock-preview", "match-ttrm-compatible", "match-seed", "match-max-turns", "match-unlimited-turns", "match-count",
   ]) elements[id].disabled = disabled;
   elements["match-max-turns"].disabled = disabled || elements["match-unlimited-turns"].checked;
   syncRandomSeedControl(disabled);
@@ -2064,13 +2462,18 @@ function setMatchSettingsDisabled(disabled) {
    1 PPS. Pin it off rather than silently ignoring it. */
 function syncHumanMatchControls(matchSettingsDisabled = false) {
   const playing = selectedHumanSide() !== null;
-  if (playing) {
+  const inputMode = inputModeSelected() || (matchRunning && inputModeActive());
+  if (playing || inputMode) {
     elements["match-fair-comparison"].checked = false;
   }
-  elements["match-fair-comparison"].disabled = matchSettingsDisabled || playing;
-  elements["match-step"].title = playing
-    ? "1P対戦では自分のハードドロップが手番を進めます"
-    : "";
+  elements["match-fair-comparison"].disabled = matchSettingsDisabled || playing || inputMode;
+  elements["match-pre-lock-preview"].disabled = matchSettingsDisabled || inputMode;
+  elements["match-pre-lock-preview"].title = inputMode ? "TTRM INPUTでは実ミノとゴーストを表示するため、PRE-LOCK PREVIEWは使いません" : "";
+  elements["match-step"].title = inputMode
+    ? "TTRM INPUT は固定の実入力プロファイルで1フレームずつ進みます"
+    : playing
+      ? "1P対戦では自分のハードドロップが手番を進めます"
+      : "";
 }
 
 function syncMaxTurnsControl() {
@@ -2134,7 +2537,7 @@ function renderMatch(view) {
      started: that clock is what their own lock frames are read from, so it must
      not be pulled back to the last confirmed lock or held at the opponent's
      next one. Bot-only matches stay on the step-by-step projection. */
-  if (human !== null) paintMatchClock(performance.now());
+  if (inputModeActive() || human !== null) paintMatchClock(performance.now());
   else if (Number.isFinite(view.metricElapsedMs)) {
     const nextElapsedMs = Number.isFinite(view.nextStepFrames) && view.nextStepFrames > 0
       ? view.metricElapsedMs + view.nextStepFrames * 1000 / 60
@@ -2151,9 +2554,13 @@ function renderMatch(view) {
   renderMatchStatus();
   for (const bot of view.bots) {
     const side = bot.id;
+    elements[`match-${side}-field`].classList.toggle("input-spawn-field", inputModeActive());
     const botLabel = botLabelFor(bot.type);
     elements[`match-${side}-name`].textContent = `${side.toUpperCase()} · ${botLabel}`;
     elements[`match-${side}-stats`].textContent = `${bot.stats.attack} ATK · ${bot.stats.garbageCancelled} CNL · ${bot.stats.garbageSent} SENT · ${bot.stats.garbageReceived} RECV`;
+    elements[`match-${side}-stats`].title = bot.inputExecution && bot.type !== "human"
+      ? formatInputExecutionTooltip(bot.inputExecution)
+      : "";
     const clear = bot.lastClear;
     renderClearInfo(`match-${side}`, bot.b2b, bot.combo, clear === null
       ? ""
@@ -2161,9 +2568,13 @@ function renderMatch(view) {
     elements[`match-${side}-score`].textContent = Number.isFinite(bot.score)
       ? `SCORE ${bot.score.toFixed(2)}`
       : "—";
-    // A human side's board, HOLD and NEXT are drawn from the live piece state
-    // instead, so a bot's step does not repaint over the piece being moved.
-    if (human === null || human.side !== side) {
+    elements[`match-${side}-score`].title = inputModeActive() ? "TTRM INPUTでは配置評価点（SCORE）を表示しません" : "配置の評価点";
+    // Input-profile rounds expose the referee's settled board and active cells
+    // for both sides. The human's local placement overlay belongs only to the
+    // legacy final-placement route.
+    if (inputModeActive()) {
+      renderInputMatchSide(bot);
+    } else if (human === null || human.side !== side) {
       renderMatchField(elements[`match-${side}-field`], bot.board, bot.lastPlaced);
       renderMini(elements[`match-${side}-hold`], bot.hold);
       renderNextList(elements[`match-${side}-next`], bot.next.slice(0, 5));
@@ -2172,6 +2583,16 @@ function renderMatch(view) {
     renderMatchMetrics(side, bot.metrics, bot.stats.turns);
   }
   renderMatchSaveButton();
+}
+
+function renderInputMatchSide(bot) {
+  // Engine spawns at y=21..22. Include the buffer so HOLD/lock successors
+  // appear immediately instead of remaining invisible until gravity lowers them.
+  const overlay = inputPieceOverlay(bot.board, bot.activeCells, bot.current,
+    bot.type !== "human" || humanHandling(humanControls).ghost);
+  renderMatchField(elements[`match-${bot.id}-field`], bot.board, bot.lastPlaced, overlay, { rows: 23 });
+  renderMini(elements[`match-${bot.id}-hold`], bot.hold);
+  renderNextList(elements[`match-${bot.id}-next`], bot.next.slice(0, 5));
 }
 
 function renderRealtimeMatchClock(nowMs) {

@@ -1,5 +1,6 @@
 import { createCc2WasmSession } from "../src-js/cc2-wasm-engine.mjs";
-import { resolveStaticCc2Submission } from "../src-js/static-cc2-proposal.mjs";
+import { resolveQualifiedStaticCc2Submission } from "../src-js/s2-amount-only-public-resolver.mjs";
+import { resolveInputJob } from '../src-js/input-public-job.mjs';
 
 let session = null;
 let engine = null;
@@ -26,7 +27,10 @@ self.onmessage = async ({ data }) => {
       if (payload.type !== engine || payload.engine?.botType !== engine || payload.engine?.engineId !== engine) {
         throw new Error(`CC2 resolution engine identity mismatch for ${payload.type}`);
       }
-      self.postMessage({ id, ok: true, value: resolveStaticCc2Submission(payload) });
+      self.postMessage({ id, ok: true, value: resolveQualifiedStaticCc2Submission(payload) });
+    } else if (type === 'resolveInput') {
+      if (!session || payload.request?.type !== engine || payload.request.engine?.engineId !== engine) throw new Error('input resolution identity mismatch');
+      self.postMessage({ id, ok: true, value: resolveInputJob(payload) });
     } else if (type === "close") {
       await session?.close();
       session = null;
@@ -34,6 +38,7 @@ self.onmessage = async ({ data }) => {
       self.postMessage({ id, ok: true });
     } else throw new Error(`unknown worker request: ${type}`);
   } catch (error) {
-    self.postMessage({ id, ok: false, error: error instanceof Error ? error.message : String(error) });
+    self.postMessage({ id, ok: false, error: error instanceof Error ? error.message : String(error),
+      suggestionReceived: error?.suggestionReceived, moveInfo: error?.moveInfo });
   }
 };

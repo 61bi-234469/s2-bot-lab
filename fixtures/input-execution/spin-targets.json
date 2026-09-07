@@ -1,0 +1,1605 @@
+{
+  "source": "Local seed-42 generated input canary; public states only",
+  "cases": [
+    {
+      "id": "hold-t-spin-double",
+      "request": {
+        "id": "s2-amount-only-decision-request/1",
+        "sessionKey": "audit",
+        "type": "cc2-s2-f14",
+        "engine": {
+          "botType": "cc2-s2-f14",
+          "engineId": "audit"
+        },
+        "decision": {
+          "id": "s2-amount-only-decision-state/1",
+          "rulesetId": "tetrio-s2-v19-2c47b3df945f6714449b92d1b44346ef4bf0e1a20e95be8ed10c28be75c66a60-beta-1-5-0",
+          "board": {
+            "width": 10,
+            "height": 40,
+            "visibleHeight": 20,
+            "cells": "LL_IIIIJOOL___SJJJOOL__SS________S______________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________"
+          },
+          "pieces": {
+            "current": "Z",
+            "hold": "T",
+            "known": [
+              "I",
+              "J",
+              "Z",
+              "L",
+              "O",
+              "S",
+              "T",
+              "I",
+              "J",
+              "S",
+              "Z",
+              "L",
+              "O",
+              "T"
+            ],
+            "holdAvailable": true
+          },
+          "chain": {
+            "combo": 0,
+            "b2b": 0
+          },
+          "lockTime": {
+            "logicalFrame": 61,
+            "piecesPlaced": 5,
+            "frameSemantics": "engine-frame"
+          },
+          "incoming": {
+            "pendingRows": 0,
+            "dueThisLockRows": 0
+          }
+        },
+        "moves": [
+          {
+            "location": {
+              "type": "T",
+              "orientation": "south",
+              "x": 2,
+              "y": 1
+            },
+            "spin": "full"
+          },
+          {
+            "location": {
+              "type": "Z",
+              "orientation": "north",
+              "x": 5,
+              "y": 2
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "Z",
+              "orientation": "north",
+              "x": 4,
+              "y": 3
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "Z",
+              "orientation": "north",
+              "x": 8,
+              "y": 2
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "Z",
+              "orientation": "north",
+              "x": 7,
+              "y": 2
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "Z",
+              "orientation": "north",
+              "x": 6,
+              "y": 2
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "Z",
+              "orientation": "east",
+              "x": 8,
+              "y": 3
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "T",
+              "orientation": "east",
+              "x": 2,
+              "y": 1
+            },
+            "spin": "full"
+          },
+          {
+            "location": {
+              "type": "T",
+              "orientation": "north",
+              "x": 2,
+              "y": 1
+            },
+            "spin": "mini"
+          },
+          {
+            "location": {
+              "type": "Z",
+              "orientation": "east",
+              "x": 5,
+              "y": 3
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "Z",
+              "orientation": "east",
+              "x": 6,
+              "y": 3
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "Z",
+              "orientation": "east",
+              "x": 7,
+              "y": 3
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "T",
+              "orientation": "west",
+              "x": 2,
+              "y": 1
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "T",
+              "orientation": "north",
+              "x": 8,
+              "y": 2
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "Z",
+              "orientation": "north",
+              "x": 2,
+              "y": 1
+            },
+            "spin": "mini"
+          },
+          {
+            "location": {
+              "type": "T",
+              "orientation": "north",
+              "x": 6,
+              "y": 2
+            },
+            "spin": "none"
+          }
+        ]
+      },
+      "movement": {
+        "falling": {
+          "symbol": "z",
+          "location": [
+            3,
+            22.02
+          ],
+          "rotation": 0,
+          "aox": 0,
+          "aoy": 0,
+          "fallingRotations": 0,
+          "highestY": 22,
+          "ihs": false,
+          "irs": 0,
+          "keys": 0,
+          "locking": 0,
+          "lockResets": 0,
+          "rotResets": 0,
+          "safeLock": 0,
+          "totalRotations": 0
+        },
+        "input": {
+          "lShift": {
+            "held": false,
+            "arr": 0,
+            "das": 0,
+            "dir": -1
+          },
+          "rShift": {
+            "held": false,
+            "arr": 0,
+            "das": 0,
+            "dir": 1
+          },
+          "lastShift": -1,
+          "firstInputTime": -1,
+          "time": {
+            "start": 0,
+            "zero": true,
+            "locked": false,
+            "prev": 0
+          },
+          "lastPieceTime": 0,
+          "keys": {
+            "softDrop": false,
+            "hold": false,
+            "rotateCW": false,
+            "rotateCCW": false,
+            "rotate180": false
+          }
+        },
+        "frame": 61,
+        "subframe": 0,
+        "hold": "t",
+        "holdLocked": false,
+        "lastSpin": null,
+        "lastWasClear": false,
+        "glock": 0,
+        "state": 0,
+        "handling": {
+          "arr": 0,
+          "das": 0,
+          "dcd": 0,
+          "sdf": 41,
+          "safelock": false,
+          "cancel": true,
+          "may20g": true,
+          "irs": "off",
+          "ihs": "off"
+        }
+      }
+    },
+    {
+      "id": "hold-t-spin-mini",
+      "request": {
+        "id": "s2-amount-only-decision-request/1",
+        "sessionKey": "audit",
+        "type": "cc2-s2-f14",
+        "engine": {
+          "botType": "cc2-s2-f14",
+          "engineId": "audit"
+        },
+        "decision": {
+          "id": "s2-amount-only-decision-state/1",
+          "rulesetId": "tetrio-s2-v19-2c47b3df945f6714449b92d1b44346ef4bf0e1a20e95be8ed10c28be75c66a60-beta-1-5-0",
+          "board": {
+            "width": 10,
+            "height": 40,
+            "visibleHeight": 20,
+            "cells": "_GGGGGGGGGLL_IIIIJOOL___SJJJOOL__SSZZZJJ___SZZ_ZZJ___IIIILZJ___OO__LLL___OO_____________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________"
+          },
+          "pieces": {
+            "current": "S",
+            "hold": "T",
+            "known": [
+              "T",
+              "I",
+              "J",
+              "S",
+              "Z",
+              "L",
+              "O",
+              "T",
+              "L",
+              "T",
+              "J",
+              "S",
+              "O",
+              "I"
+            ],
+            "holdAvailable": true
+          },
+          "chain": {
+            "combo": 0,
+            "b2b": 0
+          },
+          "lockTime": {
+            "logicalFrame": 148,
+            "piecesPlaced": 11,
+            "frameSemantics": "engine-frame"
+          },
+          "incoming": {
+            "pendingRows": 0,
+            "dueThisLockRows": 0
+          }
+        },
+        "moves": [
+          {
+            "location": {
+              "type": "T",
+              "orientation": "north",
+              "x": 2,
+              "y": 2
+            },
+            "spin": "mini"
+          },
+          {
+            "location": {
+              "type": "T",
+              "orientation": "south",
+              "x": 2,
+              "y": 2
+            },
+            "spin": "full"
+          },
+          {
+            "location": {
+              "type": "T",
+              "orientation": "east",
+              "x": 2,
+              "y": 2
+            },
+            "spin": "full"
+          },
+          {
+            "location": {
+              "type": "T",
+              "orientation": "south",
+              "x": 6,
+              "y": 7
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "S",
+              "orientation": "north",
+              "x": 6,
+              "y": 6
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "T",
+              "orientation": "north",
+              "x": 8,
+              "y": 7
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "S",
+              "orientation": "north",
+              "x": 8,
+              "y": 7
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "T",
+              "orientation": "east",
+              "x": 6,
+              "y": 7
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "T",
+              "orientation": "west",
+              "x": 6,
+              "y": 7
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "S",
+              "orientation": "east",
+              "x": 5,
+              "y": 7
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "T",
+              "orientation": "east",
+              "x": 5,
+              "y": 7
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "S",
+              "orientation": "east",
+              "x": 1,
+              "y": 2
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "T",
+              "orientation": "north",
+              "x": 7,
+              "y": 7
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "S",
+              "orientation": "north",
+              "x": 7,
+              "y": 7
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "S",
+              "orientation": "east",
+              "x": 8,
+              "y": 8
+            },
+            "spin": "none"
+          },
+          {
+            "location": {
+              "type": "T",
+              "orientation": "south",
+              "x": 8,
+              "y": 8
+            },
+            "spin": "none"
+          }
+        ]
+      },
+      "movement": {
+        "falling": {
+          "symbol": "s",
+          "location": [
+            3,
+            22.02
+          ],
+          "rotation": 0,
+          "aox": 0,
+          "aoy": 0,
+          "fallingRotations": 0,
+          "highestY": 22,
+          "ihs": false,
+          "irs": 0,
+          "keys": 0,
+          "locking": 0,
+          "lockResets": 0,
+          "rotResets": 0,
+          "safeLock": 0,
+          "totalRotations": 0
+        },
+        "input": {
+          "lShift": {
+            "held": false,
+            "arr": 0,
+            "das": 0,
+            "dir": -1
+          },
+          "rShift": {
+            "held": false,
+            "arr": 0,
+            "das": 0,
+            "dir": 1
+          },
+          "lastShift": -1,
+          "firstInputTime": -1,
+          "time": {
+            "start": 0,
+            "zero": true,
+            "locked": false,
+            "prev": 0
+          },
+          "lastPieceTime": 0,
+          "keys": {
+            "softDrop": false,
+            "hold": false,
+            "rotateCW": false,
+            "rotateCCW": false,
+            "rotate180": false
+          }
+        },
+        "frame": 148,
+        "subframe": 0,
+        "hold": "t",
+        "holdLocked": false,
+        "lastSpin": null,
+        "lastWasClear": false,
+        "glock": 0,
+        "state": 0,
+        "handling": {
+          "arr": 0,
+          "das": 0,
+          "dcd": 0,
+          "sdf": 41,
+          "safelock": false,
+          "cancel": true,
+          "may20g": true,
+          "irs": "off",
+          "ihs": "off"
+        }
+      }
+    }
+  ],
+  "player": {
+    "id": "right",
+    "username": "right",
+    "alive": true,
+    "replay": {
+      "frames": 171,
+      "events": [
+        {
+          "frame": 0,
+          "type": "start"
+        },
+        {
+          "frame": 0,
+          "type": "ige",
+          "data": {
+            "type": "target",
+            "data": {
+              "targets": [
+                1
+              ]
+            }
+          }
+        },
+        {
+          "frame": 12,
+          "type": "keydown",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 12,
+          "type": "keyup",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 12,
+          "type": "keydown",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 12,
+          "type": "keyup",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 12,
+          "type": "keydown",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 12,
+          "type": "keyup",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 12,
+          "type": "keydown",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 12,
+          "type": "keyup",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 12,
+          "type": "keydown",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 12,
+          "type": "keyup",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 24,
+          "type": "keydown",
+          "data": {
+            "key": "hold",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 24,
+          "type": "keyup",
+          "data": {
+            "key": "hold",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 24,
+          "type": "keydown",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 24,
+          "type": "keyup",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 36,
+          "type": "keydown",
+          "data": {
+            "key": "rotateCW",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 36,
+          "type": "keyup",
+          "data": {
+            "key": "rotateCW",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 36,
+          "type": "keydown",
+          "data": {
+            "key": "moveLeft",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 36,
+          "type": "keyup",
+          "data": {
+            "key": "moveLeft",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 36,
+          "type": "keydown",
+          "data": {
+            "key": "moveLeft",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 36,
+          "type": "keyup",
+          "data": {
+            "key": "moveLeft",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 36,
+          "type": "keydown",
+          "data": {
+            "key": "moveLeft",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 36,
+          "type": "keyup",
+          "data": {
+            "key": "moveLeft",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 36,
+          "type": "keydown",
+          "data": {
+            "key": "moveLeft",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 36,
+          "type": "keyup",
+          "data": {
+            "key": "moveLeft",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 36,
+          "type": "keydown",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 36,
+          "type": "keyup",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 48,
+          "type": "keydown",
+          "data": {
+            "key": "rotate180",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 48,
+          "type": "keyup",
+          "data": {
+            "key": "rotate180",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 48,
+          "type": "keydown",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 48,
+          "type": "keyup",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 48,
+          "type": "keydown",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 48,
+          "type": "keyup",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 48,
+          "type": "keydown",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 48,
+          "type": "keyup",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 60,
+          "type": "keydown",
+          "data": {
+            "key": "rotateCW",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 60,
+          "type": "keyup",
+          "data": {
+            "key": "rotateCW",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 60,
+          "type": "keydown",
+          "data": {
+            "key": "moveLeft",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 60,
+          "type": "keyup",
+          "data": {
+            "key": "moveLeft",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 60,
+          "type": "keydown",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 60,
+          "type": "keyup",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 72,
+          "type": "keydown",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 72,
+          "type": "keyup",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 72,
+          "type": "keydown",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 72,
+          "type": "keyup",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 84,
+          "type": "keydown",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 84,
+          "type": "keyup",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 89,
+          "type": "ige",
+          "data": {
+            "type": "interaction",
+            "data": {
+              "type": "garbage",
+              "amt": 1,
+              "size": 1,
+              "iid": 1,
+              "gameid": 1,
+              "ackiid": 0
+            }
+          }
+        },
+        {
+          "frame": 89,
+          "type": "ige",
+          "data": {
+            "type": "interaction_confirm",
+            "data": {
+              "type": "garbage",
+              "iid": 1,
+              "gameid": 1,
+              "frame": 88
+            }
+          }
+        },
+        {
+          "frame": 105,
+          "type": "keydown",
+          "data": {
+            "key": "rotateCCW",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 105,
+          "type": "keyup",
+          "data": {
+            "key": "rotateCCW",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 105,
+          "type": "keydown",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 105,
+          "type": "keyup",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 105,
+          "type": "keydown",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 105,
+          "type": "keyup",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 105,
+          "type": "keydown",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 105,
+          "type": "keyup",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 105,
+          "type": "keydown",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 105,
+          "type": "keyup",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 105,
+          "type": "keydown",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 105,
+          "type": "keyup",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 105,
+          "type": "keydown",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 105,
+          "type": "keyup",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 123,
+          "type": "keydown",
+          "data": {
+            "key": "rotateCW",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 123,
+          "type": "keyup",
+          "data": {
+            "key": "rotateCW",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 123,
+          "type": "keydown",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 123,
+          "type": "keyup",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 123,
+          "type": "keydown",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 123,
+          "type": "keyup",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 123,
+          "type": "keydown",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 123,
+          "type": "keyup",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 123,
+          "type": "keydown",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 123,
+          "type": "keyup",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 135,
+          "type": "keydown",
+          "data": {
+            "key": "rotate180",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 135,
+          "type": "keyup",
+          "data": {
+            "key": "rotate180",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 135,
+          "type": "keydown",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 135,
+          "type": "keyup",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 135,
+          "type": "keydown",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 135,
+          "type": "keyup",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 135,
+          "type": "keydown",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 135,
+          "type": "keyup",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 135,
+          "type": "keydown",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 135,
+          "type": "keyup",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 135,
+          "type": "keydown",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 135,
+          "type": "keyup",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 147,
+          "type": "keydown",
+          "data": {
+            "key": "moveLeft",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 147,
+          "type": "keyup",
+          "data": {
+            "key": "moveLeft",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 147,
+          "type": "keydown",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 147,
+          "type": "keyup",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 158,
+          "type": "ige",
+          "data": {
+            "type": "interaction",
+            "data": {
+              "type": "garbage",
+              "amt": 1,
+              "size": 1,
+              "iid": 2,
+              "gameid": 1,
+              "ackiid": 0
+            }
+          }
+        },
+        {
+          "frame": 158,
+          "type": "ige",
+          "data": {
+            "type": "interaction_confirm",
+            "data": {
+              "type": "garbage",
+              "iid": 2,
+              "gameid": 1,
+              "frame": 157
+            }
+          }
+        },
+        {
+          "frame": 168,
+          "type": "keydown",
+          "data": {
+            "key": "hold",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 168,
+          "type": "keyup",
+          "data": {
+            "key": "hold",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 168,
+          "type": "keydown",
+          "data": {
+            "key": "rotate180",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 168,
+          "type": "keyup",
+          "data": {
+            "key": "rotate180",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 168,
+          "type": "keydown",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 168,
+          "type": "keyup",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 168,
+          "type": "keydown",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 168,
+          "type": "keyup",
+          "data": {
+            "key": "moveRight",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 168,
+          "type": "keydown",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 168,
+          "type": "keyup",
+          "data": {
+            "key": "hardDrop",
+            "subframe": 0
+          }
+        },
+        {
+          "frame": 170,
+          "type": "end"
+        }
+      ],
+      "options": {
+        "boardwidth": 10,
+        "boardheight": 20,
+        "kickset": "SRS+",
+        "bagtype": "7-bag",
+        "combotable": "multiplier",
+        "garbageblocking": "combo blocking",
+        "clutch": true,
+        "garbagetargetbonus": "none",
+        "spinbonuses": "all-mini+",
+        "stock": 0,
+        "garbageabsolutecap": 0,
+        "garbagecapincrease": 0,
+        "garbagecapmax": 40,
+        "garbagecap": 8,
+        "garbagecapmargin": 0,
+        "garbagespeed": 20,
+        "garbageholesize": 1,
+        "messiness_change": 1,
+        "messiness_nosame": false,
+        "messiness_timeout": 0,
+        "messiness_inner": 0,
+        "messiness_center": false,
+        "garbagemultiplier": 1,
+        "garbageincrease": 0.008,
+        "garbagemargin": 10800,
+        "usebombs": false,
+        "garbagespecialbonus": true,
+        "openerphase": 14,
+        "roundmode": "down",
+        "g": 0.02,
+        "gincrease": 0.0035,
+        "gmargin": 7200,
+        "b2bchaining": false,
+        "b2bcharging": true,
+        "b2bcharge_base": 3,
+        "allclear_b2b": 1,
+        "allclear_garbage": 5,
+        "allowharddrop": true,
+        "allow180": true,
+        "display_hold": true,
+        "infinite_hold": false,
+        "stride": false,
+        "lockresets": 15,
+        "gravitymay20g": true,
+        "passthrough": "zero",
+        "TEMP_zenith_grace": "",
+        "TEMP_zenith_rng": false,
+        "absolute_lines": false,
+        "allclear_b2b_dupes": false,
+        "allclear_b2b_sends": true,
+        "allclear_charges": false,
+        "allclears": true,
+        "allow_harddrop": true,
+        "anchorseed": false,
+        "are": 0,
+        "b2bcharge_at": 4,
+        "b2bextras": false,
+        "bgmnoreset": true,
+        "boardbuffer": 20,
+        "boardskin": "generic",
+        "can_retry": false,
+        "can_undo": false,
+        "cancelmultiplier": 1,
+        "countdown": true,
+        "countdown_interval": 1000,
+        "display_fire": false,
+        "display_next": true,
+        "display_replay": false,
+        "display_shadow": true,
+        "display_username": true,
+        "display_zen": false,
+        "forfeit_time": 300,
+        "fromretry": false,
+        "garbageare": 5,
+        "garbagearebump": 12,
+        "garbageattackcap": 0,
+        "garbageentry": "instant",
+        "garbagefavor": 0,
+        "garbagephase": 0,
+        "garbagequeue": false,
+        "hasgarbage": true,
+        "infinite_movement": false,
+        "infinite_stock": false,
+        "inverted": false,
+        "invisible": false,
+        "latencymode": "low",
+        "levelgbase": 0.8,
+        "levelgspeed": 0.007,
+        "levels": false,
+        "levelspeed": 1,
+        "levelstatic": false,
+        "levelstaticspeed": 10,
+        "lineclear_are": 0,
+        "locktime": 30,
+        "manual_allowed": false,
+        "map": "",
+        "master_invisible": false,
+        "masterlevels": false,
+        "minoskin": {
+          "z": "tetrio",
+          "l": "tetrio",
+          "o": "tetrio",
+          "s": "tetrio",
+          "i": "tetrio",
+          "j": "tetrio",
+          "t": "tetrio",
+          "other": "tetrio",
+          "ghost": "tetrio"
+        },
+        "mission_type": "mission_league",
+        "neverstopbgm": true,
+        "new_payback": false,
+        "nextcount": 5,
+        "no_mission_sound": false,
+        "no_szo": false,
+        "noextrawidth": true,
+        "nolockout": true,
+        "noreplay": false,
+        "nosiren": false,
+        "nosound": false,
+        "objective_count": 0,
+        "objective_result": "",
+        "objective_time": 0,
+        "objective_type": "none",
+        "pro": false,
+        "pro_alert": false,
+        "pro_retry": false,
+        "receivemultiplier": 1,
+        "retryisclear": false,
+        "room_handling": false,
+        "room_handling_arr": 2,
+        "room_handling_das": 10,
+        "room_handling_sdf": 6,
+        "score": 0,
+        "seed_random": false,
+        "shielded": 0,
+        "slot_bar1": "impending",
+        "slot_bar2": "",
+        "slot_counter1": "stopwatch",
+        "slot_counter2": "attack",
+        "slot_counter3": "pieces",
+        "slot_counter4": "",
+        "slot_counter5": "vs",
+        "song": "none",
+        "startinglevel": 1,
+        "survival_cap": 0,
+        "survival_layer_amt": 10,
+        "survival_layer_min": 0,
+        "survival_layer_non": false,
+        "survival_messiness": 0,
+        "survival_timer_itv": 1,
+        "survivalmode": "none",
+        "topoutisclear": false,
+        "tutorial": false,
+        "usezenconfig": false,
+        "version": 19,
+        "void_holes": 0,
+        "void_holes_hungryness": 12,
+        "zenith": false,
+        "zenith_allspin": false,
+        "zenith_ally": [],
+        "zenith_allyexpert": false,
+        "zenith_doublehole": false,
+        "zenith_duo": false,
+        "zenith_expert": false,
+        "zenith_gravity": false,
+        "zenith_isshadowedside": false,
+        "zenith_messy": false,
+        "zenith_mods": [],
+        "zenith_volatile": false,
+        "zenlevel": 1,
+        "zenlevels": false,
+        "zenprogress": 0,
+        "seed": 42,
+        "handling": {
+          "arr": 0,
+          "das": 0,
+          "dcd": 0,
+          "sdf": 41,
+          "safelock": false,
+          "cancel": true,
+          "may20g": true,
+          "irs": "off",
+          "ihs": "off"
+        }
+      },
+      "results": {
+        "stats": {
+          "piecesplaced": 12,
+          "lines": 0,
+          "garbage": {
+            "attack": 0,
+            "sent": 0,
+            "received": 2,
+            "cleared": 0
+          }
+        },
+        "gameoverreason": "winner"
+      }
+    }
+  }
+}

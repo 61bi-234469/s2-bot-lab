@@ -1,4 +1,5 @@
 import { createGuiRequestHandlers } from "../src-js/gui-request-handlers.mjs";
+import { amountOnlyDecisionFingerprint } from "../src-js/s2-amount-only-decision-request.mjs";
 
 let installed = false;
 
@@ -18,7 +19,8 @@ export function installStaticTransport() {
     const body = request.method === "GET" || request.method === "HEAD" ? null : await request.text();
     let parsed = body;
     if (request.headers.get("content-type")?.includes("application/json")) parsed = JSON.parse(body);
-    const result = await handlers.handle({ method: request.method, path: url.pathname, body: parsed });
+    const result = await handlers.handle({ method: request.method,
+      path: url.pathname.startsWith('/api/input-match/') ? url.pathname + url.search : url.pathname, body: parsed });
     return new Response(JSON.stringify(result.body), {
       status: result.status,
       headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
@@ -33,7 +35,10 @@ export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTim
   return Object.freeze({
     async propose({ sessionKey, engine, state, selectionLimit, thinkMs }) {
       if (typeof sessionKey !== "string" || sessionKey.length === 0) throw new Error("CC2 sessionKey is required");
+      const inputCandidates = state?.input_candidates === true;
+      if (inputCandidates && !['cc2-raw', 'cc2-chouhy'].includes(engine)) throw new Error('input candidate prefix engine mismatch');
       let entry = sessions.get(sessionKey);
+      if (entry !== undefined && entry.inputCandidates !== inputCandidates) throw new Error('input candidate prefix session mismatch');
       if (entry !== undefined && (entry.engine !== engine || entry.selectionLimit !== selectionLimit)) {
         await closeEntry(sessionKey, entry);
         entry = undefined;
@@ -41,14 +46,26 @@ export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTim
       if (entry === undefined) {
         entry = {
           engine,
+          inputCandidates,
           selectionLimit,
-          workerSession: await createWorkerSession({ WorkerType, engine, selectionLimit }),
+          workerSession: null,
           idleTimer: null,
         };
         sessions.set(sessionKey, entry);
+        const initialized = entry;
+        entry.initializing = createWorkerSession({ WorkerType, engine, selectionLimit }).then(async workerSession => {
+          initialized.workerSession = workerSession;
+          if (sessions.get(sessionKey) !== initialized) {
+            await workerSession.close();
+            throw new Error('CC2 worker session was replaced during initialization');
+          }
+          return workerSession;
+        });
+        void entry.initializing.catch(() => {});
       }
       clearIdleClose(entry);
       try {
+        await entry.initializing;
         const result = await entry.workerSession.suggest({ state, thinkMs });
         if (sessions.get(sessionKey) !== entry) throw new Error("CC2 worker session was replaced");
         scheduleIdleClose(sessionKey, entry);
@@ -59,16 +76,19 @@ export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTim
       }
     },
 
-    async resolve({ sessionKey, gui, moves, type, engine }) {
+    async resolve(request) {
+      const { sessionKey, type, engine } = request ?? {};
       if (typeof sessionKey !== "string" || sessionKey.length === 0) throw new Error("CC2 sessionKey is required");
       const entry = sessions.get(sessionKey);
       if (entry === undefined) throw new Error(`CC2 session ${sessionKey} is not initialized`);
       if (entry.engine !== type || engine?.botType !== type || engine?.engineId !== type) {
         throw new Error(`CC2 resolution engine identity mismatch for ${type}`);
       }
+      amountOnlyDecisionFingerprint(request);
       clearIdleClose(entry);
       try {
-        const result = await entry.workerSession.resolve({ gui, moves, type, engine });
+        if (entry.workerSession === null) await entry.initializing;
+        const result = await entry.workerSession.resolve(request);
         if (sessions.get(sessionKey) !== entry) throw new Error("CC2 worker session was replaced");
         scheduleIdleClose(sessionKey, entry);
         return result;
@@ -76,6 +96,19 @@ export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTim
         await closeEntry(sessionKey, entry);
         throw error;
       }
+    },
+
+    async resolveInput(payload) {
+      const entry = sessions.get(payload.request.sessionKey);
+      if (!entry || entry.engine !== payload.request.type) throw new Error('input worker session mismatch');
+      clearIdleClose(entry);
+      try {
+        if (entry.workerSession === null) await entry.initializing;
+        const result = await entry.workerSession.resolveInput(payload);
+        if (sessions.get(payload.request.sessionKey) !== entry) throw new Error('input worker session replaced');
+        scheduleIdleClose(payload.request.sessionKey, entry);
+        return result;
+      } catch (error) { await closeEntry(payload.request.sessionKey, entry); throw error; }
     },
 
     async closeSessions({ sessionKeys = null } = {}) {
@@ -101,7 +134,7 @@ export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTim
     if (sessions.get(sessionKey) !== entry) return;
     sessions.delete(sessionKey);
     clearIdleClose(entry);
-    await entry.workerSession.close();
+    await entry.workerSession?.close();
   }
 }
 
@@ -124,7 +157,9 @@ async function createWorkerSession({ WorkerType, engine, selectionLimit }) {
     if (!waiter) return;
     pending.delete(data.id);
     if (data.ok) waiter.resolve(data.value);
-    else waiter.reject(new Error(data.error));
+    else waiter.reject(Object.assign(new Error(data.error), {
+      suggestionReceived: data.suggestionReceived, moveInfo: data.moveInfo,
+    }));
   };
   worker.onerror = (event) => {
     event.preventDefault?.();
@@ -154,6 +189,7 @@ async function createWorkerSession({ WorkerType, engine, selectionLimit }) {
   return Object.freeze({
     suggest: ({ state, thinkMs }) => request("suggest", { state, thinkMs }),
     resolve: (payload) => request("resolve", payload),
+    resolveInput: (payload) => request('resolveInput', payload),
     async close() {
       if (closed) return;
       const canNotifyWorker = workerFailure === null;

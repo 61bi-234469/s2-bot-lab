@@ -9,9 +9,9 @@
 import { FIELD_HEIGHT, FIELD_WIDTH, PIECE, minoToPiece } from "./pieces.mjs";
 
 /**
- * The engine plays on 40 rows and ReplayIR retains the bottom 23; the number of
- * occupied rows that fell outside that window is reported rather than dropped
- * silently, because a clipped board cannot prove an exact canonical state.
+ * The viewer uses the bottom 23 rows. fullField separately retains every
+ * internal row for lock/terminal evidence; clippedRowCount describes only the
+ * display window, never a claim that the internal board is empty above it.
  */
 export function convertEngineBoard(state) {
   let sourceHeight = 0;
@@ -32,5 +32,7 @@ export function convertEngineBoard(state) {
     }
   }
 
-  return { field, sourceHeight, clippedRowCount: Math.max(0, sourceHeight - FIELD_HEIGHT) };
+  const fullField = state.flatMap((row) => Array.from({ length: FIELD_WIDTH }, (_, x) =>
+    row?.[x] != null ? minoToPiece(row[x].mino) : PIECE.EMPTY));
+  return { field, fullField, sourceHeight, clippedRowCount: Math.max(0, sourceHeight - FIELD_HEIGHT) };
 }

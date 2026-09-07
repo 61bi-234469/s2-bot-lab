@@ -7,7 +7,7 @@
  * pure; DOM builders keep only container-keyed caches and read no app state.
  */
 
-import { VISIBLE_ROWS } from "./human-play.mjs";
+import { VISIBLE_ROWS, fits } from "./human-play.mjs";
 
 export { VISIBLE_ROWS };
 
@@ -57,10 +57,10 @@ export function renderDetailMetrics(container, metrics) {
    because the board itself is settled state. `cellElement` exists only for the
    callers that draw a field inside a button, whose content model admits
    phrasing content rather than divs. */
-export function matchFieldCellSpec(board, lastPlaced, overlay = null) {
+export function matchFieldCellSpec(board, lastPlaced, overlay = null, rows = VISIBLE_ROWS) {
   const placed = new Set((lastPlaced ?? []).map(([x, y]) => `${x}:${y}`));
   const specs = [];
-  for (let y = VISIBLE_ROWS - 1; y >= 0; y -= 1) {
+  for (let y = rows - 1; y >= 0; y -= 1) {
     for (let x = 0; x < 10; x += 1) {
       const overlaid = overlay?.get(`${x}:${y}`) ?? null;
       const piece = overlaid?.piece ?? board[y][x];
@@ -76,10 +76,10 @@ export function matchFieldCellSpec(board, lastPlaced, overlay = null) {
   return specs;
 }
 
-export function renderMatchField(container, board, lastPlaced, overlay = null, { cellElement = "div" } = {}) {
-  const specs = matchFieldCellSpec(board, lastPlaced, overlay);
+export function renderMatchField(container, board, lastPlaced, overlay = null, { cellElement = "div", rows = VISIBLE_ROWS } = {}) {
+  const specs = matchFieldCellSpec(board, lastPlaced, overlay, rows);
   let cached = fieldCache.get(container);
-  if (!validFieldCache(container, cached, cellElement)) {
+  if (!validFieldCache(container, cached, cellElement, specs.length)) {
     const cells = specs.map(() => document.createElement(cellElement));
     container.replaceChildren(...cells);
     cached = { cellElement, cells, specs: Array(specs.length).fill(null) };
@@ -124,6 +124,23 @@ export function renderNextList(container, pieces) {
     if (item.className !== "mini-box") item.className = "mini-box";
     renderMini(item, pieces[index]);
   }
+}
+
+/** Display-only landing projection from the referee's current cells. */
+export function inputPieceOverlay(board, cells, piece, showGhost = true) {
+  const overlay = new Map();
+  if (!piece || !Array.isArray(cells) || cells.length !== 4) return overlay;
+  if (showGhost && fits(board, cells)) {
+    let landing = cells;
+    for (;;) {
+      const lower = landing.map(([x, y]) => [x, y - 1]);
+      if (!fits(board, lower)) break;
+      landing = lower;
+    }
+    addOverlayPiece(overlay, landing, piece, true);
+  }
+  addOverlayPiece(overlay, cells, piece, false);
+  return overlay;
 }
 
 export function renderMini(container, piece) {
@@ -203,13 +220,17 @@ export function outerEdges(cells, x, y) {
 // what makes one gauge row the height of one board cell.
 export function renderGarbageGauge(container, packets, owner) {
   const pending = packets.reduce((total, packet) => total + packet.amount, 0);
+  const tankable = packets.reduce((total, packet) => total + (packet.ready === false ? 0 : packet.amount), 0);
   const segments = [];
   let stacked = 0;
   for (const packet of packets) {
     const rows = Math.min(packet.amount, GAUGE_ROWS - stacked);
     if (rows <= 0) break;
     const segment = document.createElement("div");
-    segment.className = "gauge-segment";
+    // A packet is tankable as a whole: Triangle's queue never exposes a
+    // partly mature packet. Older callers only provide `amount`, so preserve
+    // their solid gauge by treating an omitted readiness flag as ready.
+    segment.className = `gauge-segment${packet.ready === false ? " not-ready" : ""}`;
     // Row 1 is the top of the track, so a segment sitting on `stacked` rows of
     // earlier garbage ends that many rows above the bottom.
     segment.style.gridRow = `${GAUGE_ROWS + 1 - stacked - rows} / span ${rows}`;
@@ -218,9 +239,10 @@ export function renderGarbageGauge(container, packets, owner) {
   }
   container.replaceChildren(...segments);
   container.dataset.pending = String(pending);
+  container.dataset.tankable = String(tankable);
   container.setAttribute(
     "aria-label",
-    `${owner} incoming garbage: ${pending} rows in ${packets.length} attacks`,
+    `${owner} incoming garbage: ${pending} rows in ${packets.length} attacks, ${tankable} active now`,
   );
 }
 
@@ -234,9 +256,9 @@ export function renderFieldRateStats(container, metrics, definitions) {
   });
 }
 
-function validFieldCache(container, cached, cellElement) {
+function validFieldCache(container, cached, cellElement, count) {
   return cached?.cellElement === cellElement
-    && cached.cells.length === 200
+    && cached.cells.length === count
     && validDirectChildren(container, cached.cells, cellElement);
 }
 
@@ -330,6 +352,53 @@ function renderMetricRows(container, metrics, definitions, cache, options) {
 
 export function formatMetric(value, digits) {
   return Number.isFinite(value) ? value.toFixed(digits) : "—";
+}
+
+function shownInputCount(value) {
+  return Number.isFinite(value) ? value : 0;
+}
+
+function shownInputValue(value) {
+  return value === null || value === undefined || value === "" ? "—" : String(value);
+}
+
+function shownInputOffset(value) {
+  return Array.isArray(value) && value.length === 2
+    ? `[${value.map(shownInputValue).join(", ")}]`
+    : "—";
+}
+
+/**
+ * Keep the input execution details available from the compact ATK readout.
+ * The match view owns the data, while this formatter keeps the tooltip's
+ * labels and missing-value behavior in one small, testable display helper.
+ */
+export function formatInputExecutionTooltip(inputExecution) {
+  if (inputExecution === null || typeof inputExecution !== "object") return "";
+  const lines = [
+    `入力計画と接地: 計画 ${shownInputCount(inputExecution.plannedLocks)}手 / 代替 ${shownInputCount(inputExecution.fallbackLocks)}手 / 自然接地 ${shownInputCount(inputExecution.naturalLocks)}手`,
+    `公開状態の不一致 ${shownInputCount(inputExecution.publicStateMismatches)}回 / 遅延応答 ${shownInputCount(inputExecution.lateResponses)}回 / 再計画 ${shownInputCount(inputExecution.replans)}回`,
+  ];
+  const fallback = inputExecution.lastFallback;
+  if (inputExecution.resolutionOutcomes) {
+    const counts = inputExecution.resolutionOutcomes;
+    const decisions = Object.values(counts).reduce((sum, count) => sum + count, 0);
+    const rate = (count, total) => total > 0 ? `${count}/${total} (${(100 * count / total).toFixed(1)}%)` : '—';
+    lines.push(`第1候補実行 / 経路判定: ${rate(inputExecution.plannedLocks - inputExecution.fallbackLocks, decisions)}`);
+    lines.push(`次候補選択 / 経路判定: ${rate(counts.fallback, decisions)}`);
+    lines.push(`経路未発見 ${counts.notFound}回 / 予測失効 ${counts.stale}回`);
+    lines.push(`PPS期限超過 / PPS有効接地: ${rate(inputExecution.deadlineExceededLocks, inputExecution.pacedLocks)}`);
+  }
+  if (fallback === null || typeof fallback !== "object") return lines.join("\n");
+
+  const candidate = fallback.preferredCandidate ?? {};
+  const witness = candidate.rotationWitness ?? {};
+  lines.push(`直近の代替理由: ${shownInputValue(fallback.reason)}`);
+  lines.push(`優先候補: ${shownInputValue(candidate.piece)} / 回転 ${shownInputValue(candidate.rotation)} / スピン ${shownInputValue(candidate.spin)} / ${shownInputValue(candidate.lines)}ライン`);
+  lines.push(`回転証拠: 種類 ${shownInputValue(witness.class)} / キック ${shownInputValue(witness.kickId)} / 移動量 ${shownInputOffset(witness.kickOffset)}`);
+  const pieceNumber = Number.isSafeInteger(fallback.pieceIndex) ? fallback.pieceIndex + 1 : null;
+  lines.push(`代替接地: ${shownInputValue(pieceNumber)}手目 / ${shownInputValue(fallback.frame)}フレーム`);
+  return lines.join("\n");
 }
 
 export function renderChainCounter(node, label, shown, active) {

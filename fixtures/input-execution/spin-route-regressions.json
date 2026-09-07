@@ -1,0 +1,27 @@
+{
+  "source": "Fixed public-board input regressions; no new bot games. The Z board and candidate are taken from the existing seed-42 input canary (spin-targets.json, hold-t-spin-double public state); the TSD board is hand constructed.",
+  "cases": [
+    {
+      "id": "no-kick-sentinel-reverse-tsd",
+      "board": "GGGG_GGGGGGGG___GGGG___G______",
+      "pieces": { "current": "T", "hold": null, "holdAvailable": false, "known": ["I", "O", "S", "Z", "J", "L"] },
+      "expectedPlacement": {
+        "piece": "T", "rotation": "reverse", "x": 3, "y": 0, "usedHold": false,
+        "rotationEvidence": { "lastInputWasRotation": true, "kickIndex": 0, "kickId": "00", "kickOffset": [0, 0] }
+      },
+      "expectedSpin": "normal",
+      "expectedLines": 2
+    },
+    {
+      "id": "downward-kick-after-setup-rotation",
+      "board": "LL_IIIIJOOL___SJJJOOL__SS________S",
+      "pieces": { "current": "Z", "hold": "T", "holdAvailable": true, "known": ["I", "J", "Z", "L", "O", "S", "T", "I", "J", "S", "Z", "L", "O", "T"] },
+      "expectedPlacement": {
+        "piece": "Z", "rotation": "spawn", "x": 1, "y": 0, "usedHold": false,
+        "rotationEvidence": { "lastInputWasRotation": true, "kickIndex": 0, "kickId": "20", "kickOffset": [0, -1] }
+      },
+      "expectedSpin": "mini",
+      "expectedLines": 0
+    }
+  ]
+}

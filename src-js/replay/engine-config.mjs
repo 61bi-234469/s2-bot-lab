@@ -1,3 +1,69 @@
+import S2_MANIFEST from "../../rulesets/tetrio-s2-v19-beta-1-5-0-observed.json" with { type: "json" };
+
+export const INPUT_EXECUTION_PROFILE_ID = "s2-input-execution/1";
+export const INPUT_EXECUTION_HANDLING = Object.freeze({
+  arr: 0, das: 0, dcd: 0, sdf: 41, safelock: false,
+  cancel: true, may20g: true, irs: "off", ihs: "off",
+});
+
+export const INPUT_EXECUTION_PROFILE = Object.freeze({
+  id: INPUT_EXECUTION_PROFILE_ID,
+  rulesetId: S2_MANIFEST.id,
+  publicNext: 14,
+  handling: INPUT_EXECUTION_HANDLING,
+});
+
+// Triangle exposes no independent switches for these TETR.IO rules.  Keeping
+// the observed values as the only accepted replay values prevents a custom
+// replay from being simulated with a different rule while its option is merely
+// ignored.  Unknown replay metadata remains outside this list by design.
+const REPLAY_UNSUPPORTED_NONDEFAULTS = Object.freeze({
+  allclears: S2_MANIFEST.normalizedOptions.allclears,
+  allclear_b2b_sends: S2_MANIFEST.normalizedOptions.allclear_b2b_sends,
+  allclear_b2b_dupes: S2_MANIFEST.normalizedOptions.allclear_b2b_dupes,
+  allclear_charges: S2_MANIFEST.normalizedOptions.allclear_charges,
+  b2bextras: S2_MANIFEST.normalizedOptions.b2bextras,
+  are: S2_MANIFEST.normalizedOptions.are,
+  lineclear_are: S2_MANIFEST.normalizedOptions.lineclear_are,
+});
+
+/**
+ * Report replay options whose non-default value cannot be represented by the
+ * pinned Triangle engine.  The caller decides how to classify the issues so
+ * this helper can also be used by the replay importer without rejecting
+ * ordinary TTRM metadata.
+ */
+export function validateReplayOptions(options) {
+  if (options === null || typeof options !== "object" || Array.isArray(options)) {
+    return [{ key: null, expected: "object", actual: options }];
+  }
+  return Object.entries(REPLAY_UNSUPPORTED_NONDEFAULTS)
+    .filter(([key, expected]) => Object.hasOwn(options, key) && !Object.is(options[key], expected))
+    .map(([key, expected]) => ({ key, expected, actual: options[key] }));
+}
+
+/** Fixed opt-in initialization contract; it does not qualify a match for export. */
+export function inputExecutionOptions({ seed, profileId = INPUT_EXECUTION_PROFILE.id, handling = INPUT_EXECUTION_HANDLING } = {}) {
+  if (profileId !== INPUT_EXECUTION_PROFILE.id) throw new Error(`unsupported input execution profile ${profileId}`);
+  if (!Number.isSafeInteger(seed) || seed < 0 || seed > 0xffff_ffff) {
+    throw new Error("input execution seed must be an unsigned 32-bit integer");
+  }
+  const resolvedHandling = { ...INPUT_EXECUTION_HANDLING, ...handling };
+  for (const [key, value] of Object.entries(resolvedHandling)) {
+    const valid = ['arr', 'das', 'dcd', 'sdf'].includes(key)
+      ? Number.isFinite(value) && value >= 0 && value <= 60 && (key !== 'arr' || value === 0 || value >= 0.01)
+      : ['safelock', 'cancel', 'may20g'].includes(key) ? typeof value === 'boolean'
+      : ['irs', 'ihs'].includes(key) && value === 'off';
+    if (!valid) throw new Error(`unsupported input handling ${key}`);
+  }
+  return {
+    ...S2_MANIFEST.normalizedOptions,
+    seed,
+    allowharddrop: S2_MANIFEST.normalizedOptions.allow_harddrop,
+    handling: resolvedHandling,
+  };
+}
+
 /**
  * Resolved `.ttrm` options to Triangle `EngineInitializeParams`.
  *
@@ -62,7 +128,9 @@ export function buildEngineConfig(o, opponents) {
     },
     b2b: {
       chaining: !!o.b2bchaining,
-      charging: o.b2bcharging ? { at: 4, base: o.b2bcharge_base ?? 3 } : false,
+      charging: o.b2bcharging
+        ? { at: o.b2bcharge_at ?? 4, base: o.b2bcharge_base ?? 3 }
+        : false,
     },
     pc: { b2b: o.allclear_b2b ?? 0, garbage: o.allclear_garbage ?? 0 },
     misc: {
@@ -78,7 +146,7 @@ export function buildEngineConfig(o, opponents) {
       movement: {
         infinite: false,
         lockResets: o.lockresets ?? 15,
-        lockTime: 30,
+        lockTime: o.locktime ?? 30,
         may20G: o.gravitymay20 ?? o.gravitymay20g ?? true,
       },
       username: o.username,

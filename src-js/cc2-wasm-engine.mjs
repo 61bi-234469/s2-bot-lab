@@ -70,7 +70,13 @@ export async function createCc2WasmSession({ wasmBytes, config = null, selection
             : `time budget complete (${normalizedThinkMs} ms)`,
         };
       }
-      if (!Array.isArray(suggestion?.moves) || suggestion.moves.length === 0) throw new Error("CC2 returned no suggested move");
+      if (!Array.isArray(suggestion?.moves)) throw new Error("CC2 returned malformed suggestion");
+      if (suggestion.moves.length === 0) {
+        const error = new Error("CC2 returned no suggested move");
+        error.suggestionReceived = true;
+        error.moveInfo = suggestion.move_info ?? null;
+        throw error;
+      }
       return { suggestion, peakMemoryBytes: exports.memory.buffer.byteLength };
     },
     async close() {
