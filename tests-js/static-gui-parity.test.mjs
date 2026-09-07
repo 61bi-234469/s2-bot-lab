@@ -20,6 +20,25 @@ test("static handler exposes only browser-capable bots", async () => {
   assert.ok(capabilities.bots.filter((bot) => bot.id.startsWith("cc2-")).every((bot) => !bot.available));
 });
 
+test("static handler routes input-match start instead of returning not-found", async () => {
+  const handlers = createGuiRequestHandlers({ cc2: {
+    async closeSessions() {},
+  }, now: () => 0 });
+  const result = await handlers.handle({
+    method: "POST",
+    path: "/api/input-match/start",
+    body: {
+      left: "human",
+      right: "cc2-s2-f14",
+      seed: 42,
+      maxTurns: 1,
+      firstTo: 1,
+    },
+  });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.sessionId, "input-1");
+});
+
 test("static handler answers the same pure API family used by the GUI", async () => {
   const handlers = createGuiRequestHandlers();
   const state = toS2GuiState(createGame(42));

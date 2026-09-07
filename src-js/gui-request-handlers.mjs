@@ -1,4 +1,5 @@
 import { fullStateKey } from "./state-keys.mjs";
+import { createGuiInputMatchHandlers } from "./gui-input-match.mjs";
 import { guiStateToCanonical } from "./gui-state.mjs";
 import { canonicalTransitionHttpResponse } from "./canonical-transition-api.mjs";
 import { compareSimpleSamePositionCandidates } from "./comparison-contract.mjs";
@@ -61,9 +62,13 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
   });
   let session = null;
   let sessionGeneration = 0;
+  const inputMatches = createGuiInputMatchHandlers({ runtime: cc2Runtime, now });
 
   return Object.freeze({
     async handle({ method, path, body = null }) {
+      if (path.startsWith("/api/input-match/")) {
+        return inputMatches.handle({ method, path, body });
+      }
       if (method === "GET" && path === "/api/bots") return ok({
         runtime: { mode: "static-wasm", defaultSelectionLimit: 512, searchSeed: "5994928009864282113", timeBudget: "worker-clock-chunked" },
         ruleset: { id: RULESET_IDS.s2Observed, b2bCharging: resolvePlacementRules(RULESET_IDS.s2Observed).b2bCharging },
