@@ -22,3 +22,11 @@ test("Pages HTML cache-busts the generated browser bundle with its content diges
   assert.match(preparePagesIndex(index, "0123456789ab"), /src="app\.bundle\.js\?v=0123456789ab"/);
   assert.throws(() => preparePagesIndex(index, "not-a-digest"), /12-character hex digest/);
 });
+
+test("Pages HTML cache-busts the stylesheet with its content digest", () => {
+  const index = '<link rel="stylesheet" href="styles.css"><script type="module" src="app.bundle.js"></script>';
+  const output = preparePagesIndex(index, "0123456789ab", "abcdef012345");
+  assert.match(output, /href="styles\.css\?v=abcdef012345"/);
+  assert.throws(() => preparePagesIndex(index, null, "not-a-digest"), /12-character hex digest/);
+  assert.throws(() => preparePagesIndex('<script type="module" src="app.bundle.js"></script>', null, "abcdef012345"), /stylesheet replacement target is missing/);
+});

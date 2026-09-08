@@ -139,7 +139,7 @@ function assertUint32(value, label) {
 }
 
 export function toCc2State(game) {
-  return {
+  const start = {
     board: game.board.map((row) => row.map((cell) => cell === null ? null : cell)),
     queue: game.queue.slice(0, 14),
     hold: game.hold,
@@ -147,6 +147,8 @@ export function toCc2State(game) {
     back_to_back: game.backToBack,
     randomizer: { type: "seven_bag", bag_state: [] },
   };
+  if (Number.isInteger(game.s2?.b2b) && game.s2.b2b >= 0) start.b2b = game.s2.b2b;
+  return start;
 }
 
 export function toS2GuiState(game) {

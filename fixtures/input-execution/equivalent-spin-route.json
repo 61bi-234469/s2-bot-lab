@@ -1,0 +1,14 @@
+{
+  "source": "Reconstructed from the publicly rendered left board at the reported chouhy frame-1343 stop (2026-09-07). Only five displayed NEXT pieces are known; movement is a fresh spawn, so this is a component regression, not the original match replay. Native chouhy with 512 selections returns the L south (1,1) mini target. The static witness is kick 12 [1,-1], but the verified input route uses kick 12 [1,0] with identical S2 results.",
+  "id": "chouhy-l-mini-equivalent-kick",
+  "type": "cc2-chouhy",
+  "board": "__JJJLLLSL___ZZOOSSL__ZZZOOSLL__SSZZIIII___SSZ____",
+  "pieces": { "current": "L", "hold": "T", "holdAvailable": true, "known": ["I", "O", "J", "S", "I"] },
+  "expectedPlacement": {
+    "piece": "L", "rotation": "reverse", "x": 0, "y": 0, "usedHold": false,
+    "rotationEvidence": { "lastInputWasRotation": true, "kickIndex": 0, "kickId": "12", "kickOffset": [1, 0] }
+  },
+  "expectedSpin": "mini",
+  "expectedLines": 1,
+  "maxPlannerNodes": 128
+}

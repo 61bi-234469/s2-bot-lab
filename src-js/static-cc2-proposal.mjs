@@ -4,8 +4,9 @@ import { guiStateToCanonical } from "./gui-state.mjs";
 import { fullStateKey } from "./state-keys.mjs";
 import { selectS2RenQualityPlacement } from "./s2-ren-quality-selector.mjs";
 import { selectS2ConversionQualifiedRenFinisherPlacement } from "./s2-conversion-qualified-ren-finisher-selector.mjs";
-import { selectS2F12PostTankSolvencyRescuePlacement } from "./s2-f12-post-tank-solvency-rescue-selector.mjs";
+import { selectS2F12AmountOnlyPostTankSolvencyRescuePlacement } from "./s2-f12-amount-only-post-tank-solvency-rescue-selector.mjs";
 import { selectS2ThresholdImminentB2bRetentionPlacement } from "./s2-threshold-imminent-b2b-retention-selector.mjs";
+export { resolveQualifiedStaticCc2Submission } from "./s2-amount-only-public-resolver.mjs";
 
 const SPARSE_S2_WEIGHTS = Object.freeze({
   aggregateHeight: -.1,
@@ -60,7 +61,7 @@ export function resolveStaticCc2Proposal({ gui, moves, type, engine }) {
     return selectS2ConversionQualifiedRenFinisherPlacement(gui, moves, common);
   }
   if (type === "cc2-s2-f14" || type === "cc2-s2-champion") {
-    return selectS2F12PostTankSolvencyRescuePlacement(gui, moves, common);
+    return selectS2F12AmountOnlyPostTankSolvencyRescuePlacement(gui, moves, common);
   }
   if (type === "cc2-s2-f25") {
     return selectS2ThresholdImminentB2bRetentionPlacement(gui, moves, common);
@@ -91,6 +92,10 @@ export function resolveStaticCc2Submission(request) {
   };
 }
 
+/**
+ * Resolves the only static selectors currently admitted to the live GUI.
+ * Its input is the ADR-062 public decision request, never a full GUI state.
+ */
 function assertRequest(gui, moves, type, engine) {
   if (gui === null || typeof gui !== "object") throw new Error("CC2 resolution requires GUI state");
   if (!Array.isArray(moves) || moves.length === 0) throw new Error("CC2 resolution requires candidate moves");

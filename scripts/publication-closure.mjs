@@ -31,6 +31,7 @@ const entryPoints = [
   "scripts/stop-port.mjs",
 ];
 const sharedBrowserModules = [
+  "src-js/input-bot-contract.mjs",
   "src-js/bot-parameters.mjs",
   "src-js/bot-match-options.mjs",
   "src-js/replay/pieces.mjs",
@@ -69,6 +70,7 @@ const allowedTrees = [
   "cc2-gui/",
   "fixtures/cross-runtime/",
   "fixtures/golden/",
+  "fixtures/input-execution/",
   "schema/",
   "src/",
   "tests/",

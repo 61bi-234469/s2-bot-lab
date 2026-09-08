@@ -132,7 +132,7 @@ fn create_bot(mut start: tbp::Start, config: Arc<BotConfig>) -> Bot {
         board: start.board.into(),
     };
 
-    Bot::new(BotOptions { speculate, config }, state, &start.queue)
+    Bot::new(BotOptions { speculate, config, input_candidates: start.input_candidates }, state, &start.queue)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

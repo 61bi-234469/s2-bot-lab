@@ -20,6 +20,17 @@ export function successfulProposal({ placement = null, diagnostics = {}, latency
   });
 }
 
+export function terminalProposal({ diagnostics = {}, latencyMs = null } = {}) {
+  return proposalResult({
+    status: "terminal",
+    placement: null,
+    terminal: { code: "no-legal-move" },
+    failure: null,
+    diagnostics,
+    latencyMs,
+  });
+}
+
 export function classifyProposalError({ error, locksPlayed, latencyMs = null, diagnostics = {} }) {
   const message = error instanceof Error ? error.message : String(error);
   const measuredLatency = Number.isFinite(error?.requestToSuggestionMs)
@@ -50,11 +61,7 @@ export function classifyProposalError({ error, locksPlayed, latencyMs = null, di
       latencyMs: measuredLatency,
     });
   }
-  return proposalResult({
-    status: "terminal",
-    placement: null,
-    terminal: { code: "no-legal-move" },
-    failure: null,
+  return terminalProposal({
     diagnostics: evidence,
     latencyMs: measuredLatency,
   });

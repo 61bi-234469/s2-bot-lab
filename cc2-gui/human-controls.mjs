@@ -2,10 +2,8 @@
  *
  * The item list, the units, and the default values follow the `input` and `keys`
  * tabs of `fumen-mobile-fork`, so a player who has tuned their handling there
- * can reproduce it here. Everything in this file only ever affects how this
- * browser turns key presses into piece movement: the match itself is decided by
- * the final placement the player locks, so none of it is sent to the server or
- * validated as a match parameter.
+ * can reproduce it here. Legacy movement uses browser repeat scheduling;
+ * input execution sends the sanitized handling to the referee Engine.
  *
  * A stored document is untrusted input. Anything this build does not recognise
  * falls back to the default rather than being applied. */
@@ -77,7 +75,8 @@ export function sanitizeHumanControls(input) {
       if (isValidSdf(value)) controls.handling[field.key] = value;
       continue;
     }
-    if (Number.isFinite(value) && value >= field.minimum && value <= field.maximum) {
+    if (Number.isFinite(value) && value >= field.minimum && value <= field.maximum &&
+        (field.key !== 'arrFrames' || value === 0 || value >= 0.01)) {
       controls.handling[field.key] = value;
     }
   }
@@ -105,6 +104,14 @@ export function humanHandling(controls) {
     softDropPriority: handling.softDropPriority,
     ghost: handling.ghost,
   });
+}
+
+/** Engine handling for a human input round; ghost/key bindings stay in the UI. */
+export function humanEngineHandling(controls) {
+  const handling = humanHandling(controls);
+  return { das: handling.dasFrames, arr: handling.arrFrames, dcd: handling.dcdFrames,
+    sdf: handling.sdf === Infinity ? 41 : handling.sdf,
+    may20g: handling.softDropPriority, cancel: true, safelock: false, irs: 'off', ihs: 'off' };
 }
 
 /**

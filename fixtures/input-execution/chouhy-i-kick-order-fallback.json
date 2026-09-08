@@ -1,0 +1,18 @@
+{
+  "source": "Reconstructed from the visible left board at chouhy frame 86 in the third FT3 round, 2026-09-07. Only the five displayed NEXT pieces and a fresh spawn are represented; not an exact original replay. Native SRS chooses a floor I mini, but SRS+ uses an earlier upward kick. These are the first two native 512-selection suggestions with input_candidates enabled.",
+  "id": "chouhy-i-kick-order-native-fallback",
+  "type": "cc2-chouhy",
+  "board": "SS____LLJI_SS___JJJI",
+  "pieces": { "current": "I", "hold": "I", "holdAvailable": true, "known": ["O", "Z", "J", "L", "S"] },
+  "moves": [
+    { "location": { "type": "I", "orientation": "north", "x": 3, "y": 0 }, "spin": "mini" },
+    { "location": { "type": "I", "orientation": "north", "x": 7, "y": 2 }, "spin": "none" }
+  ],
+  "expectedPlacement": {
+    "piece": "I", "rotation": "spawn", "x": 6, "y": 0, "usedHold": false,
+    "rotationEvidence": { "lastInputWasRotation": false, "kickIndex": null, "kickId": null, "kickOffset": null }
+  },
+  "expectedAdoptionRank": 1,
+  "expectedSpin": "none",
+  "expectedLines": 0
+}

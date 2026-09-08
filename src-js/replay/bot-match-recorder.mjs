@@ -50,18 +50,26 @@ export function createMatchRecording({ match, meta } = {}) {
   };
 }
 
+/**
+ * Appends one `advanceBotMatch` operation to a recording owned exclusively by
+ * the caller. Validation and all derived values are prepared before the first
+ * mutation so a rejected submission cannot leave a partial append.
+ */
+export function appendMatchLocks(recording, before, after, submissions) {
+  const prepared = prepareMatchLockAppend(recording, before, after, submissions);
+  applyMatchLockAppend(recording, prepared);
+  return recording;
+}
+
 /** Records one `advanceBotMatch` operation without mutating the recording or snapshots. */
 export function recordMatchLocks(recording, before, after, submissions) {
-  assertRecording(recording);
-  assertMatch(before);
-  assertMatch(after);
-  if (!Array.isArray(submissions)) throw new Error("submissions must be an array");
+  const prepared = prepareMatchLockAppend(recording, before, after, submissions);
 
   // Recording growth is append-only. Clone only the containers this call can
   // append to; cloning the complete history on every lock makes a match O(n²).
   const next = {
     ...recording,
-    match: structuredClone(after),
+    match: prepared.match,
     players: recording.players.map((player) => ({
       ...player,
       locks: [...player.locks],
@@ -76,7 +84,29 @@ export function recordMatchLocks(recording, before, after, submissions) {
       },
     })),
   };
-  const byId = new Map(next.players.map((player) => [player.id, player]));
+  applyMatchLockAppend(next, prepared);
+  return next;
+}
+
+function prepareMatchLockAppend(recording, before, after, submissions) {
+  assertRecording(recording);
+  assertMatch(before);
+  assertMatch(after);
+  if (!Array.isArray(submissions)) throw new Error("submissions must be an array");
+
+  // Clone the current match before staging any entries. The mutable caller
+  // still gets an isolated current-match snapshot without cloning histories.
+  const match = structuredClone(after);
+  const byId = new Map(recording.players.map((player) => [player.id, player]));
+  const afterById = new Map(after.bots.map((bot) => [bot.id, bot]));
+  const pendingLocks = new Map();
+  const visual = new Map(recording.players.map((player) => [player.id, {
+    boards: [],
+    queues: [],
+    garbage: [],
+    replacements: { boards: null, queues: null, garbage: null },
+  }]));
+  const entries = [];
 
   for (const submission of submissions) {
     const botId = submission?.botId;
@@ -87,57 +117,112 @@ export function recordMatchLocks(recording, before, after, submissions) {
     if (transition?.nextState === null || transition?.nextState === undefined) {
       throw new Error(`recorded submission for ${botId} has no next state`);
     }
-    const afterBot = after.bots.find((bot) => bot.id === botId);
+    const afterBot = afterById.get(botId);
     if (afterBot === undefined) throw new Error(`missing recorded post-state for ${botId}`);
     const placement = placementOf(submission);
-    const lock = lockFromTransition(player.locks.length, after.clock.logicalFrame, beforeBot.state, transition, placement, afterBot.state);
-    player.locks.push(lock);
-    player.ttrmLocks.push({
+    const lockIndex = player.locks.length + (pendingLocks.get(botId) ?? 0);
+    const frame = after.clock.logicalFrame;
+    const lock = lockFromTransition(lockIndex, frame, beforeBot.state, transition, placement, afterBot.state);
+    const ttrmLock = {
       before: structuredClone(beforeBot.state),
       placement,
-      frame: after.clock.logicalFrame,
+      frame,
+    };
+    const playerVisual = visual.get(botId);
+    playerVisual.boards.push(boardPoint(transition.nextState, frame));
+    playerVisual.queues.push(queuePoint(transition.nextState, frame));
+    entries.push({
+      botId,
+      lock,
+      ttrmLock,
+      events: resolutionEvents(beforeBot.state, transition, frame, lockIndex),
     });
-    player.visual.boards.push(boardPoint(transition.nextState, after.clock.logicalFrame));
-    player.visual.queues.push(queuePoint(transition.nextState, after.clock.logicalFrame));
-
-    recordResolutionEvents(player, beforeBot.state, transition, after.clock.logicalFrame, player.locks.length - 1);
+    pendingLocks.set(botId, (pendingLocks.get(botId) ?? 0) + 1);
   }
 
   // Deliveries happen after all submitted locks. Keep them after the local
   // lock's cancel/tank events at the same frame, matching the controller.
+  const deliveries = [];
   for (const delivery of after.lastStep?.deliveries ?? []) {
     const player = byId.get(delivery.toBotId);
     if (player === undefined) continue;
     const packet = delivery.packet;
     const frame = packet.arrivalFrame;
-    player.garbageEvents.push({
-      frame,
-      kind: "receive",
-      iid: packet.packetId,
-      amount: packet.amount,
-      gameid: packet.sourceGameId,
-      size: packet.holeSize,
-    });
-    player.garbageEvents.push({
-      frame,
-      kind: "confirm",
-      iid: packet.packetId,
-      amount: 0,
-      gameid: packet.sourceGameId,
-      senderFrame: after.clock.logicalFrame,
+    deliveries.push({
+      botId: player.id,
+      events: [
+        {
+          frame,
+          kind: "receive",
+          iid: packet.packetId,
+          amount: packet.amount,
+          gameid: packet.sourceGameId,
+          size: packet.holeSize,
+        },
+        {
+          frame,
+          kind: "confirm",
+          iid: packet.packetId,
+          amount: 0,
+          gameid: packet.sourceGameId,
+          senderFrame: after.clock.logicalFrame,
+        },
+      ],
     });
   }
 
-  for (const player of next.players) {
-    const bot = after.bots.find((candidate) => candidate.id === player.id);
+  for (const player of recording.players) {
+    const bot = afterById.get(player.id);
     if (bot === undefined) continue;
     const frame = after.clock.logicalFrame;
     const board = bot.state;
-    appendChange(player.visual.boards, boardPoint(board, frame), sameBoardPoint);
-    appendChange(player.visual.queues, queuePoint(board, frame), sameQueuePoint);
-    appendChange(player.visual.garbage, garbagePoint(board, frame), sameGarbagePoint);
+    const playerVisual = visual.get(player.id);
+    stageAppendChange(player.visual.boards, playerVisual.boards, boardPoint(board, frame), sameBoardPoint,
+      playerVisual.replacements, "boards");
+    stageAppendChange(player.visual.queues, playerVisual.queues, queuePoint(board, frame), sameQueuePoint,
+      playerVisual.replacements, "queues");
+    stageAppendChange(player.visual.garbage, playerVisual.garbage, garbagePoint(board, frame), sameGarbagePoint,
+      playerVisual.replacements, "garbage");
   }
-  return next;
+
+  return { match, entries, deliveries, visual: [...visual.entries()] };
+}
+
+function applyMatchLockAppend(recording, prepared) {
+  const byId = new Map(recording.players.map((player) => [player.id, player]));
+  recording.match = prepared.match;
+
+  for (const entry of prepared.entries) {
+    const player = byId.get(entry.botId);
+    player.locks.push(entry.lock);
+    player.ttrmLocks.push(entry.ttrmLock);
+    player.garbageEvents.push(...entry.events);
+  }
+  for (const delivery of prepared.deliveries) {
+    byId.get(delivery.botId).garbageEvents.push(...delivery.events);
+  }
+  for (const [botId, playerVisual] of prepared.visual) {
+    const player = byId.get(botId);
+    for (const key of ["boards", "queues", "garbage"]) {
+      const replacement = playerVisual.replacements[key];
+      if (replacement !== null) {
+        player.visual[key][player.visual[key].length - 1] = replacement;
+      }
+      player.visual[key].push(...playerVisual[key]);
+    }
+  }
+}
+
+function stageAppendChange(base, pending, next, equal, replacements, key) {
+  const last = pending.at(-1) ?? base.at(-1);
+  if (last !== undefined && last.frame === next.frame) {
+    if (!equal(last, next)) {
+      if (pending.length > 0) pending[pending.length - 1] = next;
+      else replacements[key] = next;
+    }
+    return;
+  }
+  if (last === undefined || !equal(last, next)) pending.push(next);
 }
 
 /** Finishes one immutable round. The same helper is used for in-progress views. */
@@ -154,13 +239,13 @@ export function buildMatchReplay(rounds, meta = {}) {
   return {
     $schema: BOT_MATCH_REPLAY_SCHEMA,
     meta: {
-      origin: BOT_MATCH_REPLAY_ORIGIN,
       users: [],
       gamemode: "s2-bot-match",
       ts: new Date().toISOString(),
+      ...structuredClone(meta),
+      origin: BOT_MATCH_REPLAY_ORIGIN,
       version: 1,
       parseMs: 0,
-      ...structuredClone(meta),
     },
     rounds: structuredClone(rounds),
   };
@@ -238,14 +323,15 @@ function lockFromTransition(pieceIndex, frame, before, transition, placement, af
   };
 }
 
-function recordResolutionEvents(player, before, transition, frame, lockIndex) {
+function resolutionEvents(before, transition, frame, lockIndex) {
+  const events = [];
   const beforePackets = before.garbage?.packets ?? [];
   const nextPackets = transition.nextState.garbage?.packets ?? [];
   const tanked = new Map();
   for (const row of transition.tankResult?.inserted ?? []) {
     const key = packetKey(row);
     tanked.set(key, (tanked.get(key) ?? 0) + row.amount);
-    player.garbageEvents.push({
+    events.push({
       frame,
       kind: "tank",
       iid: row.packetId,
@@ -281,7 +367,8 @@ function recordResolutionEvents(player, before, transition, frame, lockIndex) {
       amount: expected,
     });
   }
-  player.garbageEvents.push(...cancelEvents);
+  events.push(...cancelEvents);
+  return events;
 }
 
 function placementOf(submission) {

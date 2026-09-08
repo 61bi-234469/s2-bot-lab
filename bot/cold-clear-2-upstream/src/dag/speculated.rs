@@ -38,7 +38,7 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
         });
     }
 
-    pub fn suggest(&self, state: &GameState) -> Vec<Placement> {
+    pub fn suggest(&self, state: &GameState, limit: usize) -> Vec<Placement> {
         puffin::profile_function!();
         let node = self.states.get(state).unwrap();
         let children = match &node.children {
@@ -48,10 +48,11 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
 
         let mut candidates: Vec<&_> = vec![];
         for piece in state.bag {
-            candidates.extend(children[piece].first());
+            candidates.extend(children[piece].iter().take(limit));
         }
         candidates.sort_by(|a, b| a.cached_eval.partial_cmp(&b.cached_eval).unwrap().reverse());
 
+        if limit > 1 { candidates.truncate(limit); }
         candidates.into_iter().map(|c| c.mv).collect()
     }
 

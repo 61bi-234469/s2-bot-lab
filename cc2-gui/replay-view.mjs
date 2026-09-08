@@ -413,7 +413,10 @@ function render() {
   elements["replay-seek"].value = String(Math.round(frame));
   elements["replay-time-current"].textContent = formatFrameTime(frame);
   elements["replay-time-total"].textContent = formatFrameTime(end);
-  elements["replay-turn"].textContent = `TURN ${Math.min(selfIndex, self.locks.length)} / ${self.locks.length}`;
+  // A replay cursor is on the shared frame axis, but turn stepping and its
+  // count belong to the selected player. Name that player here so a placement
+  // on the other field is not mistaken for the displayed turn number.
+  elements["replay-turn"].textContent = `${self.username} · TURN ${Math.min(selfIndex, self.locks.length)} / ${self.locks.length}`;
   elements["replay-summary"].textContent = summaryText(round, self, opponent);
 
   // Only the stepped side is shown just before its placement settles: the
@@ -424,10 +427,12 @@ function render() {
 }
 
 function summaryText(round, self, opponent) {
-  const parts = [`${fileName || "REPLAY"} · ${ir.meta.gamemode || "game"}`];
+  const generated = ir.meta.origin === "s2-bot-lab-generated";
+  const parts = [`${fileName || "REPLAY"} · ${generated ? "BOT LAB GENERATED · INPUT REPLAY" : ir.meta.gamemode || "game"}`];
   if (ir.meta.origin === "s2-bot-match/1") {
     parts.push("SYNTHETIC CLOCK · NO INPUT LOG · NOT EVIDENCE");
   }
+  if (self.verification?.scope === "pieces-lines-sent") parts.push("IMPORT CHECK: PIECES / LINES / SENT ONLY");
   const winner = round.players.find((player) => player.id === round.result.winnerId);
   parts.push(winner === undefined ? "NO WINNER RECORDED" : `WINNER ${winner.username}`);
   for (const player of [self, opponent]) {
@@ -460,7 +465,7 @@ function renderSide(side, player, visualOverride, confirmedIndex, frame) {
   renderNextList(elements[`replay-${side}-next`], visual.next.slice(0, 5).map(pieceName));
   renderGarbageGauge(
     elements[`replay-${side}-gauge`],
-    garbage.pending.map((parcel) => ({ amount: parcel.remaining })),
+    gaugePacketsAt(visual.garbage, garbage, player, Math.floor(frame)),
     `${side} player`,
   );
   // The engine's counters are one behind canonical state, which is what the
@@ -499,6 +504,27 @@ function renderSide(side, player, visualOverride, confirmedIndex, frame) {
     renderDetailMetrics(elements[`replay-${side}-metrics`], metrics);
     lastRenderedIndex[side] = index;
   }
+}
+
+// Input replays retain the Engine garbage snapshot, including each packet's
+// current eligibility frame. Use it when available so a confirmed packet that
+// has not aged through the S2 garbage speed remains transparent. A serialized
+// non-finite frame is an unconfirmed packet and stays transparent; older data
+// without a queue uses the renderer's amount-only compatibility path.
+function gaugePacketsAt(snapshotPoint, garbage, player, frame) {
+  const queue = snapshotPoint?.snapshot?.queue;
+  const speed = player.resolvedOptions?.garbagespeed;
+  if (
+    !Array.isArray(queue) ||
+    !Number.isFinite(speed) ||
+    speed < 0
+  ) {
+    return garbage.pending.map((parcel) => ({ amount: parcel.remaining }));
+  }
+  return queue.map((packet) => ({
+    amount: packet.amount,
+    ready: Number.isFinite(packet.frame) && packet.frame <= frame - speed,
+  }));
 }
 
 /** ReplayIR keeps a flat 10x23 field with y=0 at the bottom; the board shows 20. */

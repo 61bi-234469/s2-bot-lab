@@ -117,9 +117,9 @@ impl<E: Evaluation> Dag<E> {
         }
     }
 
-    pub fn suggest(&self) -> Vec<Placement> {
+    pub fn suggest(&self, limit: usize) -> Vec<Placement> {
         puffin::profile_function!();
-        self.top_layer.kind.suggest(&self.root)
+        self.top_layer.kind.suggest(&self.root, limit)
     }
 
     pub fn select<R: rand::Rng + ?Sized>(
@@ -257,11 +257,11 @@ impl<E: Evaluation> WithBump<E> {
         })
     }
 
-    fn suggest(&self, state: &GameState) -> Vec<Placement> {
+    fn suggest(&self, state: &GameState, limit: usize) -> Vec<Placement> {
         puffin::profile_function!();
         self.with(|this| match this.data {
-            LayerKind::Known(l) => l.suggest(state),
-            LayerKind::Speculated(l) => l.suggest(state),
+            LayerKind::Known(l) => l.suggest(state, limit),
+            LayerKind::Speculated(l) => l.suggest(state, limit),
         })
     }
 

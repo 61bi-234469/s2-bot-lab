@@ -6,6 +6,8 @@ import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 
 import { createCc2Session, requestCc2Suggestion } from "../src-js/cc2-bridge.mjs";
+import { createGuiInputMatchHandlers } from '../src-js/gui-input-match.mjs';
+import { createNativeInputRuntime } from '../src-js/native-input-runtime.mjs';
 import {
   suggestionFailureOutcome,
 } from "../src-js/cc2-suggestion-failure.mjs";
@@ -17,7 +19,10 @@ import { applyCc2FinalPlacementUnderObservedS2 } from "../src-js/cc2-s2-adapter.
 import { selectCc2S2HybridPlacement } from "../src-js/cc2-s2-hybrid.mjs";
 import { selectS2RenQualityPlacement } from "../src-js/s2-ren-quality-selector.mjs";
 import { selectS2ConversionQualifiedRenFinisherPlacement } from "../src-js/s2-conversion-qualified-ren-finisher-selector.mjs";
-import { selectS2F12PostTankSolvencyRescuePlacement } from "../src-js/s2-f12-post-tank-solvency-rescue-selector.mjs";
+import {
+  attachS2SubmissionFingerprint,
+  selectS2F12AmountOnlyPostTankSolvencyRescuePlacement,
+} from "../src-js/s2-f12-amount-only-post-tank-solvency-rescue-selector.mjs";
 import { selectS2ThresholdImminentB2bRetentionPlacement } from "../src-js/s2-threshold-imminent-b2b-retention-selector.mjs";
 import { guiStateToCanonical } from "../src-js/cc2-s2-adapter.mjs";
 import { invokeAnalysis } from "../src-js/analysis-api.mjs";
@@ -38,14 +43,18 @@ import { applyHumanFinalPlacementUnderObservedS2 } from "../src-js/human-s2-adap
 import { placementGeometry } from "../src-js/triangle/placement-geometry.mjs";
 import {
   QUEUE_MODE_LEGACY_LCG,
-  QUEUE_MODE_TRIANGLE_7_BAG,
   createGame,
   extendSeededQueue,
-  extendTriangleSeededQueue,
   lockedPieceCells,
   toS2GuiState,
 } from "../cc2-gui/game.mjs";
 import { fullStateKey } from "../src-js/state-keys.mjs";
+import { applyTransition } from "../src-js/transition.mjs";
+import {
+  createGuiStaticDecisionRequest as createS2AmountOnlyDecisionRequest,
+  isGuiStaticType as isAdr062QualifiedStaticType,
+} from "../src-js/s2-amount-only-decision-state.mjs";
+import { resolveGuiStaticSubmission as resolveQualifiedStaticCc2Submission } from "../src-js/gui-static-public-resolver.mjs";
 import {
   matchOutcome,
   normalizeBotMatchOptions,
@@ -60,14 +69,15 @@ import { botParameterCapability, fairComparisonBotParameters, normalizeBotParame
 import { loadS2Config, s2ConfigArguments } from "../src-js/cc2-s2-config.mjs";
 import { RULESET_IDS, resolvePlacementRules } from "../src-js/ruleset-profiles.mjs";
 import { canonicalTransitionHttpResponse } from "../src-js/canonical-transition-api.mjs";
+import { guiStateToCc2NativeStart } from "../src-js/cc2-s2-native-start.mjs";
 import { MAX_TTRM_TEXT_LENGTH, TtrmError, parseTtrm } from "../src-js/replay/ttrm-parser.mjs";
 import { buildReplayIR, nowMs } from "../src-js/replay/ttrm-simulator.mjs";
 import {
+  appendMatchLocks,
   createMatchRecording,
   finishMatchRecording,
-  recordMatchLocks,
 } from "../src-js/replay/bot-match-recorder.mjs";
-import { BotMatchTtrmError, buildBotMatchTtrm } from "../src-js/replay/bot-match-ttrm-export.mjs";
+
 
 const root = resolve(fileURLToPath(new URL("../cc2-gui", import.meta.url)));
 const GUI_CC2_SEARCH_SEED = "5994928009864282113";
@@ -98,7 +108,7 @@ const cc2Engines = Object.freeze({
     botType: "cc2-s2",
     engineId: "cold-clear-2-s2-hybrid/1",
     label: "CC2 S2 — Gen 008/009 rank-25 champion (512, development)",
-    repository: "https://github.com/61bi-234469/s2-bot-lab",
+    repository: "https://github.com/61bi-234469/s2-analysis-engine",
     commit: "ed8b193+local-s2-reranker",
     comparisonSource: "cold-clear-2-s2-hybrid-final-placement",
     protocolName: "Cold Clear 2 S2",
@@ -109,7 +119,7 @@ const cc2Engines = Object.freeze({
     botType: "cc2-s2-gen017",
     engineId: "cold-clear-2-s2-hybrid/gen017-aligned/1",
     label: "CC2 S2 — Gen 017 aligned mini-spin value (512, development)",
-    repository: "https://github.com/61bi-234469/s2-bot-lab",
+    repository: "https://github.com/61bi-234469/s2-analysis-engine",
     commit: "ed8b193+local-s2-reranker",
     comparisonSource: "cold-clear-2-s2-hybrid-gen017-aligned-final-placement",
     protocolName: "Cold Clear 2 S2",
@@ -120,7 +130,7 @@ const cc2Engines = Object.freeze({
     botType: "cc2-s2-f11",
     engineId: "cold-clear-2-s2-f11-ren-quality/1",
     label: "CC2 S2 — F11 REN quality (development)",
-    repository: "https://github.com/61bi-234469/s2-bot-lab",
+    repository: "https://github.com/61bi-234469/s2-analysis-engine",
     commit: "ed8b193+local-s2-reranker",
     comparisonSource: "cold-clear-2-s2-f11-ren-quality-final-placement",
     protocolName: "Cold Clear 2 S2",
@@ -131,7 +141,7 @@ const cc2Engines = Object.freeze({
     botType: "cc2-s2-f12",
     engineId: "cold-clear-2-s2-f12-conversion-qualified-ren-finisher/1",
     label: "CC2 S2 — F12 Conversion-Qualified REN Finisher (development)",
-    repository: "https://github.com/61bi-234469/s2-bot-lab",
+    repository: "https://github.com/61bi-234469/s2-analysis-engine",
     commit: "ed8b193+local-s2-reranker",
     comparisonSource: "cold-clear-2-s2-f12-conversion-qualified-ren-finisher-final-placement",
     protocolName: "Cold Clear 2 S2",
@@ -142,7 +152,7 @@ const cc2Engines = Object.freeze({
     botType: "cc2-s2-f14",
     engineId: "cold-clear-2-s2-f14-post-tank-solvency-rescue/1",
     label: "CC2 S2 — F14 post-tank solvency rescue (development)",
-    repository: "https://github.com/61bi-234469/s2-bot-lab",
+    repository: "https://github.com/61bi-234469/s2-analysis-engine",
     commit: "ed8b193+local-s2-reranker",
     comparisonSource: "cold-clear-2-s2-f14-post-tank-solvency-rescue-final-placement",
     protocolName: "Cold Clear 2 S2",
@@ -153,7 +163,7 @@ const cc2Engines = Object.freeze({
     botType: "cc2-s2-f25",
     engineId: "cold-clear-2-s2-f25-threshold-imminent-b2b-retention/1",
     label: "CC2 S2 — F25 threshold-imminent B2B retention (development)",
-    repository: "https://github.com/61bi-234469/s2-bot-lab",
+    repository: "https://github.com/61bi-234469/s2-analysis-engine",
     commit: "ed8b193+local-s2-reranker",
     comparisonSource: "cold-clear-2-s2-f25-threshold-imminent-b2b-retention-final-placement",
     protocolName: "Cold Clear 2 S2",
@@ -164,8 +174,8 @@ const cc2Engines = Object.freeze({
     botType: "cc2-s2-champion",
     engineId: "cold-clear-2-s2-development-champion/f14-substrate-v2-search-state/1",
     label: "CC2 S2 — current development champion (not release-qualified)",
-    repository: "https://github.com/61bi-234469/s2-bot-lab",
-    commit: "development-snapshot-f14-substrate-v2-search-state",
+    repository: "https://github.com/61bi-234469/s2-analysis-engine",
+    commit: "local-development-champion-f14-substrate-v2-search-state",
     comparisonSource: "cold-clear-2-s2-development-champion-final-placement",
     protocolName: "Cold Clear 2 S2",
     binary: options.s2Binary,
@@ -176,6 +186,7 @@ const cc2Engines = Object.freeze({
    file's own name, so the relative imports inside them resolve to another entry
    of this table when the browser fetches them. */
 const SHARED_MODULES = new Map([
+  ["/shared/input-bot-contract.mjs", "../src-js/input-bot-contract.mjs"],
   ["/shared/bot-parameters.mjs", "../src-js/bot-parameters.mjs"],
   ["/shared/bot-match-options.mjs", "../src-js/bot-match-options.mjs"],
   ["/shared/pieces.mjs", "../src-js/replay/pieces.mjs"],
@@ -193,14 +204,22 @@ let matchSession = null;
    outside the chain, so waiting for a slow opponent never delays the player's
    own lock. */
 const matchMutations = createLiveMatchMutationQueue();
+const inputRuntime = createNativeInputRuntime({ engineFor: requireCc2Engine });
+const inputMatches = createGuiInputMatchHandlers({ runtime: inputRuntime });
 const server = createServer(async (request, response) => {
   try {
+    if (request.url.startsWith('/api/input-match/')) {
+      const result = await inputMatches.handle({ method: request.method, path: request.url,
+        body: request.method === 'POST' ? await readJson(request) : null });
+      return sendJson(response, result.status, result.body);
+    }
     if (request.method === "POST" && request.url === "/api/suggest") {
       const body = await readJson(request);
       const engine = requireCc2Engine(body.engine ?? "cc2-raw");
+      if (!isAdr062QualifiedStaticType(engine.botType)) throw new Error("ADR-062-qualified resolver required");
       const result = await requestCc2Suggestion({
         binary: engine.binary,
-        state: body.state,
+        state: guiStateToCc2NativeStart(body.state),
         thinkMs: body.thinkMs,
         expectedName: engine.protocolName,
       });
@@ -209,9 +228,16 @@ const server = createServer(async (request, response) => {
     if (request.method === "POST" && request.url === "/api/apply-s2") {
       const body = await readJson(request);
       const engine = requireCc2Engine(body.engine ?? "cc2-raw");
-      const result = isCc2S2Type(engine.botType)
-        ? selectCc2S2Placement(body.state, body.moves ?? [body.move], engine)
-        : applyCc2FinalPlacementUnderObservedS2(body.state, body.move, engine);
+      if (!isAdr062QualifiedStaticType(engine.botType)) throw new Error("ADR-062-qualified resolver required");
+      const state = guiStateToCanonical(body.state);
+      const resolved = resolveQualifiedStaticCc2Submission(createS2AmountOnlyDecisionRequest({
+        sessionKey: "analysis", state, moves: body.moves ?? [body.move], type: engine.botType,
+        engine: publicEngine(engine),
+      }));
+      const transition = applyTransition(state, { kind: "placement", placement: resolved.placement }, state.rulesetId);
+      const result = transition.legality?.legal === true
+        ? { status: "ok", transition, comparison: { score: resolved.score, witness: { placement: resolved.placement } } }
+        : { status: "unsupported", reasons: [transition.legality?.reason ?? "illegal"], transition: null };
       return sendJson(response, result.status === "unsupported" ? 422 : 200, result);
     }
     if (request.method === "POST" && request.url === "/api/s2/transition") {
@@ -284,8 +310,9 @@ const server = createServer(async (request, response) => {
         return sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
       }
       await closeCc2MatchSessions(matchSession);
-      const ttrmCompatible = body.ttrmCompatible === true;
-      const queueModel = ttrmCompatible ? QUEUE_MODE_TRIANGLE_7_BAG : QUEUE_MODE_LEGACY_LCG;
+      if (body.ttrmCompatible === true) return sendJson(response, 409, { error: 'Use /api/input-match/start for .ttrm input execution' });
+      const ttrmCompatible = false;
+      const queueModel = QUEUE_MODE_LEGACY_LCG;
       const scenario = createGame(config.seed, { queueModel });
       const initial = guiStateToCanonical(toS2GuiState(scenario));
       const match = createBotMatch({
@@ -370,30 +397,7 @@ const server = createServer(async (request, response) => {
       return sendJson(response, 200, round);
     }
     if (request.method === "GET" && request.url === "/api/match/ttrm") {
-      if (matchSession === null || matchSession.recording === undefined) {
-        return sendJson(response, 409, { stage: "match", message: "match-not-started" });
-      }
-      if (!matchSession.ttrmCompatible) {
-        return sendJson(response, 409, {
-          stage: "compatibility",
-          message: "start the match with QUEUE MODEL set to TTRM QUEUE before exporting .ttrm",
-        });
-      }
-      const view = matchView(matchSession);
-      if (view.outcome.complete) finalizeMatchRecording(matchSession, view.outcome);
-      try {
-        const text = buildBotMatchTtrm(matchSession.recording, { outcome: view.outcome });
-        return sendText(response, 200, text, "application/json; charset=utf-8");
-      } catch (error) {
-        if (error instanceof BotMatchTtrmError) {
-          return sendJson(response, 422, {
-            stage: error.stage,
-            lockIndex: error.lockIndex,
-            message: error.message,
-          });
-        }
-        throw error;
-      }
+      return sendJson(response, 409, { stage: 'input-required', message: 'Use an input-mode match to save .ttrm' });
     }
     if (request.method === "GET" && request.url === "/api/placement-geometry") {
       return sendJson(response, 200, {
@@ -471,7 +475,7 @@ const server = createServer(async (request, response) => {
 server.listen(options.port, "127.0.0.1", () => {
   console.log(`CC2 GUI: http://127.0.0.1:${options.port}/`);
   for (const engine of Object.values(cc2Engines)) {
-    console.log(`${engine.label}: ${engine.binary !== null && existsSync(engine.binary) ? engine.binary : "unavailable (set a local binary path)"}`);
+    console.log(`${engine.label}: ${existsSync(engine.binary) ? engine.binary : `unavailable (${engine.binary})`}`);
   }
 });
 
@@ -569,8 +573,10 @@ async function runScheduledBots(session, { requestedWallFrame = null } = {}) {
       currentLogicalFrame: before.clock.logicalFrame,
     }) : null;
     const after = advanceBotMatch(before, submissions, { scheduledLockFrame });
+    // This live session owns its recorder. Publish the match only after the
+    // append has staged every lock and delivery without error.
+    appendMatchLocks(session.recording, before, after, submissions);
     session.match = after;
-    session.recording = recordMatchLocks(session.recording, before, after, submissions);
     const view = matchView(session, submissions, before);
     finalizeMatchRecording(session, view.outcome);
     return view;
@@ -630,14 +636,7 @@ async function searchForBot(session, bot, dueCount) {
           stepFrames: botLockCadenceFrames(session, bot.id),
           serialProposalCount: session.config.fairComparison ? dueCount : 1,
         }),
-      state: {
-        board: gui.board,
-        queue: gui.queue.slice(0, parameters.queueDepth),
-        hold: gui.hold,
-        combo: gui.combo,
-        back_to_back: gui.back_to_back,
-        randomizer: gui.randomizer,
-      },
+      state: guiStateToCc2NativeStart(gui, { queueLimit: parameters.queueDepth }),
     });
   } catch (error) {
     const failure = {
@@ -688,28 +687,6 @@ function resolveProposal(session, proposal) {
   const bot = session.match.bots.find((candidate) => candidate.id === proposal.botId);
   const parameters = session.botParameters[bot.id];
   const gui = botMatchToGuiState(session.match, bot.id);
-  // A `.ttrm` stores key events, not final placements. CC2 chooses
-  // final cells directly and may use a HOLD sequence that cannot be recreated
-  // by the pinned Engine from a synthetic 60f lock clock. In the explicit
-  // export-compatible mode, use the deterministic no-HOLD controller for
-  // those engines so every recorded lock has a real input witness. Normal
-  // matches keep each selected engine's unmodified final-placement policy.
-  if (session.ttrmCompatible && proposal.type !== "s2-simple" && proposal.type !== "human") {
-    const analysis = analyzeSimpleS2FinalPlacements(bot.state, { topN: 1, allowHold: false });
-    const best = analysis.moves[0];
-    if (!best) throw new Error(`${bot.id} has no TTRM-safe final placement`);
-    return {
-      botId: bot.id,
-      result: {
-        transition: best.transition,
-        comparison: { positionFingerprint: fullStateKey(bot.state), ttrmController: "s2-simple-no-hold/1" },
-      },
-      move: best.placement,
-      score: best.score,
-      ttrmController: "s2-simple-no-hold/1",
-      lastPlaced: lockedPieceCells(gui.board, best.transition, best.placement.piece),
-    };
-  }
   if (proposal.type === "s2-simple") {
     const analysis = analyzeSimpleS2FinalPlacements(bot.state, {
       topN: 1,
@@ -729,18 +706,20 @@ function resolveProposal(session, proposal) {
     };
   }
   const engine = requireCc2Engine(proposal.type);
-  const result = isCc2S2Type(proposal.type)
-    ? selectCc2S2Placement(gui, proposal.moves, engine)
-    : applyCc2FinalPlacementUnderObservedS2(gui, proposal.moves[0], engine);
-  const move = isCc2S2Type(proposal.type) ? result.move : proposal.moves[0];
-  if (result.transition === null) throw new Error(`${bot.id} CC2 placement rejected: ${result.reasons.join(", ")}`);
+  if (!isAdr062QualifiedStaticType(proposal.type)) throw new Error("ADR-062-qualified resolver required");
+  const resolved = resolveQualifiedStaticCc2Submission(createS2AmountOnlyDecisionRequest({
+    sessionKey: bot.id, state: bot.state, moves: proposal.moves, type: proposal.type, engine: publicEngine(engine),
+  }));
+  const transition = applyTransition(bot.state, { kind: "placement", placement: resolved.placement }, bot.state.rulesetId);
+  if (transition.legality?.legal !== true || transition.nextState === null) throw new Error(`${bot.id} CC2 placement rejected`);
+  const result = { transition, comparison: { score: resolved.score } };
+  const move = resolved.placement;
   return {
-    botId: bot.id,
-    result,
+    ...attachS2SubmissionFingerprint(bot.id, bot.state, result),
     move,
     score: result.comparison.score,
     cc2: proposal.info,
-    lastPlaced: lockedPieceCells(gui.board, result.transition, move.location.type),
+    lastPlaced: lockedPieceCells(gui.board, result.transition, move.piece),
   };
 }
 
@@ -775,19 +754,23 @@ function commitHumanLock(session, placement, requestedFrame) {
     externalLockFrame: lockFrame,
     allowScheduledOverrun: true,
   });
+  // The live session owns this recorder; a failed append leaves the prior
+  // match and recording snapshot available to the caller.
+  appendMatchLocks(session.recording, before, after, [submission]);
   session.match = after;
-  session.recording = recordMatchLocks(session.recording, before, after, [submission]);
   const view = matchView(session, [submission]);
   finalizeMatchRecording(session, view.outcome);
   return view;
 }
 
 function resolveHumanSide(leftType, rightType) {
+  if (rightType === "human") {
+    throw new Error("You (1P) is available only on the left side");
+  }
   if (leftType === "human" && rightType === "human") {
     throw new Error("only one side can be played by a human");
   }
   if (leftType === "human") return "left";
-  if (rightType === "human") return "right";
   return null;
 }
 
@@ -802,9 +785,7 @@ function pacedRateFor(side, botType, humanSide, config, botParameters) {
 function refillMatchQueues(session) {
   for (const bot of session.match.bots) {
     const current = botMatchToGuiState(session.match, bot.id).queue;
-    const extended = session.queueModel === QUEUE_MODE_TRIANGLE_7_BAG
-      ? extendTriangleSeededQueue(current, session.queueSeeds[bot.id], 28)
-      : extendSeededQueue(current, session.queueSeeds[bot.id], 28);
+    const extended = extendSeededQueue(current, session.queueSeeds[bot.id], 28);
     session.queueSeeds[bot.id] = extended.bagSeed;
     if (extended.queue.length !== current.length) {
       session.match = extendBotMatchQueue(session.match, bot.id, extended.queue);
@@ -851,6 +832,9 @@ async function closeCc2MatchSessions(session) {
 function assertBotType(value) {
   if (!["cc2-raw", "cc2-chouhy", "cc2-s2", "cc2-s2-gen017", "cc2-s2-f11", "cc2-s2-f12", "cc2-s2-f14", "cc2-s2-f25", "cc2-s2-champion", "s2-simple", "human"].includes(value)) throw new Error(`unsupported match bot ${value}`);
   if (value === "cc2-raw" || value === "cc2-chouhy" || isCc2S2Type(value)) requireCc2Engine(value);
+  if ((value === "cc2-raw" || value === "cc2-chouhy" || isCc2S2Type(value)) && !isAdr062QualifiedStaticType(value)) {
+    throw new Error("ADR-062-qualified resolver required");
+  }
   return value;
 }
 
@@ -891,7 +875,7 @@ function selectCc2S2Placement(guiState, moves, engine) {
     });
   }
   if (engine.botType === "cc2-s2-f14") {
-    return selectS2F12PostTankSolvencyRescuePlacement(guiState, moves, {
+    return selectS2F12AmountOnlyPostTankSolvencyRescuePlacement(guiState, moves, {
       candidateLimit: 16,
       rankPenalty: 25,
       adjustmentScale: 28,
@@ -915,7 +899,7 @@ function selectCc2S2Placement(guiState, moves, engine) {
     });
   }
   if (engine.botType === "cc2-s2-champion") {
-    return selectS2F12PostTankSolvencyRescuePlacement(guiState, moves, {
+    return selectS2F12AmountOnlyPostTankSolvencyRescuePlacement(guiState, moves, {
       candidateLimit: 16,
       rankPenalty: 25,
       adjustmentScale: 28,
@@ -931,6 +915,7 @@ function selectCc2S2Placement(guiState, moves, engine) {
 
 function publicEngine(engine) {
   return {
+    botType: engine.botType,
     engineId: engine.engineId,
     label: engine.label,
     repository: engine.repository,
@@ -1089,7 +1074,8 @@ function parseArguments(args) {
   const chouhyBinaryArgument = args.find((arg) => arg.startsWith("--cc2-chouhy="));
   const s2BinaryArgument = args.find((arg) => arg.startsWith("--cc2-s2="));
   const portArgument = args.find((arg) => arg.startsWith("--port="));
-  const s2Fallback = fileURLToPath(new URL("../bot/cold-clear-2-s2/target/release/cold-clear-2-s2.exe", import.meta.url));
+  const executableSuffix = process.platform === "win32" ? ".exe" : "";
+  const s2Fallback = fileURLToPath(new URL(`../bot/cold-clear-2-s2/target/release/cold-clear-2-s2${executableSuffix}`, import.meta.url));
   const resolveOptionalPath = (value) => value === undefined ? null : resolve(value);
   const rawBinary = resolveOptionalPath(
     rawBinaryArgument?.slice("--cc2-raw=".length)
@@ -1099,7 +1085,7 @@ function parseArguments(args) {
   );
   const chouhyBinary = resolveOptionalPath(
     chouhyBinaryArgument?.slice("--cc2-chouhy=".length)
-      ?? process.env.CC2_CHOUHY_BINARY
+      ?? process.env.CC2_CHOUHY_BINARY,
   );
   const s2Binary = resolve(
     s2BinaryArgument?.slice("--cc2-s2=".length)

@@ -38,9 +38,9 @@ impl Mode for Freestyle {
         self.dag.add_piece(piece);
     }
 
-    fn suggest(&self, _options: &BotOptions) -> Vec<Placement> {
+    fn suggest(&self, options: &BotOptions) -> Vec<Placement> {
         puffin::profile_function!();
-        self.dag.suggest()
+        self.dag.suggest(if options.input_candidates { 16 } else { 1 })
     }
 
     fn do_work(&self, options: &BotOptions) -> Statistics {

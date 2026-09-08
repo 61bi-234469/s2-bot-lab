@@ -36,6 +36,7 @@ impl Default for BotConfig {
 
 #[derive(Debug)]
 pub struct BotOptions {
+    pub input_candidates: bool,
     pub speculate: bool,
     pub config: Arc<BotConfig>,
 }
