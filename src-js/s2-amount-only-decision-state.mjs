@@ -17,10 +17,13 @@ export function createGuiStaticDecisionRequest(options) {
   if (options.type !== "cc2-raw" && options.type !== "cc2-chouhy") {
     return createS2AmountOnlyDecisionRequest(options);
   }
+  if (options.engine?.botType !== options.type) throw new Error("input decision engine identity mismatch");
   const request = {
     id: INPUT_DECISION_REQUEST_ID, sessionKey: options.sessionKey,
     decision: createS2AmountOnlyDecisionState(options.state), moves: structuredClone(options.moves),
-    type: options.type, engine: { botType: options.engine.botType, engineId: options.engine.engineId },
+    // The shared input envelope identifies the bot profile, while native GUI
+    // response metadata retains its revision-qualified engine identity.
+    type: options.type, engine: { botType: options.type, engineId: options.type },
   };
   assertInputDecisionRequest(request);
   return Object.freeze(request);

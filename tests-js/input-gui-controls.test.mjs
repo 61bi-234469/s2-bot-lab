@@ -30,6 +30,45 @@ test('enabling TTRM INPUT caps all admitted bot queues on both sides', () => {
   }
   assert.equal(app.clampInputQueueDepths(), false);
 });
+test('TTRM INPUT greys the bot names it cannot run without hiding an unavailable build', () => {
+  const admitted = ['cc2-raw', 'cc2-chouhy', 'cc2-s2-f14', 'cc2-s2-champion'];
+  const names = [...admitted, 'cc2-s2-gen017', 's2-simple', 'cc2-s2-missing', 'human'];
+  const makeSelect = (values) => ({ options: values.map((value) => ({
+    value, disabled: false, title: '', dataset: value === 'cc2-s2-missing'
+      ? { unavailable: 'true', reason: 'native build is not installed' } : {},
+  })) });
+  const elements = {
+    'left-bot': makeSelect(names),
+    'right-bot': makeSelect(names.filter((value) => value !== 'human')),
+  };
+  const app = vm.createContext({
+    BOT_SIDES: ['left', 'right'], elements, matchRunning: false,
+    INPUT_SUPPORTED_TYPES: new Set(['human', ...admitted]),
+    inputModeSelected: () => app.enabled, inputModeActive: () => false,
+  });
+  for (const name of ['inputBotAdmitted', 'syncInputBotOptions']) {
+    vm.runInContext(source.match(new RegExp(`^function ${name}\\([\\s\\S]*?^}`, 'm'))[0], app);
+  }
+  const state = (selectId) => Object.fromEntries(
+    elements[selectId].options.map((option) => [option.value, option.disabled]));
+
+  app.enabled = true;
+  app.syncInputBotOptions();
+  assert.deepEqual(state('left-bot'), { 'cc2-raw': false, 'cc2-chouhy': false, 'cc2-s2-f14': false,
+    'cc2-s2-champion': false, 'cc2-s2-gen017': true, 's2-simple': true, 'cc2-s2-missing': true, human: false });
+  // The person can only hold the left side, so You is not admitted on the right.
+  assert.equal(state('right-bot').human, undefined);
+  assert.match(elements['left-bot'].options.find((option) => option.value === 's2-simple').title,
+    /TTRM INPUT/);
+  assert.equal(elements['left-bot'].options.find((option) => option.value === 'cc2-s2-missing').title,
+    'native build is not installed');
+
+  app.enabled = false;
+  app.syncInputBotOptions();
+  assert.deepEqual(state('left-bot'), { 'cc2-raw': false, 'cc2-chouhy': false, 'cc2-s2-f14': false,
+    'cc2-s2-champion': false, 'cc2-s2-gen017': false, 's2-simple': false, 'cc2-s2-missing': true, human: false });
+  assert.equal(elements['left-bot'].options.find((option) => option.value === 's2-simple').title, '');
+});
 test('FT3 automatically schedules game two after saving an Engine-completed input round', async () => {
   let scheduled;
   let starts = 0;

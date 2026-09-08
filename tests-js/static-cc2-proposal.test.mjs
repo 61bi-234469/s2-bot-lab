@@ -158,6 +158,18 @@ test("raw and chouhy public resolution preserves native first choice and is hidd
   }
 });
 
+test("native GUI Raw/chouhy identities use the same public decision envelope as WASM", () => {
+  const { gui, moves } = fixture();
+  for (const [type, engineId] of [["cc2-raw", "minuskelvin-cold-clear-2/ed8b193"], ["cc2-chouhy", "chouhy-cold-clear-2/b20a92b"]]) {
+    const options = { sessionKey: "left", state: guiStateToCanonical(gui), moves, type, engine: publicEngine(type) };
+    const expected = createGuiStaticDecisionRequest(options);
+    const actual = createGuiStaticDecisionRequest({ ...options, engine: { botType: type, engineId } });
+    assert.deepEqual(actual, expected);
+    assert.deepEqual(resolveGuiStaticSubmission(actual), resolveGuiStaticSubmission(expected));
+    assert.throws(() => createGuiStaticDecisionRequest({ ...options, engine: { botType: "cc2-s2-f14", engineId } }), /identity mismatch/);
+  }
+});
+
 test("static proposal preserves every existing S2 type mapping", () => {
   const { gui, moves } = fixture();
   for (const type of S2_TYPES) {

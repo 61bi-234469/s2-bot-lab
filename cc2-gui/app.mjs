@@ -216,10 +216,12 @@ elements["reset-button"].addEventListener("click", reset);
 elements["match-run"].addEventListener("click", toggleMatchRun);
 elements["match-step"].addEventListener("click", stepMatch);
 elements["match-reset"].addEventListener("click", resetMatch);
-elements["match-save-replay"].addEventListener("click", saveMatchReplay);
-elements["match-save-ttrm"].addEventListener("click", saveMatchTtrm);
+elements["match-save-replay"].addEventListener("click", saveMatchExport);
 elements["match-unlimited-turns"].addEventListener("change", syncMaxTurnsControl);
 elements["match-random-seed"].addEventListener("change", () => syncRandomSeedControl());
+/* One delegated listener rather than one per control: every setting in this row
+   shows up on the disclosure's closed bar, so each of them has to refresh it. */
+elements["match-settings"].addEventListener("input", () => renderExecutionScopeNotes());
 elements["match-fair-comparison"].addEventListener("change", syncFairComparisonControls);
 elements["match-ttrm-compatible"].addEventListener("change", () => {
   clampInputQueueDepths();
@@ -370,6 +372,11 @@ async function loadBotCapabilities() {
     for (const option of select.options) {
       const bot = byId.get(option.value);
       if (!bot) continue;
+      /* Whether the build has the bot at all is kept on the option, because the
+         execution path also greys options and the two reasons must not
+         overwrite each other. */
+      option.dataset.unavailable = String(bot.available === false);
+      option.dataset.reason = bot.reason ?? "";
       option.disabled = bot.available === false;
       option.textContent = bot.available === false ? `${bot.label} · unavailable` : bot.label;
       option.title = bot.reason ?? "";
@@ -378,6 +385,7 @@ async function loadBotCapabilities() {
       select.value = [...select.options].find((option) => !option.disabled)?.value ?? "";
     }
   }
+  syncInputBotOptions();
   const unavailable = [...byId.values()].filter((bot) => bot.available === false);
   if (unavailable.length > 0) {
     elements["match-bot-note"].textContent += `　現在使えないBot: ${unavailable.map((bot) => `${bot.label}（${bot.reason}）`).join("、")}`;
@@ -1309,9 +1317,14 @@ function inputHumanActive() {
     inputMatchState !== null && inputMatchState.generation === matchGeneration;
 }
 
+/* TTRM INPUT admits only the bots that carry a reviewed input-selector
+   binding, and the person can only hold the left side. */
+function inputBotAdmitted(side, botType) {
+  return INPUT_SUPPORTED_TYPES.has(botType) && !(side === "right" && botType === "human");
+}
+
 function assertInputMatchConfig(config) {
-  if (!INPUT_SUPPORTED_TYPES.has(config.left) || !INPUT_SUPPORTED_TYPES.has(config.right) ||
-      config.right === "human") {
+  if (!inputBotAdmitted("left", config.left) || !inputBotAdmitted("right", config.right)) {
     throw new Error("TTRM INPUT requires registered input bots (You is allowed on the left)");
   }
 }
@@ -2280,28 +2293,49 @@ function renderMatchSummary() {
   renderMatchSaveButton();
 }
 
+/* The format is decided by the execution path the rounds were played on, not by
+   the person saving them, so one button carries it. A started series answers for
+   its own rounds even after the toggle moves again; before that the toggle is
+   the only claim there is. */
+function selectedExportFormat() {
+  if (matchSeries !== null) return inputModeActive() ? "ttrm" : "json";
+  return inputModeSelected() ? "ttrm" : "json";
+}
+
+function saveMatchExport() {
+  return selectedExportFormat() === "ttrm" ? saveMatchTtrm() : saveMatchReplay();
+}
+
 /* The export spends most of its life disabled, and the reason is not visible on
    the button itself, so it rides along as a title rather than leaving a dead
    control unexplained. */
 function renderMatchSaveButton() {
-  const hasCurrent = !inputModeActive() && matchRunning && (lastMatchView?.turnNumber ?? 0) > 0;
-  const hasCompleted = (matchSeries?.rounds?.length ?? 0) > 0;
-  const blocked = matchSaveInFlight ? "保存中です"
+  const button = elements["match-save-replay"];
+  const format = selectedExportFormat();
+  button.dataset.format = format;
+  button.textContent = format === "ttrm" ? "SAVE .ttrm" : "SAVE .json";
+  const busy = matchSaveInFlight ? "保存中です"
     : matchRoundFinalization !== null ? "対局の記録をまとめています"
-    : !(hasCurrent || hasCompleted) ? "まだ保存できる手がありません。START MATCH で対局を進めてください"
     : "";
-  setMatchExportButton("match-save-replay", blocked, "この対局の記録を .json ファイルで保存します");
-  const ttrmRecords = (matchSeries?.rounds ?? []).filter((round) => round.executedTtrm?.text);
-  const ttrmBlocked = matchSaveInFlight ? "保存中です"
-    : matchRoundFinalization !== null ? "対局の記録をまとめています"
-      : !inputModeActive() ? "TTRM INPUT をONにして開始した対局だけが .ttrm を出力できます"
-        : ttrmRecords.length === 0 ? "保存できる完了ラウンドがまだありません"
-          : "";
-  setMatchExportButton("match-save-ttrm", ttrmBlocked, "実際に消費した入力を検証済みの .ttrm として保存します");
+  if (format === "ttrm") {
+    const ready = (matchSeries?.rounds ?? []).some((round) => round.executedTtrm?.text);
+    setMatchExportButton(button,
+      busy !== "" ? busy
+        : !ready ? "保存できる完了ラウンドがまだありません。TTRM INPUT はround終了後に保存できます"
+        : "",
+      "実際に消費した入力を検証済みの .ttrm として保存します");
+    return;
+  }
+  const hasCurrent = matchRunning && (lastMatchView?.turnNumber ?? 0) > 0;
+  const hasCompleted = (matchSeries?.rounds?.length ?? 0) > 0;
+  setMatchExportButton(button,
+    busy !== "" ? busy
+      : !(hasCurrent || hasCompleted) ? "まだ保存できる手がありません。START MATCH で対局を進めてください"
+      : "",
+    "この対局の記録を .json ファイルで保存します");
 }
 
-function setMatchExportButton(id, blockedReason, enabledTitle) {
-  const button = elements[id];
+function setMatchExportButton(button, blockedReason, enabledTitle) {
   button.disabled = blockedReason !== "";
   button.title = blockedReason !== "" ? blockedReason : enabledTitle;
 }
@@ -2350,6 +2384,9 @@ async function saveMatchReplay() {
     setTimeout(() => URL.revokeObjectURL(url), 0);
     setMatchExportMessage("saved", `SAVED ${name} · ${rounds.length} ROUND(S)`);
   } catch (error) {
+    // The export line is left holding "EXPORTING …" otherwise: handleMatchError
+    // reports on the round status, which is not where the save was announced.
+    setMatchExportMessage("failed", `EXPORT FAILED · ${error.message}`);
     handleMatchError(error);
   } finally {
     matchSaveInFlight = false;
@@ -2392,6 +2429,9 @@ async function saveMatchTtrm() {
     setTimeout(() => URL.revokeObjectURL(url), 0);
     setMatchExportMessage("saved", `SAVED ${name} · ${records.length} ROUND(S)`);
   } catch (error) {
+    // The export line is left holding "EXPORTING …" otherwise: handleMatchError
+    // reports on the round status, which is not where the save was announced.
+    setMatchExportMessage("failed", `EXPORT FAILED · ${error.message}`);
     handleMatchError(error);
   } finally {
     matchSaveInFlight = false;
@@ -2471,6 +2511,68 @@ function syncHumanMatchControls(matchSettingsDisabled = false) {
     : playing
       ? "1P対戦では自分のハードドロップが手番を進めます"
       : "";
+  syncInputBotOptions();
+  renderExecutionScopeNotes();
+}
+
+/* A bot the selected execution path cannot run is greyed on the picker instead
+   of staying selectable and being refused at START. The roster keeps its shape
+   on both paths, so turning TTRM INPUT off brings the same names back, and a
+   bot this build does not have at all stays unavailable either way. */
+function syncInputBotOptions() {
+  const inputMode = inputModeSelected() || (matchRunning && inputModeActive());
+  for (const side of BOT_SIDES) {
+    for (const option of elements[`${side}-bot`].options) {
+      const unavailable = option.dataset.unavailable === "true";
+      const inadmissible = inputMode && !inputBotAdmitted(side, option.value);
+      option.disabled = unavailable || inadmissible;
+      option.title = inadmissible && !unavailable
+        ? "TTRM INPUT では使えません（実入力の対応Botではありません）"
+        : option.dataset.reason ?? "";
+    }
+  }
+}
+
+/* Which execution path a setting belongs to used to be visible only as a greyed
+   control, which reads as "not available yet" rather than "not part of this
+   path". Each scoped group now states its path in words, and the legacy group
+   keeps saying so while it is active rather than only once it is inert.
+
+   The whole row ships closed behind one disclosure, so its bar also carries the
+   values it is hiding: a folded row must not take its state with it, and the
+   execution path is the one setting that decides what the export writes. */
+function renderExecutionScopeNotes() {
+  const inputMode = inputModeSelected() || (matchRunning && inputModeActive());
+  const playing = selectedHumanSide() !== null;
+  elements["match-execution-note"].textContent = inputMode
+    ? "TTRM INPUT：実入力を60Hzで消費し、EXPORT は .ttrm を保存します。"
+    : "従来モード：最終配置で進行し、EXPORT は .json を保存します。";
+  elements["match-legacy-settings"].dataset.inactive = String(inputMode);
+  elements["match-legacy-note"].textContent = inputMode
+    ? "TTRM INPUT 中は使いません（実ミノとゴーストを表示し、FAIR COMPARISON も適用しません）。"
+    : playing
+      ? "You (1P) 参加中は FAIR COMPARISON を使いません。"
+      : "TTRM INPUT では適用されません。";
+  elements["match-settings-state"].textContent = matchSettingsStateText(inputMode);
+}
+
+/* The execution path leads because it decides what the export writes. The two
+   legacy switches are named only while that path is the one being run: under
+   TTRM INPUT they are not off, they are not part of the match at all, and
+   printing "FAIR OFF" for them on the closed bar would claim otherwise. */
+function matchSettingsStateText(inputMode) {
+  const parts = [
+    inputMode ? "TTRM INPUT · .ttrm" : "従来モード · .json",
+    `SEED ${elements["match-random-seed"].checked ? "RND" : elements["match-seed"].value}`,
+    `MAX ${elements["match-unlimited-turns"].checked ? "∞" : elements["match-max-turns"].value}`,
+    `FT${elements["match-count"].value}`,
+  ];
+  if (inputMode) return parts.join(" · ");
+  return [...parts, `FAIR ${onOff(elements["match-fair-comparison"])}`, `GHOST ${onOff(elements["match-pre-lock-preview"])}`].join(" · ");
+}
+
+function onOff(checkbox) {
+  return checkbox.checked ? "ON" : "OFF";
 }
 
 function syncMaxTurnsControl() {

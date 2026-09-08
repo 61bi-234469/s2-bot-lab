@@ -51,10 +51,10 @@ import {
 import { fullStateKey } from "../src-js/state-keys.mjs";
 import { applyTransition } from "../src-js/transition.mjs";
 import {
-  createS2AmountOnlyDecisionRequest,
-  isAdr062QualifiedStaticType,
+  createGuiStaticDecisionRequest as createS2AmountOnlyDecisionRequest,
+  isGuiStaticType as isAdr062QualifiedStaticType,
 } from "../src-js/s2-amount-only-decision-state.mjs";
-import { resolveQualifiedStaticCc2Submission } from "../src-js/s2-amount-only-public-resolver.mjs";
+import { resolveGuiStaticSubmission as resolveQualifiedStaticCc2Submission } from "../src-js/gui-static-public-resolver.mjs";
 import {
   matchOutcome,
   normalizeBotMatchOptions,

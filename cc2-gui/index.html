@@ -217,41 +217,61 @@
           <button id="match-step" type="button" disabled>STEP</button>
           <button id="match-reset" class="quiet" type="button" disabled>RESET</button>
         </div>
-        <div class="match-settings" aria-label="Match settings">
-          <label class="fair-comparison-setting">FAIR COMPARISON
-            <span><input id="match-fair-comparison" type="checkbox"> SERIAL · 1 PPS</span>
-          </label>
-          <label class="pre-lock-preview-setting">PRE-LOCK PREVIEW
-            <span><input id="match-pre-lock-preview" type="checkbox"> GHOST</span>
-          </label>
-          <label class="ttrm-compatible-setting" title="実入力の .ttrm 対局を有効にします。Raw CC2、chouhy、CC2 S2 F14、current champion同士、または左側のYou (1P)との対戦に対応します。">
-            <span>EXECUTION</span>
-            <span><input id="match-ttrm-compatible" type="checkbox"> TTRM INPUT / .ttrm対応</span>
-          </label>
-          <div class="match-setting">
-            <label for="match-seed">SEED</label>
-            <div class="match-limit-control">
-              <input id="match-seed" type="number" min="0" max="4294967295" step="1" value="1506" disabled>
-              <label class="random-seed-toggle"><input id="match-random-seed" type="checkbox" checked>RND</label>
-            </div>
+        <details class="match-settings-disclosure" id="match-settings-disclosure">
+          <summary title="対局設定を開閉します"><span class="settings-name">MATCH SETTINGS / 対局設定</span><span class="settings-state" id="match-settings-state"></span></summary>
+          <div class="match-settings" id="match-settings" aria-label="Match settings">
+            <section class="match-setting-group" data-scope="execution">
+              <h3 class="group-name">EXECUTION / 実行方式</h3>
+              <div class="match-setting-group-body">
+                <label class="ttrm-compatible-setting" title="実入力の .ttrm 対局を有効にします。Raw CC2、chouhy、CC2 S2 F14、current champion同士、または左側のYou (1P)との対戦に対応します。">TTRM INPUT
+                  <span><input id="match-ttrm-compatible" type="checkbox" checked> .ttrm対応 / 実入力実行</span>
+                </label>
+                <small class="match-scope-note" id="match-execution-note"></small>
+              </div>
+            </section>
+            <section class="match-setting-group" id="match-legacy-settings" data-scope="legacy">
+              <h3 class="group-name">従来モード専用 / LEGACY ONLY</h3>
+              <div class="match-setting-group-body">
+                <label class="fair-comparison-setting">FAIR COMPARISON
+                  <span><input id="match-fair-comparison" type="checkbox"> SERIAL · 1 PPS</span>
+                </label>
+                <label class="pre-lock-preview-setting">PRE-LOCK PREVIEW
+                  <span><input id="match-pre-lock-preview" type="checkbox"> GHOST</span>
+                </label>
+                <small class="match-scope-note" id="match-legacy-note"></small>
+              </div>
+            </section>
+            <section class="match-setting-group" data-scope="both">
+              <h3 class="group-name">共通 / BOTH PATHS</h3>
+              <div class="match-setting-group-body">
+                <div class="match-setting">
+                  <label for="match-seed">SEED</label>
+                  <div class="match-limit-control">
+                    <input id="match-seed" type="number" min="0" max="4294967295" step="1" value="1506" disabled>
+                    <label class="random-seed-toggle"><input id="match-random-seed" type="checkbox" checked>RND</label>
+                  </div>
+                </div>
+                <div class="match-setting">
+                  <label for="match-max-turns">MAX TURNS</label>
+                  <div class="match-limit-control">
+                    <input id="match-max-turns" type="number" min="1" max="10000" step="1" value="500" disabled>
+                    <label class="infinity-toggle"><input id="match-unlimited-turns" type="checkbox" checked>∞</label>
+                  </div>
+                </div>
+                <label>FIRST TO
+                  <input id="match-count" type="number" min="1" max="100" step="1" value="1">
+                </label>
+                <small class="match-scope-note">両方の実行方式で使います。同じSEEDでもミノ列・ガベージRNG・終局条件は方式ごとに異なります。</small>
+              </div>
+            </section>
           </div>
-          <div class="match-setting">
-            <label for="match-max-turns">MAX TURNS</label>
-            <div class="match-limit-control">
-              <input id="match-max-turns" type="number" min="1" max="10000" step="1" value="500" disabled>
-              <label class="infinity-toggle"><input id="match-unlimited-turns" type="checkbox" checked>∞</label>
-            </div>
-          </div>
-          <label>FIRST TO
-            <input id="match-count" type="number" min="1" max="100" step="1" value="1">
-          </label>
+        </details>
         </div>
         <div class="match-outcome">
           <output id="match-summary" class="match-summary">NO SERIES RESULTS</output>
           <div class="match-exports" role="group" aria-label="対局の保存">
             <span class="export-label">EXPORT</span>
-            <button id="match-save-replay" class="quiet" type="button" disabled>SAVE .json</button>
-            <button id="match-save-ttrm" class="quiet" type="button" disabled>SAVE .ttrm</button>
+            <button id="match-save-replay" class="quiet" type="button" data-format="json" disabled>SAVE .json</button>
           </div>
         </div>
         <output id="match-export-message" class="match-export-message" hidden></output>
@@ -310,9 +330,11 @@
             <dl class="match-metrics" id="match-right-metrics" aria-label="Right bot detailed metrics"></dl>
           </article>
         </div>
-        <p class="match-note" id="match-human-note">LEFT BOTで <strong>You (1P)</strong> を選ぶと自分で対戦できます。操作は ← → 移動、↓ ソフトドロップ、Space ハードドロップ、Z/X 回転、A 180度回転、C ホールド、Esc リセット。キー割り当てと操作感（DAS・ARR・DCD・SDF）は SETTINGS で変更できます。TTRM INPUTでは自然落下があり、DAS・ARR・DCD・SDFはEngineで処理します。操作感の設定変更は次のラウンドから適用されます。</p>
-        <p class="match-note" id="match-bot-note">START MATCH で対局が始まります。もう一度押すと一時停止、さらに押すと再開します。左右のBotは1つの共通クロックで進み、従来の固定探索モードは同じSEEDで再現できます。TTRM INPUTでは実時間の入力と探索完了時刻が対局に影響し、保存した入力ログから再生します。Botごとの探索条件は各 SETTINGS で設定します。SELECTION（探索数）と THINK TIME（探索時間）は少なくとも一方をONにする必要があり、先に達した方で探索を打ち切ります。THINK TIME は端末やブラウザの状態で結果が変わるため、既定はOFFです。PPS をOFFにすると、探索が終わり次第すぐ置きます。FAIR COMPARISON をONにすると、CC2系のBotを SELECTION 512・1 PPS に揃え、同じタイミングの探索を順番に実行して条件差をなくします。TTRM INPUT は Raw CC2、chouhy、CC2 S2 F14、current champion同士、または左側のYou (1P)との組み合わせで使え、各BotのPPS設定に沿って実時間で進みます（PPSをOFFにすると準備ができ次第入力します。探索・入力経路の解決が間に合わない場合は指定速度を下回ります。FAIR COMPARISONは適用しません）。QUEUE DEPTH上限は15（current＋NEXT 14）で、ONにした時点で15を超える保存値も15へ変更します。PRE-LOCK PREVIEWは使いません。同じSEEDでも従来モードとはミノ列・ガベージ列・終局条件が異なります。終了後に SAVE .ttrm で実際に消費した入力を保存できます。その他の組み合わせでONにすると開始時に理由を表示します。TTRM INPUTの切替状態と個別設定はブラウザに保存されます。従来モードは1手以降、TTRM INPUTはround終了後にEXPORTから保存できます。</p>
-        <p class="match-note">お邪魔ゲージは攻撃の塊ごとに区切り、相殺・せり上がり後の残り段数を表示します。S2では塊の中の穴は同じ列に揃いますが、穴の位置はせり上がるまで分かりません。サージ成分は3つの攻撃に分かれます（相殺で減る場合があります）。CNLは実際に相殺したお邪魔の段数です。TTRM INPUTのSCORE（配置評価点）は未提供です。入力経路が見つからない場合は当該roundを中止し、保存できません。低PPS設定でも重力で先に自然接地する場合があり、その接地を記録して続行します。以前に完了したroundは保存できます。</p>
+        <p class="match-note" id="match-human-note">LEFT BOTで <strong>You (1P)</strong> を選ぶと自分で対戦できます。操作は ← → 移動、↓ ソフトドロップ、Space ハードドロップ、Z/X 回転、A 180度回転、C ホールド、Esc リセット。キー割り当てと操作感（DAS・ARR・DCD・SDF）は SETTINGS で変更でき、変更は次のラウンドから反映されます。TTRM INPUT では自然落下があり、操作感は Engine 側で処理します。</p>
+        <p class="match-note" id="match-bot-note">START MATCH で対局が始まります。もう一度押すと一時停止、さらに押すと再開します。左右のBotは1つの共通クロックで進みます。探索条件はBotごとの SETTINGS で設定します。SELECTION（探索数）と THINK TIME（探索時間）は少なくとも一方をONにする必要があり、先に達した方で探索を打ち切ります。THINK TIME は端末やブラウザの状態で結果が変わるため、既定はOFFです。PPS をOFFにすると探索が終わり次第すぐ置きます。FAIR COMPARISON をONにすると、CC2系のBotを SELECTION 512・1 PPS に揃え、探索を順番に実行して条件差をなくします。</p>
+        <p class="match-note">実行方式は2つあります。<strong>固定探索モード</strong>（TTRM INPUT がOFF）は同じSEEDで再現でき、EXPORT では1手目以降の .json を保存します。<strong>TTRM INPUT</strong> は実時間で進み、実際の入力と探索完了時刻が結果に影響します。各BotのPPS設定に沿って動き（PPSがOFFなら準備ができ次第入力、探索や入力経路が間に合わない場合は指定速度を下回ります）、FAIR COMPARISON は適用しません。QUEUE DEPTH は最大15（current＋NEXT 14）で、ONにした時点で保存値も15に切り下げます。PRE-LOCK PREVIEW は使いません。同じSEEDでも固定探索モードとはミノ列・ガベージ列・終局条件が異なります。round 終了後、EXPORT で実際に消費した入力を .ttrm として保存できます。EXPORT の保存ボタンは1つで、選んだ実行方式に応じて保存形式が決まります。</p>
+        <p class="match-note">TTRM INPUT が使えるのは Raw CC2、chouhy、CC2 S2 F14、current champion 同士、または左側の You (1P) との組み合わせです。ONの間、対応しないBotは LEFT/RIGHT BOT の一覧でグレーアウトし、選べません。非対応のBotを選んだままONにした場合は、開始時に理由を表示します。切替状態と個別設定はブラウザに保存されます。</p>
+        <p class="match-note">お邪魔ゲージは攻撃の塊ごとに区切り、相殺・せり上がり後の残り段数を表示します。S2では塊の中の穴は同じ列に揃いますが、位置はせり上がるまで分かりません。サージ成分は3つの攻撃に分かれます（相殺で減る場合があります）。CNLは実際に相殺したお邪魔の段数です。TTRM INPUT では SCORE（配置評価点）は表示されません。入力経路が見つからない場合はそのroundを中止し保存できません（それ以前に完了したroundは保存できます）。低PPS設定でも重力で先に自然接地する場合があり、その接地を記録して続行します。</p>
       </section>
     </div>
 
