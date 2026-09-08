@@ -197,7 +197,9 @@ export function planInputTarget(request, movement, candidate, {
   for (const floor of [false, true]) {
     for (const rotateFirst of [true, false]) {
       const prefix = [...hold, ...(rotateFirst ? turns : [])];
-      const at = attempt(prefix);
+      // These prefixes were already simulated from the same public boundary.
+      // Reuse their poses so a direct fallback takes at most three trials.
+      const at = rotateFirst ? prepare(rotation).at : initial;
       if (!at || at.lock) continue;
       const distance = target.x - at.pose.x;
       const shift = Array(Math.min(12, Math.abs(distance))).fill(distance < 0 ? 'moveLeft' : 'moveRight');

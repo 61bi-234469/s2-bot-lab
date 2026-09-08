@@ -2,6 +2,7 @@ import { fullStateKey } from "./state-keys.mjs";
 import { canonicalPlacementToGuiMove } from "../cc2-gui/analysis-proposal.mjs";
 import { EVALUATION_SCORE_SEMANTICS, evaluatorModelIdentity, extractEvaluationFeatures, scoreEvaluationFeatures } from "./evaluation.mjs";
 import { createGuiInputMatchHandlers } from './gui-input-match.mjs';
+import { classifyGuiProposalError, suggestionFailureOutcome } from './cc2-suggestion-failure.mjs';
 import { guiStateToCanonical } from "./gui-state.mjs";
 import { canonicalTransitionHttpResponse } from "./canonical-transition-api.mjs";
 import { compareSimpleSamePositionCandidates } from "./comparison-contract.mjs";
@@ -270,6 +271,38 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       if (delayMs > 0) await wait(delayMs);
     }
 
+    // A searched empty static response ends one game. Reject malformed or
+    // first-lock evidence, and discard results that became stale after a
+    // human lock without closing the current match.
+    const failed = proposals.find((proposal) => proposal.proposalResult?.status === "failure");
+    if (failed !== undefined) {
+      return await activeSession.mutations.run(async () => {
+        if (session !== activeSession || activeSession.invalidated) return fail(409, { error: "match-replaced" });
+        const currentView = matchView(activeSession);
+        if (currentView.outcome.complete) return fail(409, { error: "match-complete", outcome: currentView.outcome });
+        if (prepared.match !== activeSession.match) return ok(currentView);
+        await cc2Runtime?.closeSessions({ sessionKeys: ["left", "right"] });
+        return fail(422, { error: failed.proposalResult.failure.message });
+      });
+    }
+    const forfeited = proposals.find((proposal) => proposal.type === "forfeit");
+    if (forfeited !== undefined) {
+      return await activeSession.mutations.run(() => {
+        if (session !== activeSession || activeSession.invalidated) return fail(409, { error: "match-replaced" });
+        const currentView = matchView(activeSession);
+        if (currentView.outcome.complete) return fail(409, { error: "match-complete", outcome: currentView.outcome });
+        if (prepared.match !== activeSession.match) return ok(currentView);
+        activeSession.forcedOutcome = {
+          ...suggestionFailureOutcome(activeSession.match.bots, forfeited.botId, forfeited.reason),
+          proposalResult: structuredClone(forfeited.proposalResult),
+        };
+        const view = matchView(activeSession);
+        finalize(activeSession);
+        void cc2Runtime?.closeSessions({ sessionKeys: ["left", "right"] });
+        return ok(view);
+      });
+    }
+
     try {
       let optimisticMatch = null;
       let optimisticSubmissions = null;
@@ -391,12 +424,28 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     const parameters = activeSession.botParameters[bot.id];
     const gui = botMatchToGuiState(preparedMatch, bot.id);
     const state = guiStateToCc2NativeStart(gui, { queueLimit: parameters.queueDepth });
-    const proposal = await cc2Runtime.propose({
-      sessionKey: bot.id,
-      engine: type,
-      state,
-      ...cc2MatchSearchBudget(activeSession, bot.id, dueCount),
-    });
+    const startedAt = now();
+    let proposal;
+    try {
+      proposal = await cc2Runtime.propose({
+        sessionKey: bot.id,
+        engine: type,
+        state,
+        ...cc2MatchSearchBudget(activeSession, bot.id, dueCount),
+      });
+    } catch (error) {
+      const classification = classifyGuiProposalError({
+        error,
+        locksPlayed: bot.stats.turns,
+        latencyMs: now() - startedAt,
+        diagnostics: { botId: bot.id, engineType: type },
+        engineType: type,
+      });
+      if (classification.status === "terminal") {
+        return { botId: bot.id, type: "forfeit", reason: "no-suggested-move", proposalResult: classification };
+      }
+      return { botId: bot.id, type: "failure", proposalResult: classification };
+    }
     return { botId: bot.id, type, moves: proposal.suggestion.moves };
   }
 
@@ -512,7 +561,8 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
         stats: bot.stats, metrics: calculatePlayerMetrics({ pieces: bot.stats.turns, attack: bot.stats.attack, garbageCleared: bot.stats.garbageCleared, elapsedFrames: activeSession.match.clock.logicalFrame }),
         toppedOut: gui.board.slice(20).some((row) => row.some((cell) => cell !== null)) };
     });
-    const outcome = matchOutcome(bots, activeSession.match.turnNumber, activeSession.config.maxTurns);
+    const outcome = activeSession.forcedOutcome ??
+      matchOutcome(bots, activeSession.match.turnNumber, activeSession.config.maxTurns);
     return { status: outcome.complete ? "complete" : "active", turnNumber: activeSession.match.turnNumber, humanSide: activeSession.humanSide,
       mode: activeSession.match.mode, clock: activeSession.match.clock, config: activeSession.config, botParameters: activeSession.botParameters, outcome,
       pacing: { authority: activeSession.humanSide === null ? "synthetic" : "realtime-1p", declaredPpsByBotId: structuredClone(activeSession.match.pace.ppsByBotId) },

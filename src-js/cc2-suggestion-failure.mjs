@@ -11,6 +11,8 @@
 import {
   NO_SUGGESTED_MOVE_MESSAGE,
   classifyProposalError,
+  failedProposal,
+  terminalProposal,
 } from "./proposal-outcome.mjs";
 
 export { NO_SUGGESTED_MOVE_MESSAGE } from "./proposal-outcome.mjs";
@@ -24,6 +26,48 @@ export { NO_SUGGESTED_MOVE_MESSAGE } from "./proposal-outcome.mjs";
  */
 export function isNoSuggestedMoveError(error) {
   return error instanceof Error && error.message.endsWith(NO_SUGGESTED_MOVE_MESSAGE);
+}
+
+/** Classifies an authenticated Pages/WASM empty suggestion at the GUI boundary. */
+export function classifyGuiProposalError({ error, locksPlayed, latencyMs = null, diagnostics = {}, engineType = null }) {
+  const message = proposalMessage(error);
+  if (!message.endsWith(NO_SUGGESTED_MOVE_MESSAGE)) {
+    return classifyProposalError({ error, locksPlayed, latencyMs, diagnostics });
+  }
+  const measuredLatency = Number.isFinite(error?.requestToSuggestionMs) ? error.requestToSuggestionMs : latencyMs;
+  const evidence = proposalEvidence(error, diagnostics);
+  if (!isVerifiedGuiEmptySuggestion(error, engineType)) {
+    return failedProposal({
+      code: error?.moveInfo?.selections === 0 && error?.moveInfo?.extra === "no active bot"
+        ? "inactive-bot-empty-suggestion" : "invalid-gui-empty-suggestion-evidence",
+      message: evidence.message, diagnostics: evidence, latencyMs: measuredLatency,
+    });
+  }
+  if (!Number.isSafeInteger(locksPlayed) || locksPlayed < 1) {
+    return failedProposal({ code: "no-legal-move-before-first-lock", message: evidence.message, diagnostics: evidence, latencyMs: measuredLatency });
+  }
+  return terminalProposal({ diagnostics: { ...evidence, noMoveBasis: "verified-gui-empty-suggestion" }, latencyMs: measuredLatency });
+}
+
+function isVerifiedGuiEmptySuggestion(error, engineType) {
+  if (!(error instanceof Error) || error.message !== NO_SUGGESTED_MOVE_MESSAGE || error.suggestionReceived !== true) return false;
+  const info = error.moveInfo;
+  if (info === null || typeof info !== "object" || Array.isArray(info) ||
+      !Number.isSafeInteger(info.selections) || info.selections <= 0 ||
+      !Number.isSafeInteger(info.nodes) || info.nodes < 0 ||
+      typeof info.extra !== "string" || info.extra.includes("no active bot")) return false;
+  if (engineType === "cc2-raw" || engineType === "cc2-chouhy") {
+    return info.candidate_values === undefined || (Array.isArray(info.candidate_values) && info.candidate_values.length === 0);
+  }
+  return Array.isArray(info.candidate_values) && info.candidate_values.length === 0;
+}
+
+function proposalEvidence(error, diagnostics) {
+  return { ...diagnostics, message: proposalMessage(error), ...(error?.moveInfo !== undefined ? { moveInfo: structuredClone(error.moveInfo) } : {}) };
+}
+
+function proposalMessage(error) {
+  return typeof error?.message === "string" ? error.message : String(error);
 }
 
 /**

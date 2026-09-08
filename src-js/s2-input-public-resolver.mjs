@@ -44,13 +44,14 @@ export function resolveQualifiedInputSubmission(request, movement, {
   for (const [adoptionRank, candidate] of candidates.entries()) {
     const remainingTime = maxTimeMs - (performance.now() - startedAt);
     if (nodes >= maxNodes || remainingTime <= 0) break;
-    // Give the preferred target room for a real path search. A full 16-move
-    // prefix must not reduce it to 12 trials. Reserve a quarter of both path
-    // budgets for fallback; a sole candidate may use the complete budgets.
+    // Keep a real search for the preferred target, but leave each fallback
+    // room for a direct route (initial pose, rotation, drop). A fixed 12-node
+    // minimum used to exhaust the pool before later candidates were visited.
+    // Small caller budgets still fail closed; a sole target gets all nodes.
     const remainingNodes = maxNodes - nodes;
     const candidateNodes = Math.min(remainingNodes, candidates.length === 1 ? remainingNodes :
-      adoptionRank === 0 ? Math.max(1, Math.floor(maxNodes * 3 / 4)) :
-        Math.max(12, Math.floor(remainingNodes / (candidates.length - adoptionRank))));
+      adoptionRank === 0 ? Math.max(1, Math.min(Math.floor(maxNodes * 3 / 4), maxNodes - 3 * (candidates.length - 1))) :
+        Math.max(1, Math.floor(remainingNodes / (candidates.length - adoptionRank))));
     const candidateTime = Math.min(remainingTime, candidates.length > 1 && adoptionRank === 0 ? maxTimeMs * 3 / 4 : remainingTime);
     const plan = planInputTarget(request, movement, candidate, { maxNodes: candidateNodes, maxFrames, maxTimeMs: candidateTime,
       compactInputs, allowEquivalentSpinWitness: true });
