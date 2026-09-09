@@ -345,12 +345,17 @@ test(`incoming maturity discards a stale ${firstNotFound ? 'not-found' : 'plan'}
   await handlers.handle({ method: 'POST', path: '/api/input-match/close', body: { sessionId: started.sessionId } });
 });
 
-test('a current not-found stops at its checked boundary with side and reason, and cannot export', async () => {
+test('path budget waits retain natural play, suppress retries, replan after locks and export top-out', async () => {
   const closed = [];
   const handlers = createGuiInputMatchHandlers({ now: () => 0, runtime: {
     propose: async ({ state }) => ({ moves: [spawnMove(state)] }),
     resolveInput: async ({ request, movement, startFrame }) => {
-      const future = forecastInputBoundary(request, movement, startFrame);
+      let future;
+      try { future = forecastInputBoundary(request, movement, startFrame); }
+      catch (error) {
+        if (error.message === 'input forecast crosses a natural lock') return { status: 'stale' };
+        throw error;
+      }
       const result = resolveQualifiedInputSubmission(future.request, future.movement, { maxNodes: 1, maxTimeMs: 1000 });
       assert.equal(result.status, 'not-found');
       return { ...result, boundary: { decision: future.request.decision, movement: future.movement } };
@@ -364,9 +369,51 @@ test('a current not-found stops at its checked boundary with side and reason, an
   await step(1);
   await flush();
   assert.equal((await step(60)).status, 200, 'negative forecast must wait for its target frame');
+  let result = await step(61);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.bots[1].inputExecution.pathBudgetWaits, 1);
+  assert.equal(result.body.bots[1].inputExecution.lastPathBudgetWait.attempts[0].reason, 'node-budget');
+  const outcomes = result.body.bots[1].inputExecution.resolutionOutcomes.notFound;
+  result = await step(121);
+  await flush();
+  assert.equal(result.body.bots[1].inputExecution.resolutionOutcomes.notFound, outcomes);
+  assert.equal(closed.length, 1, 'budget wait must not close either bot');
+  for (let frame = 241; frame <= 30001 && !result.body.outcome.complete; frame += 120) {
+    result = await step(frame);
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    await flush();
+  }
+  assert.equal(result.body.outcome.complete, true);
+  assert.ok(result.body.bots[1].inputExecution.naturalLocks > 0);
+  assert.ok(result.body.bots[1].inputExecution.pathBudgetWaits > 1);
+  assert.equal(result.body.bots[1].inputExecution.plannedLocks, 0);
+  const saved = await handlers.handle({ method: 'GET', path: '/api/input-match/round' });
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  assert.equal(saved.body.status, 'ok');
+});
+
+test('a non-budget not-found stops at its checked boundary with side and reason, and cannot export', async () => {
+  const closed = [];
+  const handlers = createGuiInputMatchHandlers({ now: () => 0, runtime: {
+    propose: async ({ state }) => ({ moves: [spawnMove(state)] }),
+    resolveInput: async ({ request, movement, startFrame }) => {
+      const future = forecastInputBoundary(request, movement, startFrame);
+      const result = resolveQualifiedInputSubmission(future.request, future.movement, { maxNodes: 1, maxTimeMs: 1000 });
+      assert.equal(result.status, 'not-found');
+      return { ...result, attempts: [{ status: 'not-found', reason: 'search-exhausted' }], boundary: { decision: future.request.decision, movement: future.movement } };
+    },
+    closeSessions: async args => closed.push(args),
+  } });
+  const { body: started } = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
+    ...config, rightParameters: { pps: 1 },
+  } });
+  const step = frame => handlers.handle({ method: 'POST', path: '/api/input-match/step', body: { sessionId: started.sessionId, frame } });
+  await step(1);
+  await flush();
+  assert.equal((await step(60)).status, 200, 'negative forecast must wait for its target frame');
   const failed = await step(61);
   assert.equal(failed.status, 409);
-  assert.match(failed.body.error, /RIGHT cc2-s2-f14.*frame 60.*node-budget/);
+  assert.match(failed.body.error, /RIGHT cc2-s2-f14.*frame 60.*search-exhausted/);
   assert.equal(closed.length, 2, 'start cleanup plus failed session cleanup');
   assert.deepEqual(await step(61), failed, 'failure remains terminal');
   assert.equal((await handlers.handle({ method: 'GET', path: '/api/input-match/ttrm' })).status, 409);
