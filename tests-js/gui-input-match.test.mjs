@@ -243,6 +243,91 @@ test('live handler adopts a forecast plan only at its exact boundary; late resul
   }
 });
 
+test('natural-lock forecasts wait without retry storms and allow observed top-out and export', async () => {
+  let resolutions = 0;
+  let proposals = 0;
+  let staleAt = null;
+  const handlers = createGuiInputMatchHandlers({ now: () => 0, runtime: {
+    propose: async ({ state }) => { proposals++; return { moves: [spawnMove(state)] }; },
+    resolveInput: async payload => {
+      resolutions++;
+      const result = resolveInputJob(payload);
+      if (result.status === 'stale' && staleAt === null) staleAt = payload.movement.frame;
+      return result;
+    },
+    closeSessions: async () => {},
+  } });
+  const { body: start } = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
+    ...config, rightParameters: { pps: 0.1 },
+  } });
+  let atWait;
+  let waited = 0;
+  let completed = false;
+  for (let frame = 1; frame < 12000; frame++) {
+    const result = await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: { sessionId: start.sessionId, frame } });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    await flush();
+    const bot = result.body.bots[1];
+    if (staleAt !== null && !atWait) atWait = { resolutions, proposals, turns: bot.stats.turns };
+    else if (atWait && bot.stats.turns === atWait.turns) {
+      waited++;
+      assert.equal(resolutions, atWait.resolutions, 'gravity alone must not retry a natural-lock forecast');
+    } else if (atWait && result.body.outcome.complete) {
+      assert.ok(bot.inputExecution.naturalLocks > 0);
+      completed = true;
+      break;
+    }
+  }
+  assert.ok(waited > 31, 'exercise more frames than the old retry limit');
+  assert.ok(completed, 'only observed natural top-out completes the round');
+  const saved = await handlers.handle({ method: 'GET', path: '/api/input-match/round' });
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  assert.equal(saved.body.status, 'ok');
+  await handlers.handle({ method: 'POST', path: '/api/input-match/close', body: { sessionId: start.sessionId } });
+});
+
+test('natural-lock wait expires on a new piece, including a response arriving after the lock', async () => {
+  for (const delayed of [false, true]) {
+    let releaseProposal;
+    let releaseResolution;
+    let proposals = 0;
+    const handlers = createGuiInputMatchHandlers({ now: () => 0, runtime: {
+      propose: async ({ state }) => {
+        proposals++;
+        if (proposals === 1) await new Promise(resolve => { releaseProposal = resolve; });
+        return { moves: [spawnMove(state)] };
+      },
+      resolveInput: async payload => {
+        const result = resolveInputJob(payload);
+        if (proposals === 1) {
+          assert.deepEqual(result, { status: 'stale', reason: 'natural-lock' });
+          if (delayed) await new Promise(resolve => { releaseResolution = resolve; });
+        }
+        return result;
+      },
+      closeSessions: async () => {},
+    } });
+    const { body: start } = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: config });
+    const step = async frame => {
+      const result = await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: { sessionId: start.sessionId, frame } });
+      assert.equal(result.status, 200, JSON.stringify(result.body));
+      return result.body;
+    };
+    await step(1);
+    for (let frame = 121; frame < 1032; frame += 120) await step(frame);
+    await step(1032);
+    releaseProposal();
+    await flush();
+    const locked = await step(1034);
+    assert.equal(locked.bots[1].inputExecution.naturalLocks, 1);
+    if (delayed) { releaseResolution(); await flush(); }
+    await step(1035);
+    await flush();
+    assert.equal(proposals, 2, 'old forecast must not suppress the next piece');
+    await handlers.handle({ method: 'POST', path: '/api/input-match/close', body: { sessionId: start.sessionId } });
+  }
+});
+
 test('GUI input diagnostics retain only the last consumed fallback summary', async () => {
   const fallback = {
     preferredCandidate: {

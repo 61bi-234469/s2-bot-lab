@@ -202,7 +202,8 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
       return;
     }
     const initial = session.round.publicState(id);
-    // Gravity and wall-clock progress alone must not retry an exhausted search.
+    // Gravity and wall-clock progress alone must not retry an exhausted search
+    // or a forecast that already proved a natural lock precedes input.
     // A natural lock or changed board/piece/chain admits a fresh attempt.
     if (session.pathWaits[id]) {
       if (equal(session.pathWaits[id], pieceIdentity(initial))) return;
@@ -275,6 +276,16 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
         diagnostics.fallbackReasons[reason] = (diagnostics.fallbackReasons[reason] ?? 0) + 1;
       }
       session.leadFrames[id] = Math.min(120, Math.max(2, Math.ceil((now() - resolveStarted) * 60 / 1000) + 1));
+      if (resolved.status === 'stale' && resolved.reason === 'natural-lock') {
+        // This is expected idle play, not a missed deadline. Bind the wait to
+        // the position forecast, never to a new piece reached during the job.
+        const forecastIdentity = pieceIdentity(latest);
+        if (equal(forecastIdentity, pieceIdentity(session.round.publicState(id)))) {
+          session.pathWaits[id] = structuredClone(forecastIdentity);
+          session.misses[id] = 0;
+        }
+        return;
+      }
       if (resolved.status === 'stale' || session.round.frame > startFrame) {
         if (session.round.frame > startFrame) session.diagnostics[id].lateResponses++;
         session.misses[id] = (session.misses[id] ?? 0) + 1;

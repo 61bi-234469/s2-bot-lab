@@ -6,7 +6,7 @@ export function resolveInputJob({ request, movement, startFrame }) {
   let future;
   try { future = forecastInputBoundary(request, movement, startFrame); }
   catch (error) {
-    if (error.message === 'input forecast crosses a natural lock') return { status: 'stale' };
+    if (error.message === 'input forecast crosses a natural lock') return { status: 'stale', reason: 'natural-lock' };
     throw error;
   }
   const result = resolveQualifiedInputSubmission(future.request, future.movement, { compactInputs: true });
