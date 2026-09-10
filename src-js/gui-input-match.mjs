@@ -54,10 +54,11 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           current = { sessionId, keys: IDS.map(id => `${sessionId}/${id}`), types, parameters,
             round: createInputExecutionRound({ seed: body.seed,
               handlingById: types.left === 'human' ? { left: humanEngineHandling(body.humanControls) } : {} }), closed: false, failure: null,
-            jobs: {}, ready: {}, plans: {}, proposals: {}, lastLock: {}, misses: {}, leadFrames: {}, paceDeadline: {}, saved: null, maxTurns: body.maxTurns ?? null,
+            jobs: {}, ready: {}, plans: {}, proposals: {}, pathWaits: {}, lastLock: {}, misses: {}, leadFrames: {}, paceDeadline: {}, saved: null, maxTurns: body.maxTurns ?? null,
             selections: {}, diagnostics: Object.fromEntries(IDS.map(id => [id,
               { plannedLocks: 0, fallbackLocks: 0, naturalLocks: 0, lastFallback: null,
                 publicStateMismatches: 0, lateResponses: 0, replans: 0, noInputResponses: 0,
+                pathBudgetWaits: 0, lastPathBudgetWait: null,
                 resolutionOutcomes: { preferred: 0, fallback: 0, notFound: 0, stale: 0 },
                 fallbackReasons: {}, pacedLocks: 0, deadlineExceededLocks: 0 }])),
             config: { seed: body.seed, firstTo: body.firstTo ?? 1, fairComparison: false, maxTurns: body.maxTurns ?? null } };
@@ -172,8 +173,18 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
       return;
     }
     // Negative forecasts are just as state-dependent as executable plans.
-    // Only stop after the referee reaches the exact public boundary evaluated.
+    // Adopt a negative result only at the exact public boundary evaluated.
     if (ready.status === 'not-found') {
+      const attempts = ready.attempts ?? [];
+      if (attempts.length > 0 && attempts.every(attempt => attempt.status === 'not-found' &&
+          ['node-budget', 'time-budget', 'frame-budget'].includes(attempt.reason))) {
+        session.pathWaits[id] = structuredClone(pieceIdentity(session.round.publicState(id)));
+        const stats = session.diagnostics[id];
+        stats.pathBudgetWaits++;
+        stats.lastPathBudgetWait = { frame, attempts: structuredClone(attempts) };
+        session.misses[id] = 0;
+        return;
+      }
       const reasons = [...new Set((ready.attempts ?? []).map(attempt => attempt.reason ?? attempt.status))].join(', ') || 'no admitted target';
       session.failure = `CC2 input path not found; match stopped · ${id.toUpperCase()} ${session.types[id]} · frame ${frame} · ${reasons}`;
       void runtime.closeSessions({ sessionKeys: session.keys });
@@ -191,6 +202,13 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
       return;
     }
     const initial = session.round.publicState(id);
+    // Gravity and wall-clock progress alone must not retry an exhausted search
+    // or a forecast that already proved a natural lock precedes input.
+    // A natural lock or changed board/piece/chain admits a fresh attempt.
+    if (session.pathWaits[id]) {
+      if (equal(session.pathWaits[id], pieceIdentity(initial))) return;
+      delete session.pathWaits[id];
+    }
     const type = session.types[id];
     const parameters = session.parameters[id];
     const interval = parameters.ppsEnabled === false ? 0 : 60 / parameters.pps;
@@ -258,6 +276,16 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
         diagnostics.fallbackReasons[reason] = (diagnostics.fallbackReasons[reason] ?? 0) + 1;
       }
       session.leadFrames[id] = Math.min(120, Math.max(2, Math.ceil((now() - resolveStarted) * 60 / 1000) + 1));
+      if (resolved.status === 'stale' && resolved.reason === 'natural-lock') {
+        // This is expected idle play, not a missed deadline. Bind the wait to
+        // the position forecast, never to a new piece reached during the job.
+        const forecastIdentity = pieceIdentity(latest);
+        if (equal(forecastIdentity, pieceIdentity(session.round.publicState(id)))) {
+          session.pathWaits[id] = structuredClone(forecastIdentity);
+          session.misses[id] = 0;
+        }
+        return;
+      }
       if (resolved.status === 'stale' || session.round.frame > startFrame) {
         if (session.round.frame > startFrame) session.diagnostics[id].lateResponses++;
         session.misses[id] = (session.misses[id] ?? 0) + 1;
