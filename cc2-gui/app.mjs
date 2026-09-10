@@ -79,6 +79,12 @@ import {
   shiftedToEnd,
   spawnPlacement,
 } from "./human-play.mjs";
+import {
+  INPUT_PUMP_INTERVAL_MS,
+  earliestPendingInputFrame,
+  nextIdlePumpDueAt,
+  selectPumpReservation,
+} from "./input-pump-schedule.mjs";
 
 const elements = Object.fromEntries([...document.querySelectorAll("[id]")].map((node) => [node.id, node]));
 const BOT_SIDES = Object.freeze(["left", "right"]);
@@ -182,6 +188,8 @@ let humanBotStepTimer = null;
    round's first step. */
 let matchStepGeneration = null;
 let lastMatchView = null;
+let matchPaintView = null;
+let matchPaintRequested = false;
 /* The input-profile session owns the real Engine clock. The page clock only
    decides how far the next nonblocking pump may advance it; queued events keep
    their original intended frame until the server accepts them. */
@@ -252,6 +260,9 @@ window.addEventListener("blur", () => {
   pieceRepeat.endAll();
   clearInputEvents({ releaseHeld: true });
   requestInputPump(0);
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) flushMatchPaint();
 });
 syncMaxTurnsControl();
 syncRandomSeedControl();
@@ -1711,6 +1722,8 @@ async function startSeriesGame() {
       heldKeys: new Set(),
       releaseOnResume: false,
       pumpTimer: null,
+      pumpDueAt: null,
+      pumpCatchUpStreak: 0,
       inFlight: false,
       inFlightTarget: null,
       pumpRequested: false,
@@ -1755,7 +1768,11 @@ function cancelInputPump() {
     clearTimeout(inputMatchState.pumpTimer);
     inputMatchState.pumpTimer = null;
   }
-  if (inputMatchState !== null) inputMatchState.pumpRequested = false;
+  if (inputMatchState !== null) {
+    inputMatchState.pumpRequested = false;
+    inputMatchState.pumpDueAt = null;
+    inputMatchState.pumpCatchUpStreak = 0;
+  }
 }
 
 function clearInputEvents({ releaseHeld = false } = {}) {
@@ -1798,17 +1815,51 @@ function inputEventsBefore(target) {
   return (inputMatchState?.pending ?? []).filter((event) => event.frame < target);
 }
 
-function requestInputPump(delayMs = 16) {
+function requestInputPump(delayMs = INPUT_PUMP_INTERVAL_MS) {
   if (!inputModeActive() || !matchRunning || !matchAutoplay || inputMatchState === null) return;
   if (inputMatchState.inFlight) {
     inputMatchState.pumpRequested = true;
     return;
   }
-  if (inputMatchState.pumpTimer !== null) return;
+  const nowMs = performance.now();
+  const dueAtMs = nowMs + Math.max(0, delayMs);
+  const existingDueAtMs = Number.isFinite(inputMatchState.pumpDueAt) ? inputMatchState.pumpDueAt : null;
+  const decision = selectPumpReservation({ nowMs, dueAtMs, existingDueAtMs });
+  if (decision.action === "keep") return;
+  if (inputMatchState.pumpTimer !== null) {
+    clearTimeout(inputMatchState.pumpTimer);
+    inputMatchState.pumpTimer = null;
+  }
+  inputMatchState.pumpDueAt = decision.dueAtMs;
   inputMatchState.pumpTimer = setTimeout(() => {
     inputMatchState.pumpTimer = null;
+    inputMatchState.pumpDueAt = null;
     void stepInputMatch();
-  }, Math.max(0, delayMs));
+  }, Math.max(0, decision.dueAtMs - performance.now()));
+}
+
+function scheduleIdleInputPump() {
+  if (!inputModeActive() || !matchRunning || !matchAutoplay || inputMatchState === null) return;
+  if (inputMatchState.inFlight) {
+    inputMatchState.pumpRequested = true;
+    return;
+  }
+  const nowMs = performance.now();
+  const elapsedMs = readMatchClock(matchClock, nowMs);
+  const serverFrame = lastMatchView?.clock?.logicalFrame;
+  if (!Number.isSafeInteger(serverFrame)) {
+    requestInputPump(INPUT_PUMP_INTERVAL_MS);
+    return;
+  }
+  const idle = nextIdlePumpDueAt({
+    nowMs,
+    elapsedMs,
+    serverFrame,
+    earliestPendingFrame: earliestPendingInputFrame(inputMatchState.pending),
+    catchUpStreak: inputMatchState.pumpCatchUpStreak ?? 0,
+  });
+  inputMatchState.pumpCatchUpStreak = idle.catchUpStreak;
+  requestInputPump(Math.max(0, idle.dueAtMs - nowMs));
 }
 
 async function stepInputMatch({ manual = false } = {}) {
@@ -1821,7 +1872,7 @@ async function stepInputMatch({ manual = false } = {}) {
     return;
   }
   const target = inputTargetFrame(manual);
-  if (target === null) { requestInputPump(16); return; }
+  if (target === null) { scheduleIdleInputPump(); return; }
   queueInputReleases(state, lastMatchView.clock.logicalFrame);
   const sent = inputEventsBefore(target);
   const sentSequences = new Set(sent.map((event) => event.sequence));
@@ -1858,12 +1909,8 @@ async function stepInputMatch({ manual = false } = {}) {
     state.inFlightTarget = null;
     if (generation !== matchGeneration) return;
     elements["match-step"].disabled = !matchRunning || matchAutoplay;
-    if (state.pumpRequested) {
-      state.pumpRequested = false;
-      requestInputPump(0);
-    } else {
-      requestInputPump(16);
-    }
+    state.pumpRequested = false;
+    scheduleIdleInputPump();
   }
 }
 
@@ -2151,6 +2198,7 @@ async function resetMatch({ restartCurrentGame = false, rerollRandomSeed = false
   } catch {
     // RESET remains local even if an already-failed transport cannot close.
   }
+  cancelMatchPaint();
   lastMatchView = null;
   matchClock = createMatchClock(performance.now());
   lastRenderedMatchClock = "";
@@ -2630,14 +2678,13 @@ function randomUint32Except(excluded) {
   return Number.isSafeInteger(excluded) && value === excluded ? (value + 1) >>> 0 : value;
 }
 
-function renderMatch(view) {
+function acceptMatchView(view) {
   lastMatchView = view;
   /* A match a human is playing keeps one free-running clock from the moment it
      started: that clock is what their own lock frames are read from, so it must
      not be pulled back to the last confirmed lock or held at the opponent's
      next one. Bot-only matches stay on the step-by-step projection. */
-  if (inputModeActive() || human !== null) paintMatchClock(performance.now());
-  else if (Number.isFinite(view.metricElapsedMs)) {
+  if (!(inputModeActive() || human !== null) && Number.isFinite(view.metricElapsedMs)) {
     const nextElapsedMs = Number.isFinite(view.nextStepFrames) && view.nextStepFrames > 0
       ? view.metricElapsedMs + view.nextStepFrames * 1000 / 60
       : view.metricElapsedMs;
@@ -2647,9 +2694,45 @@ function renderMatch(view) {
       performance.now(),
       nextElapsedMs,
     );
-    paintMatchClock(performance.now());
   }
   matchRoundStatus = `ROUND ${view.turnNumber} · ${view.clock.logicalFrame}f${matchComputeLimited ? ` · COMPUTE LIMITED ${matchComputeRatio.toFixed(2)}×` : ""}`;
+}
+
+function cancelMatchPaint() {
+  matchPaintView = null;
+  matchPaintRequested = false;
+}
+
+function flushMatchPaint() {
+  const view = matchPaintView;
+  if (view === null) return;
+  matchPaintView = null;
+  paintMatchView(view);
+}
+
+function requestMatchPaint(view) {
+  matchPaintView = view;
+  if (typeof requestAnimationFrame !== "function" || document.hidden) {
+    flushMatchPaint();
+    return;
+  }
+  if (matchPaintRequested) return;
+  matchPaintRequested = true;
+  const generation = matchGeneration;
+  requestAnimationFrame(() => {
+    matchPaintRequested = false;
+    if (generation !== matchGeneration) return;
+    flushMatchPaint();
+  });
+}
+
+function renderMatch(view) {
+  acceptMatchView(view);
+  requestMatchPaint(view);
+}
+
+function paintMatchView(view) {
+  paintMatchClock(performance.now());
   renderMatchStatus();
   for (const bot of view.bots) {
     const side = bot.id;

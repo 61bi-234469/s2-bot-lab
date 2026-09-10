@@ -6,6 +6,12 @@ import { createInputExecutionRound } from '../src-js/input-execution-round.mjs';
 import { buildExecutedInputTtrm } from '../src-js/replay/bot-match-ttrm-export.mjs';
 import { parseTtrm } from '../src-js/replay/ttrm-parser.mjs';
 import { buildReplayIR } from '../src-js/replay/ttrm-simulator.mjs';
+import {
+  INPUT_PUMP_INTERVAL_MS,
+  earliestPendingInputFrame,
+  nextIdlePumpDueAt,
+  selectPumpReservation,
+} from '../cc2-gui/input-pump-schedule.mjs';
 
 // Execute the production event/pump functions with a controlled browser clock
 // and deferred fetch. No second implementation of their scheduling policy.
@@ -114,9 +120,14 @@ test('arena reset restores the pre-match field including spawn rows', () => {
 function harness() {
   const context = vm.createContext({
     inputMatchState: { sessionId: 'test', generation: 1, pending: [], heldKeys: new Set(),
-      releaseOnResume: false, inFlight: false, inFlightTarget: null, pumpTimer: null },
+      releaseOnResume: false, inFlight: false, inFlightTarget: null, pumpTimer: null,
+      pumpDueAt: null, pumpCatchUpStreak: 0, pumpRequested: false },
     inputEventSequence: 0, matchGeneration: 1, matchAutoplay: true, matchRunning: true,
-    INPUT_ACTION_KEYS: { MoveLeft: 'moveLeft', SoftDrop: 'softDrop' },
+    INPUT_ACTION_KEYS: {
+      MoveLeft: 'moveLeft', SoftDrop: 'softDrop', RotateRight: 'rotateCW',
+      Hold: 'hold', HardDrop: 'hardDrop',
+    },
+    INPUT_PUMP_INTERVAL_MS, selectPumpReservation, nextIdlePumpDueAt, earliestPendingInputFrame,
     humanControls: {}, actionForCode: (_controls, code) => code,
     lastMatchView: { clock: { logicalFrame: 0 } }, matchClock: {}, wallMs: 0,
     performance: { now: () => 0 }, readMatchClock: () => context.wallMs,
@@ -130,7 +141,8 @@ function harness() {
     structuredClone,
   });
   const names = ['humanInputEnabled', 'handleHumanKeyUp', 'clearInputEvents', 'currentInputEventFrame', 'enqueueInputEvent', 'handleInputAction',
-    'inputTargetFrame', 'inputEventsBefore', 'requestInputPump', 'stepInputMatch', 'recordAcceptedInputEvents', 'queueInputReleases', 'aggregateInputTtrm'];
+    'inputTargetFrame', 'inputEventsBefore', 'requestInputPump', 'scheduleIdleInputPump', 'stepInputMatch',
+    'recordAcceptedInputEvents', 'queueInputReleases', 'aggregateInputTtrm'];
   for (const name of names) {
     const match = source.match(new RegExp(`(?:async )?function ${name}\\([\\s\\S]*?^}`, 'm'));
     assert.ok(match, name);
@@ -180,6 +192,237 @@ test('autoplay waits for wall time and does not consume a future soft-drop relea
   assert.equal(app.inputTargetFrame(true), 61);
 });
 
+function installTimers(app) {
+  const timeouts = [];
+  app.setTimeout = (fn, ms) => {
+    const id = timeouts.length + 1;
+    timeouts.push({ id, fn, ms });
+    return id;
+  };
+  app.clearTimeout = (id) => {
+    const index = timeouts.findIndex((entry) => entry.id === id);
+    if (index >= 0) timeouts.splice(index, 1);
+  };
+  return timeouts;
+}
+
+test('requestInputPump(0) replaces an existing later reservation', () => {
+  const app = harness();
+  const timeouts = installTimers(app);
+  app.requestInputPump(16);
+  assert.deepEqual(timeouts.map((entry) => entry.ms), [16]);
+  app.requestInputPump(0);
+  assert.equal(timeouts.length, 1);
+  assert.equal(timeouts[0].ms, 0);
+  assert.equal(app.inputMatchState.pumpDueAt, 0);
+});
+
+test('a later pump request does not push an earlier reservation back', () => {
+  const app = harness();
+  const timeouts = installTimers(app);
+  app.requestInputPump(0);
+  app.requestInputPump(16);
+  assert.equal(timeouts.length, 1);
+  assert.equal(timeouts[0].ms, 0);
+  assert.equal(app.inputMatchState.pumpDueAt, 0);
+});
+
+test('in-flight keys wait for the current step instead of overlapping pumps', () => {
+  const app = harness();
+  const timeouts = installTimers(app);
+  app.inputMatchState.inFlight = true;
+  app.requestInputPump(0);
+  assert.equal(timeouts.length, 0);
+  assert.equal(app.inputMatchState.pumpRequested, true);
+});
+
+test('idle step completion waits for the next match-clock frame', async () => {
+  const app = harness();
+  const timeouts = installTimers(app);
+  app.wallMs = 20;
+  app.fetch = async () => ({ ok: true, json: async () => ({ clock: { logicalFrame: 1 }, outcome: { complete: false } }) });
+  await app.stepInputMatch();
+  const expected = nextIdlePumpDueAt({ nowMs: 0, elapsedMs: 20, serverFrame: 1 }).dueAtMs;
+  assert.equal(timeouts.length, 1);
+  assert.ok(Math.abs(timeouts[0].ms - expected) < 1e-9);
+  assert.notEqual(timeouts[0].ms, 16);
+});
+
+test('a key during an in-flight step schedules an immediate follow-up pump', async () => {
+  const app = harness();
+  const timeouts = installTimers(app);
+  app.wallMs = 20;
+  let release;
+  app.fetch = () => new Promise((resolve) => { release = resolve; });
+  const pending = app.stepInputMatch();
+  app.handleInputAction('MoveLeft');
+  assert.equal(app.inputMatchState.pumpRequested, true);
+  assert.equal(timeouts.length, 0);
+  release({ ok: true, json: async () => ({ clock: { logicalFrame: 1 }, outcome: { complete: false } }) });
+  await pending;
+  assert.equal(timeouts.length, 1);
+  assert.equal(timeouts[0].ms, 0);
+});
+
+test('idle pumps keep match-clock spacing when each step costs 8ms', async () => {
+  const app = harness();
+  let now = 0;
+  const timeouts = [];
+  app.performance = { now: () => now };
+  app.readMatchClock = () => now;
+  app.setTimeout = (fn, ms) => {
+    const id = timeouts.length + 1;
+    timeouts.push({ id, fn, due: now + Math.max(0, ms), ms });
+    return id;
+  };
+  app.clearTimeout = (id) => {
+    const index = timeouts.findIndex((entry) => entry.id === id);
+    if (index >= 0) timeouts.splice(index, 1);
+  };
+  app.fetch = async (_url, init) => {
+    now += 8;
+    const body = JSON.parse(init.body);
+    return {
+      ok: true,
+      json: async () => ({
+        clock: { logicalFrame: body.frame },
+        outcome: { complete: false },
+      }),
+    };
+  };
+
+  const starts = [];
+  app.scheduleIdleInputPump();
+  for (let step = 0; step < 5; step += 1) {
+    assert.equal(timeouts.length, 1);
+    const next = timeouts.pop();
+    now = Math.max(now, next.due);
+    starts.push(now);
+    app.inputMatchState.pumpTimer = null;
+    app.inputMatchState.pumpDueAt = null;
+    await app.stepInputMatch();
+  }
+  const gaps = starts.slice(1).map((value, index) => value - starts[index]);
+  for (const gap of gaps) {
+    assert.ok(Math.abs(gap - INPUT_PUMP_INTERVAL_MS) < 1e-6, String(gap));
+  }
+  assert.ok(gaps.every((gap) => gap < 16 + 8));
+});
+
+function attachVirtualClock(app, { workMs = 8 } = {}) {
+  const clock = { now: 0 };
+  const timeouts = [];
+  const waits = [];
+  const sent = [];
+  let nextId = 0;
+  app.performance = { now: () => clock.now };
+  app.readMatchClock = () => clock.now;
+  app.setTimeout = (fn, ms) => {
+    const id = ++nextId;
+    timeouts.push({ id, fn, due: clock.now + Math.max(0, ms) });
+    return id;
+  };
+  app.clearTimeout = (id) => {
+    const index = timeouts.findIndex((entry) => entry.id === id);
+    if (index >= 0) timeouts.splice(index, 1);
+  };
+  app.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    const serverFrame = app.lastMatchView.clock.logicalFrame;
+    for (const event of body.inputs ?? []) {
+      assert.ok(event.frame >= serverFrame, 'stale input');
+      assert.ok(event.frame < body.frame, 'input past target');
+    }
+    sent.push({
+      at: clock.now,
+      frame: body.frame,
+      keys: (body.inputs ?? []).map((event) => `${event.type}:${event.data.key}`),
+    });
+    const doneAt = clock.now + workMs;
+    await waitUntil(doneAt);
+    return {
+      ok: true,
+      json: async () => ({ clock: { logicalFrame: body.frame }, outcome: { complete: false } }),
+    };
+  };
+
+  function waitUntil(due) {
+    if (due <= clock.now) return Promise.resolve();
+    return new Promise((resolve) => { waits.push({ due, resolve }); });
+  }
+
+  async function flush() {
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+
+  async function advanceTo(target) {
+    for (;;) {
+      const dueTimers = timeouts.filter((entry) => entry.due <= target);
+      const dueWaits = waits.filter((entry) => entry.due <= target);
+      if (dueTimers.length === 0 && dueWaits.length === 0) {
+        clock.now = target;
+        return;
+      }
+      const nextDue = Math.min(
+        ...dueTimers.map((entry) => entry.due),
+        ...dueWaits.map((entry) => entry.due),
+      );
+      clock.now = nextDue;
+      for (const wait of waits.filter((entry) => entry.due === nextDue)) {
+        waits.splice(waits.indexOf(wait), 1);
+        wait.resolve();
+      }
+      await flush();
+      for (const timer of timeouts.filter((entry) => entry.due === nextDue)) {
+        timeouts.splice(timeouts.indexOf(timer), 1);
+        timer.fn();
+      }
+      await flush();
+    }
+  }
+
+  return { sent, advanceTo };
+}
+
+async function assertQueuedInputSendsOnFirstProcessableFrame(action, expectedKey) {
+  const app = harness();
+  const { sent, advanceTo } = attachVirtualClock(app);
+  app.scheduleIdleInputPump();
+  await advanceTo(5);
+  app.handleInputAction('MoveLeft');
+  await advanceTo(8);
+  app.handleInputAction(action, action === 'MoveLeft' ? 'keyup' : 'keydown');
+  await advanceTo(50);
+  const follow = sent.find((request) => request.keys.includes(expectedKey));
+  assert.ok(follow, `missing ${expectedKey} in ${JSON.stringify(sent)}`);
+  assert.ok(Math.abs(follow.at - INPUT_PUMP_INTERVAL_MS) < 1e-6, String(follow.at));
+  assert.equal(follow.frame, 2);
+}
+
+test('a rotation queued during in-flight is sent on its first processable frame', async () => {
+  await assertQueuedInputSendsOnFirstProcessableFrame('RotateRight', 'keydown:rotateCW');
+});
+
+test('a keyup queued during in-flight is sent on its first processable frame', async () => {
+  await assertQueuedInputSendsOnFirstProcessableFrame('MoveLeft', 'keyup:moveLeft');
+});
+
+test('HOLD and hard drop queued during in-flight are sent on their first processable frame', async () => {
+  await assertQueuedInputSendsOnFirstProcessableFrame('Hold', 'keydown:hold');
+  await assertQueuedInputSendsOnFirstProcessableFrame('HardDrop', 'keydown:hardDrop');
+});
+
+test('in-flight capture uses the reserved target and zero subframe when it is ahead of the wall frame', () => {
+  const app = harness();
+  app.wallMs = 100.2 * 1000 / 60;
+  app.inputMatchState.inFlightTarget = 101;
+  app.handleInputAction('MoveLeft');
+  const event = app.inputMatchState.pending[0];
+  assert.equal(event.frame, 101);
+  assert.equal(event.data.subframe, 0);
+});
+
 test('key capture while a step is in flight reserves its exclusive frame boundary', async () => {
   const app = harness();
   let release;
@@ -218,6 +461,62 @@ test('RESUME while manual STEP is pending keeps the clock running after response
   release({ ok: true, json: async () => ({ metricElapsedMs: 1000 / 60, clock: { logicalFrame: 1 }, outcome: {} }) });
   await pending;
   assert.equal(app.matchClock.running, true);
+});
+
+function paintHarness() {
+  const painted = [];
+  const raf = [];
+  const context = vm.createContext({
+    lastMatchView: null, matchPaintView: null, matchPaintRequested: false,
+    matchGeneration: 1, matchComputeLimited: false, matchRoundStatus: "",
+    human: null, matchClock: {},
+    inputModeActive: () => true,
+    performance: { now: () => 0 },
+    synchronizeMatchClock: (_clock, elapsedMs) => ({ elapsedMs }),
+    document: { hidden: false },
+    requestAnimationFrame: (fn) => { raf.push(fn); return raf.length; },
+    paintMatchView: (view) => { painted.push(view); },
+  });
+  for (const name of ['acceptMatchView', 'cancelMatchPaint', 'flushMatchPaint', 'requestMatchPaint', 'renderMatch']) {
+    const match = source.match(new RegExp(`(?:async )?function ${name}\\([\\s\\S]*?^}`, 'm'));
+    assert.ok(match, name);
+    vm.runInContext(match[0], context);
+  }
+  context.painted = painted;
+  context.raf = raf;
+  return context;
+}
+
+test('renderMatch accepts the confirmed view before the paint callback', () => {
+  const app = paintHarness();
+  const first = { turnNumber: 1, clock: { logicalFrame: 4 }, metricElapsedMs: 80 };
+  const second = { turnNumber: 1, clock: { logicalFrame: 5 }, metricElapsedMs: 100 };
+  app.renderMatch(first);
+  assert.equal(app.lastMatchView, first);
+  assert.equal(app.painted.length, 0);
+  assert.equal(app.raf.length, 1);
+  app.renderMatch(second);
+  assert.equal(app.lastMatchView, second);
+  assert.equal(app.painted.length, 0);
+  assert.equal(app.raf.length, 1);
+  app.raf[0]();
+  assert.deepEqual(app.painted, [second]);
+});
+
+test('a hidden document paints immediately and RESET drops a pending paint', () => {
+  const app = paintHarness();
+  app.document.hidden = true;
+  const view = { turnNumber: 2, clock: { logicalFrame: 8 } };
+  app.renderMatch(view);
+  assert.equal(app.lastMatchView, view);
+  assert.deepEqual(app.painted, [view]);
+  app.document.hidden = false;
+  app.painted.length = 0;
+  app.renderMatch({ turnNumber: 2, clock: { logicalFrame: 9 } });
+  app.cancelMatchPaint();
+  app.matchGeneration += 1;
+  if (app.raf[0]) app.raf[0]();
+  assert.equal(app.painted.length, 0);
 });
 
 test('GUI FT export retains both completed input rounds and replays their original events', () => {
