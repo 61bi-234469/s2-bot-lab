@@ -208,7 +208,8 @@ export function simulatePlayerRound(playerRound, options = {}) {
 /** Referee-owned input runtime. The replay importer is also a production caller.
  * Session snapshots and observations are not policy input.
  */
-export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, signal = null, now = nowMs, canonicalProfile = null } = {}) {
+export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, signal = null, now = nowMs, canonicalProfile = null,
+  forgiveStallPenalty = false } = {}) {
   validateTtrmPlayerRound(playerRound);
   if (!Number.isFinite(maxTimeMs) || maxTimeMs <= 0 || maxTimeMs > 10_000) {
     throw new TtrmError("budget", "replay time budget must be positive and at most 10000ms");
@@ -478,6 +479,26 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
   Object.defineProperty(board, "perfectClear", { configurable: true, get() {
     return board.state.slice(stallPenaltyRows).every(row => row.every(cell => cell === null));
   } });
+  const removeStallPenaltyLine = () => {
+    if (status !== "active" || stallPenaltyRows === 0) return { rows: stallPenaltyRows };
+    if (!board.state[0].every(cell => cell?.stallPenalty === true)) {
+      throw new TtrmError("execute", "STALL PENALTY floor identity was lost");
+    }
+    board.state.shift();
+    board.state.push(emptyRow());
+    stallPenaltyRows -= 1;
+    return { rows: stallPenaltyRows };
+  };
+  if (forgiveStallPenalty) {
+    let ordinaryLocks = 0;
+    // Pinned Engine emits lock.pre after clear/attack/garbage resolution but
+    // before nextPiece performs blockout and Clutch. Forgive on that board,
+    // without moving the next spawn or reviving an already terminal Engine.
+    engine.events.on("falling.lock.pre", () => {
+      ordinaryLocks = (ordinaryLocks + 1) % 5;
+      if (ordinaryLocks === 0) removeStallPenaltyLine();
+    });
+  }
   return {
     get frame() { return engine.frame; },
     get canonicalProfile() { return canonicalProfile; },
@@ -542,12 +563,7 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
     },
     removeStallPenaltyLine() {
       if (status !== "active" || stallPenaltyRows === 0) return { rows: stallPenaltyRows };
-      if (!board.state[0].every(cell => cell?.stallPenalty === true)) {
-        throw new TtrmError("execute", "STALL PENALTY floor identity was lost");
-      }
-      board.state.shift();
-      board.state.push(emptyRow());
-      stallPenaltyRows -= 1;
+      removeStallPenaltyLine();
       engine.falling.location[1] -= 1;
       engine.falling.highestY -= 1;
       recordBoard(engine.frame);

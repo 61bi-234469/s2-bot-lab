@@ -7,15 +7,17 @@ import { PIECE } from './replay/pieces.mjs';
 const ROUNDS = new WeakMap();
 
 /** One referee owns both clocks, delivery and the observed terminal receipt. */
-export function createInputExecutionRound({ seed, ids = ['left', 'right'], handlingById = {} } = {}) {
+export function createInputExecutionRound({ seed, ids = ['left', 'right'], handlingById = {},
+  stallPenaltyForgivenessId = null } = {}) {
   if (!Array.isArray(ids) || ids.length !== 2 || new Set(ids).size !== 2 || ids.some(id => typeof id !== 'string' || !id)) {
     throw new Error('input round requires two distinct player ids');
   }
   ids = [...ids];
   if (Object.keys(handlingById).some(id => !ids.includes(id))) throw new Error('unknown handling player');
+  if (stallPenaltyForgivenessId !== null && !ids.includes(stallPenaltyForgivenessId)) throw new Error('unknown STALL forgiveness player');
   const sessions = ids.map(id => createInputReplaySession({ id, replay: {
     frames: 0, events: [], options: inputExecutionOptions({ seed, handling: handlingById[id] }), results: { stats: { garbage: { sent: 0 } } },
-  } }, { canonicalProfile: INPUT_EXECUTION_PROFILE.id }));
+  } }, { canonicalProfile: INPUT_EXECUTION_PROFILE.id, forgiveStallPenalty: id === stallPenaltyForgivenessId }));
   let status = 'active';
   let terminal = null;
   let frame = 0;
@@ -67,10 +69,10 @@ export function createInputExecutionRound({ seed, ids = ['left', 'right'], handl
       }
       throw new Error('unsupported STALL PENALTY');
     },
-    removeStallPenaltyLine(id) {
+    refereeStallPenaltyRows(id) {
       const index = ids.indexOf(id);
-      if (index < 0 || status !== 'active') throw new Error('active input round player required');
-      return sessions[index].removeStallPenaltyLine();
+      if (index < 0) throw new Error('unknown input round player');
+      return sessions[index].stallPenaltyRows;
     },
     tick(inputs = {}) {
       if (status !== 'active') throw new Error('input round is not active');

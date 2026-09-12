@@ -63,9 +63,10 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           if (sessionId !== `input-${generation}`) throw new Error('match-replaced');
           current = { sessionId, keys: IDS.map(id => `${sessionId}/${id}`), types, parameters,
             round: createInputExecutionRound({ seed: body.seed,
+              stallPenaltyForgivenessId: stallPenalty.enabled && stallPenalty.penalty === 'penalty-line' ? 'left' : null,
               handlingById: types.left === 'human' ? { left: humanEngineHandling(body.humanControls) } : {} }), closed: false, failure: null,
             jobs: {}, ready: {}, plans: {}, proposals: {}, pathWaits: {}, lastLock: {}, misses: {}, leadFrames: {}, paceDeadline: {}, saved: null, maxTurns: body.maxTurns ?? null,
-            selections: {}, stallPenalty: { ...stallPenalty, rows: 0, nonPenaltyLocks: 0,
+            selections: {}, stallPenalty: { ...stallPenalty, rows: 0,
               forcedLockPending: false, dueFrame: stallPenalty.enabled ? 60 / stallPenalty.pps : null },
             diagnostics: Object.fromEntries(IDS.map(id => [id,
               { plannedLocks: 0, fallbackLocks: 0, naturalLocks: 0, lastFallback: null,
@@ -137,11 +138,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
                   if (session.stallPenalty.forcedLockPending) {
                     session.stallPenalty.forcedLockPending = false;
                   } else if (session.stallPenalty.penalty === 'penalty-line') {
-                    session.stallPenalty.nonPenaltyLocks = (session.stallPenalty.nonPenaltyLocks + 1) % 5;
-                    if (session.stallPenalty.nonPenaltyLocks === 0 && session.stallPenalty.rows > 0) {
-                      const result = session.round.removeStallPenaltyLine(id);
-                      session.stallPenalty.rows = result.rows;
-                    }
+                    session.stallPenalty.rows = session.round.refereeStallPenaltyRows(id);
                   }
                   session.stallPenalty.dueFrame = lock.frame + 60 / session.stallPenalty.pps;
                 } else if (session.types[id] !== 'human') {
