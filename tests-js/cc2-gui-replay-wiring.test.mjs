@@ -11,6 +11,7 @@ const markup = read("../cc2-gui/index.html");
 const replayView = read("../cc2-gui/replay-view.mjs");
 const app = read("../cc2-gui/app.mjs");
 const server = read("../scripts/cc2-gui-server.mjs");
+const pagesBuild = read("../scripts/build-pages.mjs");
 
 const ids = new Set([...markup.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]));
 
@@ -98,14 +99,19 @@ test("the replay view only reaches for elements the page actually has", () => {
   for (const id of looked) assert.ok(ids.has(id), `index.html is missing #${id}`);
 });
 
-test("the browser modules the replay view imports are the ones the server publishes", () => {
+test("the browser entry modules import only shared files published by both targets", () => {
   const table = server.slice(server.indexOf("const SHARED_MODULES"), server.indexOf("const runId"));
   const shared = new Map([...table.matchAll(/\["(\/shared\/[^"]+)", "([^"]+)"\]/g)]
     .map((match) => [match[1], match[2]]));
   assert.ok(shared.size >= 4, "the shared module table should not have collapsed");
 
-  const imported = [...replayView.matchAll(/from "(\/shared\/[^"]+)"/g)].map((match) => match[1]);
+  const imported = [app, replayView]
+    .flatMap((source) => [...source.matchAll(/from ["'](\/shared\/[^"']+)["']/g)]
+      .map((match) => match[1]));
   assert.ok(imported.length > 0);
+  for (const url of imported) {
+    assert.ok(pagesBuild.includes('["' + url + '"'), "the Pages build does not publish " + url);
+  }
   for (const url of imported) assert.ok(shared.has(url), `the server does not serve ${url}`);
 
   // A shared module's own relative imports are resolved by the browser against
@@ -205,10 +211,17 @@ test("the 1P Reset key always restarts play without changing the GUI buttons", (
   assert.match(keydown, /selectedHumanSide\(\) === null/);
   assert.match(keydown, /requestHumanMatchRestart\(\)/);
 
+  const requestRestart = app.slice(
+    app.indexOf("function requestHumanMatchRestart"),
+    app.indexOf("async function activateHumanMatchReset"),
+  );
+  assert.match(requestRestart, /humanMatchRestartInFlight !== null && !matchCountingDown\(\)/);
+
   const activate = app.slice(
     app.indexOf("async function activateHumanMatchReset"),
     app.indexOf("function clearMatchArena"),
   );
+  assert.match(activate, /if \(matchCountingDown\(\)\)[\s\S]*await resetMatch\(\);[\s\S]*await interruptedStart;[\s\S]*await startMatch\(\{ excludedRandomSeed:/);
   assert.match(activate, /if \(matchStartInFlight !== null\) await matchStartInFlight/);
   assert.match(activate, /if \(matchRoundFinalization !== null\) await matchRoundFinalization/);
   assert.match(activate, /!matchSeriesActive\(\)[\s\S]*await startMatch\(\{/);
@@ -261,11 +274,15 @@ test("the deck exports through one button whose format follows the execution pat
 
 test("each match setting group names the execution path it belongs to", () => {
   const settings = markup.slice(markup.indexOf('class="match-settings"'), markup.indexOf('class="match-outcome"'));
-  assert.deepEqual([...settings.matchAll(/data-scope="([a-z]+)"/g)].map((match) => match[1]), ["execution", "legacy", "both"]);
-  for (const id of ["match-execution-note", "match-legacy-note", "match-legacy-settings"]) assert.ok(ids.has(id), id);
+  assert.deepEqual([...settings.matchAll(/data-scope="([a-z]+)"/g)].map((match) => match[1]), ["execution", "legacy", "both", "both"]);
+  for (const id of ["match-execution-note", "match-legacy-note", "match-legacy-settings",
+    "match-stall-lock-note", "match-stall-lock-settings"]) assert.ok(ids.has(id), id);
 
   const notes = app.slice(app.indexOf("function renderExecutionScopeNotes"), app.indexOf("function syncMaxTurnsControl"));
   assert.match(notes, /elements\["match-legacy-settings"\]\.dataset\.inactive = String\(inputMode\)/);
+  // With no You (1P) side there is no piece for the deadline to take, so the
+  // otherwise shared group states that reason in both execution modes.
+  assert.match(notes, /elements\["match-stall-lock-settings"\]\.dataset\.inactive = String\(!playing\)/);
   // The scope has to be stated while the group is still usable, so no branch of
   // either note may fall back to an empty string.
   assert.doesNotMatch(notes, /: ""/);
@@ -281,9 +298,7 @@ test("the settings row opens and closes as one, and its bar keeps the values", (
 
   const notes = app.slice(app.indexOf("function renderExecutionScopeNotes"), app.indexOf("function onOff"));
   assert.match(notes, /elements\["match-settings-state"\]\.textContent = matchSettingsStateText\(inputMode\)/);
-  // Under TTRM INPUT the legacy switches are not "off", they are not part of the
-  // match at all, so the closed bar must not report a value for them.
-  assert.match(notes, /if \(inputMode\) return parts\.join/);
+  assert.match(notes, /if \(inputMode\) return \[\.\.\.parts, `STALL \$\{stall\}`\]\.join/);
   // A closed row must not take its state with it, so every control refreshes it.
   assert.match(app, /elements\["match-settings"\]\.addEventListener\("input", \(\) => renderExecutionScopeNotes\(\)\)/);
 });

@@ -8,10 +8,13 @@ import {
   isPlaceable,
   lockSubmission,
   pieceCells,
+  projectStallPenaltyRows,
   rotated,
   shifted,
   shiftedToEnd,
   spawnPlacement,
+  stallLockPlacement,
+  unprojectStallPenaltyPlacement,
 } from "../cc2-gui/human-play.mjs";
 import { placementGeometry } from "../src-js/triangle/placement-geometry.mjs";
 import { RULESET_IDS, resolvePlacementRules } from "../src-js/ruleset-profiles.mjs";
@@ -249,4 +252,51 @@ test("soft drop repeats on the SDF cadence and stops on release", () => {
   repeat.end("SoftDrop");
   timers.advance(8 * 1000 / 60);
   assert.equal(steps, 3);
+});
+
+test("the forced-lock penalty drops the piece from its spawn column and spawn rotation", () => {
+  const board = emptyBoard();
+  for (const piece of ["I", "J", "L", "O", "S", "T", "Z"]) {
+    const spawned = spawnPlacement(geometry, board, piece);
+    // Whatever the player did to the piece is deliberately not an input to the
+    // forced lock: it lands where an untouched piece would have landed.
+    const moved = rotated(geometry, board, shiftedToEnd(geometry, board, spawned, 1), 1)
+      ?? shiftedToEnd(geometry, board, spawned, 1);
+    const forced = stallLockPlacement(geometry, board, moved);
+    assert.deepEqual(
+      pieceCells(geometry, forced).map((cell) => cell.join(",")).sort(),
+      pieceCells(geometry, dropped(geometry, board, spawned)).map((cell) => cell.join(",")).sort(),
+    );
+    assert.equal(forced.rotation, spawned.rotation);
+    assert.equal(forced.x, spawned.x);
+    assert.equal(forced.rotationEvidence.lastInputWasRotation, false);
+  }
+});
+
+test("a forced lock after HOLD keeps the swap evidence of the piece it locks", () => {
+  const board = emptyBoard();
+  const held = spawnPlacement(geometry, board, "L", true);
+  const forced = stallLockPlacement(geometry, board, shiftedToEnd(geometry, board, held, -1));
+  assert.equal(forced.piece, "L");
+  assert.equal(forced.usedHold, true);
+  assert.equal(lockSubmission(forced).usedHold, true);
+  assert.equal(forced.x, spawnPlacement(geometry, board, "L").x);
+});
+
+test("the forced-lock penalty reports no placement once the piece has no spawn placement left", () => {
+  const board = emptyBoard();
+  const spawned = spawnPlacement(geometry, board, "T");
+  for (let y = VISIBLE_ROWS; y < VISIBLE_ROWS + 4; y += 1) board[y] = Array(10).fill("G");
+  assert.equal(stallLockPlacement(geometry, board, spawned), null);
+});
+
+test("stall penalty rows form a separate indestructible floor and placements round-trip", () => {
+  const board = emptyBoard();
+  board[0][4] = "T";
+  const projected = projectStallPenaltyRows(board, 2);
+  assert.deepEqual(projected[0], Array(10).fill("P"));
+  assert.deepEqual(projected[1], Array(10).fill("P"));
+  assert.equal(projected[2][4], "T");
+  assert.equal(board[0][4], "T", "the referee board is not mutated");
+  assert.equal(unprojectStallPenaltyPlacement({ piece: "I", y: 7 }, 2).y, 5);
 });

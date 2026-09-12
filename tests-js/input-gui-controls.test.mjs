@@ -123,6 +123,8 @@ function harness() {
       releaseOnResume: false, inFlight: false, inFlightTarget: null, pumpTimer: null,
       pumpDueAt: null, pumpCatchUpStreak: 0, pumpRequested: false },
     inputEventSequence: 0, matchGeneration: 1, matchAutoplay: true, matchRunning: true,
+    matchSeries: { config: { stallLock: { enabled: false, pps: null, penalty: null } } },
+    FRAME_DURATION_MS: 1000 / 60,
     INPUT_ACTION_KEYS: {
       MoveLeft: 'moveLeft', SoftDrop: 'softDrop', RotateRight: 'rotateCW',
       Hold: 'hold', HardDrop: 'hardDrop',
@@ -134,13 +136,17 @@ function harness() {
     synchronizeMatchClock: (_clock, elapsedMs) => ({ elapsedMs }),
     setMatchClockRunning: (clock, running) => ({ ...clock, running }),
     inputModeActive: () => true, inputHumanActive: () => true, mode: 'match', human: null,
+    // No start countdown is open here: these are the rules of a round already
+    // under way, so the production countdown state simply reports none.
+    startCountdown: null,
     elements: { 'match-step': {}, 'bot-settings-dialog': { open: false } },
     setTimeout: () => 1, clearTimeout: () => {}, INPUT_MATCH_ENDPOINT: '/api/input-match',
     renderMatch: body => { context.lastMatchView = body; }, finishSeriesGame: () => {},
+    armStallLock() {}, cancelStallLock() {}, cancelInputPump() {},
     handleMatchError: error => { throw error; },
     structuredClone,
   });
-  const names = ['humanInputEnabled', 'handleHumanKeyUp', 'clearInputEvents', 'currentInputEventFrame', 'enqueueInputEvent', 'handleInputAction',
+  const names = ['matchCountingDown', 'humanInputEnabled', 'handleHumanKeyUp', 'clearInputEvents', 'currentInputEventFrame', 'enqueueInputEvent', 'handleInputAction',
     'inputTargetFrame', 'inputEventsBefore', 'requestInputPump', 'scheduleIdleInputPump', 'stepInputMatch',
     'recordAcceptedInputEvents', 'queueInputReleases', 'aggregateInputTtrm'];
   for (const name of names) {

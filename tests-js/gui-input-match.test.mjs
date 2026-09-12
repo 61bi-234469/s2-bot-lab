@@ -579,3 +579,148 @@ test('actual consumed P1 inputs export through GUI writer and replay import, inc
   assert.equal(saved.body.players[0].verification.matched, true);
   assert.equal(saved.body.players[0].locks.length, view.bots[0].stats.turns);
 });
+
+test('input STALL penalty lines survive locks and one line is forgiven after five ordinary locks', async () => {
+  const handlers = createGuiInputMatchHandlers({ runtime: {
+    propose: () => new Promise(() => {}), closeSessions: async () => {}, resolveInput: resolveInputJob,
+  } });
+  const { body: started } = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
+    ...config, stallLock: { enabled: true, pps: 2, penalty: 'penalty-line' },
+  } });
+  const beforeDeadline = await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: {
+    sessionId: started.sessionId, frame: 29, inputs: [],
+  } });
+  assert.equal(beforeDeadline.status, 200, JSON.stringify(beforeDeadline.body));
+  assert.equal(beforeDeadline.body.stallPenalty.rows, 0);
+  const penalty = await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: {
+    sessionId: started.sessionId, frame: 30, inputs: [],
+  } });
+  assert.equal(penalty.status, 200, JSON.stringify(penalty.body));
+  assert.equal(penalty.body.stallPenalty.rows, 1);
+  assert.equal(penalty.body.stallPenalty.dueFrame, 60);
+  assert.equal(penalty.body.bots[0].board[0].join(''), 'PPPPPPPPPP');
+  let view = penalty.body;
+  for (let frame = 30; frame < 35; frame++) {
+    const stepped = await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: {
+      sessionId: started.sessionId, frame: frame + 1, inputs: tap(frame, 'hardDrop'),
+    } });
+    assert.equal(stepped.status, 200, JSON.stringify(stepped.body));
+    view = stepped.body;
+  }
+  assert.equal(view.bots[0].stats.turns, 5);
+  assert.equal(view.stallPenalty.rows, 0);
+  assert.ok(view.bots[0].board[0].some(cell => cell === null));
+});
+
+for (const [rows, survives] of [[5, true], [6, false]]) {
+  test(`input STALL forgiveness precedes blockout: ${rows} penalty rows ${survives ? 'survive' : 'still top out'}`, async () => {
+    const handlers = createGuiInputMatchHandlers({ runtime: {
+      propose: () => new Promise(() => {}), closeSessions: async () => {},
+    } });
+    const { body: started } = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
+      ...config, seed: 1, stallLock: { enabled: true, pps: 20, penalty: 'penalty-line' },
+    } });
+    const step = (frame, inputs = []) => handlers.handle({ method: 'POST', path: '/api/input-match/step',
+      body: { sessionId: started.sessionId, frame, inputs } });
+    const raised = await step(rows * 3);
+    assert.equal(raised.status, 200);
+    assert.equal(raised.body.stallPenalty.rows, rows);
+    let result;
+    for (let lock = 0; lock < 10; lock++) {
+      const frame = rows * 3 + lock;
+      result = await step(frame + 1, tap(frame, 'hardDrop'));
+      assert.equal(result.status, 200, JSON.stringify(result.body));
+      if (lock < 9) assert.equal(result.body.outcome.complete, false);
+    }
+    const view = result.body;
+    assert.equal(view.bots[0].stats.turns, 10);
+    assert.equal(view.stallPenalty.rows, rows - 2);
+    assert.equal(view.bots[0].board.filter(row => row.every(cell => cell === 'P')).length, rows - 2);
+    assert.equal(view.outcome.complete, !survives);
+    assert.equal(view.bots[0].toppedOut, !survives);
+    assert.equal(view.status, survives ? 'active' : 'complete');
+    assert.equal(view.bots[0].stats.attack, 0, 'forgiveness is not a line clear or attack');
+    if (survives) {
+      const continued = await step(rows * 3 + 11);
+      assert.equal(continued.status, 200);
+      assert.equal(continued.body.status, 'active');
+    } else {
+      assert.equal(view.outcome.winnerBotId, 'right');
+      assert.equal(view.outcome.reason, 'top-out');
+      const saved = await handlers.handle({ method: 'GET', path: '/api/input-match/round' });
+      assert.equal(saved.status, 200);
+      assert.equal(saved.body.result.winnerId, 'right');
+    }
+    const ttrm = await handlers.handle({ method: 'GET', path: '/api/input-match/ttrm' });
+    assert.equal(ttrm.status, 409, 'external STALL changes remain ineligible for input-only replay');
+  });
+}
+
+test('input STALL counts every lock when five hard drops share one tick', async () => {
+  const handlers = createGuiInputMatchHandlers({ runtime: {
+    propose: () => new Promise(() => {}), closeSessions: async () => {},
+  } });
+  const { body: started } = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
+    ...config, stallLock: { enabled: true, pps: 2, penalty: 'penalty-line' },
+  } });
+  const step = (frame, inputs = []) => handlers.handle({ method: 'POST', path: '/api/input-match/step',
+    body: { sessionId: started.sessionId, frame, inputs } });
+  await step(30);
+  const inputs = Array.from({ length: 5 }, (_, index) => tap(30, 'hardDrop').map(event =>
+    ({ ...event, data: { ...event.data, subframe: index / 5 } }))).flat();
+  const result = await step(31, inputs);
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.bots[0].stats.turns, 5);
+  assert.equal(result.body.stallPenalty.rows, 0);
+});
+
+test('input forced-lock penalty returns the current piece to spawn and locks it', async () => {
+  const handlers = createGuiInputMatchHandlers({ runtime: {
+    propose: () => new Promise(() => {}), closeSessions: async () => {}, resolveInput: resolveInputJob,
+  } });
+  const { body: started } = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
+    ...config, stallLock: { enabled: true, pps: 2, penalty: 'forced-lock' },
+  } });
+  const penalty = await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: {
+    sessionId: started.sessionId, frame: 30, inputs: [],
+  } });
+  assert.equal(penalty.status, 200, JSON.stringify(penalty.body));
+  const stepped = await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: {
+    sessionId: started.sessionId, frame: 31, inputs: [],
+  } });
+  assert.equal(stepped.status, 200, JSON.stringify(stepped.body));
+  assert.equal(stepped.body.bots[0].stats.turns, 1);
+  assert.equal(stepped.body.bots[0].lastLock.rotation, 0);
+  assert.equal(stepped.body.bots[0].lastLock.x,
+    started.bots[0].current === 'O' ? 4 : 3);
+});
+
+test('input STALL top-out keeps the penalty board for scoring but refuses .ttrm export', async () => {
+  const closed = [];
+  const handlers = createGuiInputMatchHandlers({ runtime: {
+    propose: () => new Promise(() => {}), closeSessions: async args => closed.push(args), resolveInput: resolveInputJob,
+  } });
+  const { body: started } = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
+    ...config, stallLock: { enabled: true, pps: 20, penalty: 'penalty-line' },
+  } });
+  let result = { body: started };
+  for (let target = 4; target <= 80 && !result.body.outcome.complete; target += 4) {
+    result = await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: {
+      sessionId: started.sessionId, frame: target, inputs: [],
+    } });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+  }
+  assert.equal(result.body.outcome.complete, true);
+  assert.equal(result.body.outcome.winnerBotId, 'right');
+  assert.equal(result.body.stallPenalty.rows, 20);
+  assert.equal(result.body.bots[0].toppedOut, true,
+    'Engine confirms top-out when the raised active piece exhausts the full board buffer');
+  assert.equal(result.body.bots[0].board.slice(0, 20).every(row => row.join('') === 'PPPPPPPPPP'), true);
+  const round = await handlers.handle({ method: 'GET', path: '/api/input-match/round' });
+  assert.equal(round.status, 200, JSON.stringify(round.body));
+  assert.equal(round.body.replayDisabled, 'stall-penalty');
+  const ttrm = await handlers.handle({ method: 'GET', path: '/api/input-match/ttrm' });
+  assert.equal(ttrm.status, 409);
+  assert.match(ttrm.body.error, /STALL PENALTY.*\.ttrm/);
+  assert.ok(closed.length >= 2);
+});
