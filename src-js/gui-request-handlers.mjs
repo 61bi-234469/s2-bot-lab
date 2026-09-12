@@ -35,6 +35,7 @@ import { realtimeCc2ThinkMs } from "./bot-match-options.mjs";
 import { runBotProposals } from "./bot-proposal-runner.mjs";
 import { createLiveMatchMutationQueue } from "./live-match-mutation.mjs";
 import { realtimeDeadlineDelayMs, realtimeScheduledLockFrame } from "./realtime-match-pacing.mjs";
+import { stallPenaltyProjectionTopsOut } from "./stall-penalty-topout.mjs";
 import { RULESET_IDS, resolvePlacementRules } from "./ruleset-profiles.mjs";
 import { placementGeometry } from "./triangle/placement-geometry.mjs";
 import { lockedPieceCells, toS2GuiState, createGame, extendSeededQueue,
@@ -144,6 +145,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       if (method === "POST" && path === "/api/match/start") return startMatch(body);
       if (method === "POST" && path === "/api/match/step") return stepMatch(body);
       if (method === "POST" && path === "/api/match/human-lock") return humanLock(body);
+      if (method === "POST" && path === "/api/match/human-penalty-topout") return humanPenaltyTopOut(body);
       if (method === "POST" && path === "/api/match/close") return closeMatch();
       if (method === "GET" && path === "/api/match/round") return round();
       if (method === "GET" && path === "/api/match/ttrm") return fail(409, {
@@ -402,6 +404,34 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       const view = matchView(activeSession);
       if (view.outcome.complete) cc2Runtime?.closeSessions({ sessionKeys: ["left", "right"] });
       return ok(view);
+      });
+    } catch (error) {
+      return fail(422, { error: messageOf(error) });
+    }
+  }
+
+  async function humanPenaltyTopOut(body) {
+    if (session === null) return fail(409, { error: "match-not-started" });
+    const activeSession = session;
+    if (activeSession.humanSide === null) return fail(409, { error: "no-human-player" });
+    try {
+      return await activeSession.mutations.run(() => {
+        if (session !== activeSession || activeSession.invalidated) return fail(409, { error: "match-replaced" });
+        const currentView = matchView(activeSession);
+        if (currentView.outcome.complete) return fail(409, { error: "match-complete", outcome: currentView.outcome });
+        const player = currentView.bots.find((bot) => bot.id === activeSession.humanSide);
+        if (!stallPenaltyProjectionTopsOut(player.board, body.penaltyRows)) {
+          return fail(422, { error: "stall penalty rows do not top out the player" });
+        }
+        activeSession.forcedOutcome = matchOutcome(
+          currentView.bots.map((bot) => bot.id === activeSession.humanSide ? { ...bot, toppedOut: true } : bot),
+          activeSession.match.turnNumber,
+          activeSession.config.maxTurns,
+        );
+        const view = matchView(activeSession);
+        finalize(activeSession);
+        void cc2Runtime?.closeSessions({ sessionKeys: ["left", "right"] });
+        return ok(view);
       });
     } catch (error) {
       return fail(422, { error: messageOf(error) });

@@ -20,6 +20,46 @@ test("static handler exposes only browser-capable bots", async () => {
   assert.ok(capabilities.bots.filter((bot) => bot.id.startsWith("cc2-")).every((bot) => !bot.available));
 });
 
+test("static match records a verified stall penalty top-out", async () => {
+  const handlers = createGuiRequestHandlers();
+  await request(handlers, "POST", "/api/match/start", {
+    left: "human",
+    right: "s2-simple",
+    seed: 42,
+  });
+
+  const terminal = await request(handlers, "POST", "/api/match/human-penalty-topout", {
+    penaltyRows: 20,
+  });
+  assert.equal(terminal.status, "complete");
+  assert.deepEqual(terminal.outcome, {
+    complete: true,
+    reason: "top-out",
+    winnerBotId: "right",
+  });
+
+  const round = await request(handlers, "GET", "/api/match/round");
+  assert.equal(round.result.winnerId, "right");
+  assert.deepEqual(round.result.reasons, { left: "top-out", right: "winner" });
+});
+
+test("static match rejects an unverified stall penalty top-out", async () => {
+  const handlers = createGuiRequestHandlers();
+  await request(handlers, "POST", "/api/match/start", {
+    left: "human",
+    right: "s2-simple",
+    seed: 42,
+  });
+
+  const result = await handlers.handle({
+    method: "POST",
+    path: "/api/match/human-penalty-topout",
+    body: { penaltyRows: 1 },
+  });
+  assert.equal(result.status, 422);
+  assert.equal(result.body.error, "stall penalty rows do not top out the player");
+});
+
 test("retired static export directs users to input mode instead of claiming local-only support", async () => {
   const result = await createGuiRequestHandlers().handle({ method: "GET", path: "/api/match/ttrm" });
   assert.equal(result.status, 409);

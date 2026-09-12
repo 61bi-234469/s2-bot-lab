@@ -22,9 +22,18 @@ const nativeInputState = (decision, parameters, type) => ({
   ...guiStateToCc2NativeStart(decisionStateToSyntheticGui(decision), { queueLimit: parameters.queueDepth }),
   ...(['cc2-raw', 'cc2-chouhy'].includes(type) ? { input_candidates: true } : {}),
 });
+const normalizeStallPenalty = (value, humanSide) => {
+  const enabled = value?.enabled === true;
+  if (!enabled) return { enabled: false, pps: null, penalty: null };
+  if (humanSide !== 'left') throw new Error('STALL PENALTY requires You (1P) on the left');
+  if (!Number.isFinite(value.pps) || value.pps < 0.1 || value.pps > 20) throw new Error('invalid STALL PENALTY PPS');
+  if (!['penalty-line', 'forced-lock'].includes(value.penalty)) throw new Error('unsupported STALL PENALTY');
+  return { enabled: true, pps: value.pps, penalty: value.penalty };
+};
 
-/** Shared local/Pages input owner. Only tick mutates a round; asynchronous jobs
- * receive public copies and can publish plans for a future, checked boundary. */
+/** Shared local/Pages input owner. Only the synchronous step path mutates a
+ * round; asynchronous jobs receive public copies and can publish plans for a
+ * future, checked boundary. */
 export function createGuiInputMatchHandlers({ runtime, now = () => performance.now() }) {
   let current = null;
   let generation = 0;
@@ -43,6 +52,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           }
           if (!runtime) throw new Error('input CC2 runtime unavailable');
           const parameters = Object.fromEntries(IDS.map(id => [id, normalizeBotParameters(types[id], body[`${id}Parameters`])]));
+          const stallPenalty = normalizeStallPenalty(body.stallLock, types.left === 'human' ? 'left' : null);
           if (IDS.some(id => types[id] !== 'human' && parameters[id].queueDepth > 15)) throw new Error('TTRM INPUT supports QUEUE DEPTH up to 15 (current + 14 NEXT)');
           if (body.maxTurns != null && (!Number.isSafeInteger(body.maxTurns) || body.maxTurns < 1 || body.maxTurns > 10000)) throw new Error('invalid MAX TURNS');
           if (current) current.closed = true;
@@ -55,13 +65,16 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
             round: createInputExecutionRound({ seed: body.seed,
               handlingById: types.left === 'human' ? { left: humanEngineHandling(body.humanControls) } : {} }), closed: false, failure: null,
             jobs: {}, ready: {}, plans: {}, proposals: {}, pathWaits: {}, lastLock: {}, misses: {}, leadFrames: {}, paceDeadline: {}, saved: null, maxTurns: body.maxTurns ?? null,
-            selections: {}, diagnostics: Object.fromEntries(IDS.map(id => [id,
+            selections: {}, stallPenalty: { ...stallPenalty, rows: 0, nonPenaltyLocks: 0,
+              forcedLockPending: false, dueFrame: stallPenalty.enabled ? 60 / stallPenalty.pps : null },
+            diagnostics: Object.fromEntries(IDS.map(id => [id,
               { plannedLocks: 0, fallbackLocks: 0, naturalLocks: 0, lastFallback: null,
                 publicStateMismatches: 0, lateResponses: 0, replans: 0, noInputResponses: 0,
                 pathBudgetWaits: 0, lastPathBudgetWait: null,
                 resolutionOutcomes: { preferred: 0, fallback: 0, notFound: 0, stale: 0 },
                 fallbackReasons: {}, pacedLocks: 0, deadlineExceededLocks: 0 }])),
-            config: { seed: body.seed, firstTo: body.firstTo ?? 1, fairComparison: false, maxTurns: body.maxTurns ?? null } };
+            config: { seed: body.seed, firstTo: body.firstTo ?? 1, fairComparison: false,
+              maxTurns: body.maxTurns ?? null, stallLock: stallPenalty } };
           return ok(view(current));
         }
         const session = current;
@@ -101,6 +114,16 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
             if (session.types.left === 'human') {
               inputs.left = [];
               while (cursor < events.length && events[cursor].frame === frame) inputs.left.push(events[cursor++]);
+              if (session.stallPenalty.forcedLockPending) {
+                // The referee owns the deadline. A release/press pair makes
+                // the forced hard drop independent of the browser's held-key
+                // state, while later same-frame user inputs remain available
+                // to the newly spawned piece.
+                inputs.left.unshift(
+                  { frame, type: 'keyup', data: { key: 'hardDrop', subframe: 0 } },
+                  { frame, type: 'keydown', data: { key: 'hardDrop', subframe: 0 } },
+                );
+              }
             }
             try {
               session.round.tick(inputs);
@@ -110,7 +133,18 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
                 session.lastLock[id] = lock.pieceIndex;
                 const plan = session.plans[id];
                 if (plan) assertInputPlanLock(plan.lock, lock);
-                if (session.types[id] !== 'human') {
+                if (session.types[id] === 'human' && session.stallPenalty.enabled) {
+                  if (session.stallPenalty.forcedLockPending) {
+                    session.stallPenalty.forcedLockPending = false;
+                  } else if (session.stallPenalty.penalty === 'penalty-line') {
+                    session.stallPenalty.nonPenaltyLocks = (session.stallPenalty.nonPenaltyLocks + 1) % 5;
+                    if (session.stallPenalty.nonPenaltyLocks === 0 && session.stallPenalty.rows > 0) {
+                      const result = session.round.removeStallPenaltyLine(id);
+                      session.stallPenalty.rows = result.rows;
+                    }
+                  }
+                  session.stallPenalty.dueFrame = lock.frame + 60 / session.stallPenalty.pps;
+                } else if (session.types[id] !== 'human') {
                   const parameters = session.parameters[id];
                   const interval = parameters.ppsEnabled === false ? 0 : 60 / parameters.pps;
                   const due = session.paceDeadline[id] ?? interval;
@@ -138,6 +172,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
               if (session.maxTurns !== null && Object.values(session.lastLock).some(index => index + 1 >= session.maxTurns) && session.round.status === 'active') {
                 throw new Error('MAX TURNS reached before top-out; unfinished rounds cannot be exported as .ttrm');
               }
+              applyDueStallPenalty(session);
             } catch (error) { session.failure = error.message; void runtime.closeSessions({ sessionKeys: session.keys }); throw error; }
           }
           for (const id of IDS) schedule(session, id);
@@ -146,6 +181,15 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
         }
         if (method === 'GET' && ['/api/input-match/round', '/api/input-match/ttrm'].includes(path)) {
           if (session.failure || session.round.status !== 'complete') throw new Error('only a completed valid input round can be saved');
+          if (session.stallPenalty.enabled) {
+            if (path.endsWith('/ttrm')) throw new Error('STALL PENALTY rounds cannot be saved as .ttrm');
+            const receipt = session.round.refereeView();
+            return ok({ index: 0, startFrame: 0, endFrame: session.round.frame, status: 'ok',
+              result: { winnerId: receipt.terminal?.winnerId ?? null,
+                reasons: Object.fromEntries(IDS.map(id => [id, receipt.terminal?.winnerId === id
+                  ? 'winner' : receipt.terminal?.reason ?? 'unknown'])) },
+              players: [], replayDisabled: 'stall-penalty' });
+          }
           if (!session.saved) {
             const output = buildExecutedInputTtrm(session.round);
             const ir = buildReplayIR(parseTtrm(output.text));
@@ -160,6 +204,15 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
   };
 
   function live(session) { return current === session && !session.closed && !session.failure && session.round.status === 'active'; }
+  function applyDueStallPenalty(session) {
+    const stall = session.stallPenalty;
+    if (!stall.enabled || stall.forcedLockPending || session.round.status !== 'active' ||
+        session.round.frame < paceFrame(stall.dueFrame)) return;
+    const result = session.round.applyStallPenalty('left', stall.penalty);
+    stall.rows = result.rows;
+    stall.dueFrame = session.round.frame + 60 / stall.pps;
+    if (stall.penalty === 'forced-lock' && session.round.status === 'active') stall.forcedLockPending = true;
+  }
   function adopt(session, id) {
     const ready = session.ready[id];
     if (!ready) return;
@@ -323,6 +376,9 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
       turnNumber: Math.max(...bots.map(bot => bot.stats.turns)), bots, config: session.config,
       clock: { logicalFrame: frame }, metricElapsedMs: frame * 1000 / 60, nextStepFrames: 1,
       outcome: { complete: receipt.terminal !== null, winnerBotId: receipt.terminal?.winnerId ?? null, reason: receipt.terminal?.reason ?? null },
+      stallPenalty: { rows: session.stallPenalty.rows, enabled: session.stallPenalty.enabled,
+        dueFrame: session.stallPenalty.dueFrame,
+        replayDisabled: session.stallPenalty.enabled },
       replayMeta: { origin: 's2-bot-lab-generated', users: IDS.map(id => ({ id, username: session.types[id] })) },
       pacing: { authority: 'realtime-input', declaredPpsByBotId: Object.fromEntries(IDS.map(id =>
         [id, session.types[id] === 'human' || session.parameters[id].ppsEnabled === false ? null : session.parameters[id].pps])) } };

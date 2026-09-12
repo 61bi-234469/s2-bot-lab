@@ -12,6 +12,7 @@ const shared = new Map([
   ["/shared/input-bot-contract.mjs", resolve(repo, "src-js/input-bot-contract.mjs")],
   ["/shared/bot-parameters.mjs", resolve(repo, "src-js/bot-parameters.mjs")],
   ["/shared/bot-match-options.mjs", resolve(repo, "src-js/bot-match-options.mjs")],
+  ["/shared/stall-penalty-topout.mjs", resolve(repo, "src-js/stall-penalty-topout.mjs")],
   ["/shared/pieces.mjs", resolve(repo, "src-js/replay/pieces.mjs")],
   ["/shared/replay-garbage.mjs", resolve(repo, "src-js/replay/replay-garbage.mjs")],
   ["/shared/replay-timeline.mjs", resolve(repo, "src-js/replay/replay-timeline.mjs")],

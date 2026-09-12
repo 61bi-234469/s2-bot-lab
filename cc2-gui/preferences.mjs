@@ -22,6 +22,8 @@ export const CONTROL_PREFERENCE_IDS = Object.freeze([
   "match-seed",
   "match-max-turns",
   "match-count",
+  "match-stall-lock-pps",
+  "match-stall-lock-penalty",
   "replay-speed",
 ]);
 export const TOGGLE_PREFERENCE_IDS = Object.freeze([
@@ -30,6 +32,7 @@ export const TOGGLE_PREFERENCE_IDS = Object.freeze([
   "match-ttrm-compatible",
   "match-unlimited-turns",
   "match-random-seed",
+  "match-stall-lock",
 ]);
 
 export function emptyPreferences() {

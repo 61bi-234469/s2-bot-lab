@@ -264,6 +264,28 @@
                 <small class="match-scope-note">両方の実行方式で使います。同じSEEDでもミノ列・ガベージRNG・終局条件は方式ごとに異なります。</small>
               </div>
             </section>
+            <section class="match-setting-group" id="match-stall-lock-settings" data-scope="both">
+              <h3 class="group-name">STALL PENALTY / ストールペナルティ</h3>
+              <div class="match-setting-group-body">
+                <label class="stall-lock-setting" title="1P（You）側が指定PPSを下回ると、選択したペナルティを適用します。">STALL PENALTY
+                  <span><input id="match-stall-lock" type="checkbox"> 1Pストール判定</span>
+                </label>
+                <label class="match-setting" for="match-stall-lock-penalty">PENALTY
+                  <select id="match-stall-lock-penalty" disabled>
+                    <option value="penalty-line">消去不能ラインを1段追加</option>
+                    <option value="forced-lock">スポーン位置へ強制接地</option>
+                  </select>
+                </label>
+                <div class="match-setting">
+                  <label for="match-stall-lock-pps">MINIMUM PACE</label>
+                  <div class="match-limit-control">
+                    <input id="match-stall-lock-pps" type="number" min="0.1" max="20" step="0.1" value="2" disabled>
+                    <span class="unit-label">PPS</span>
+                  </div>
+                </div>
+                <small class="match-scope-note" id="match-stall-lock-note"></small>
+              </div>
+            </section>
           </div>
         </details>
         <div class="match-outcome">
@@ -275,6 +297,7 @@
         </div>
         <output id="match-export-message" class="match-export-message" hidden></output>
         <div class="match-fields">
+          <div class="match-countdown" id="match-countdown" role="status" aria-live="assertive" hidden></div>
           <article class="match-player">
             <header><strong id="match-left-name">LEFT</strong><span id="match-left-stats">0 ATK · 0 LINES</span></header>
             <div class="match-body">
@@ -329,7 +352,8 @@
             <dl class="match-metrics" id="match-right-metrics" aria-label="Right bot detailed metrics"></dl>
           </article>
         </div>
-        <p class="match-note" id="match-human-note">LEFT BOTで <strong>You (1P)</strong> を選ぶと自分で対戦できます。操作は ← → 移動、↓ ソフトドロップ、Space ハードドロップ、Z/X 回転、A 180度回転、C ホールド、Esc リセット。キー割り当てと操作感（DAS・ARR・DCD・SDF）は SETTINGS で変更でき、変更は次のラウンドから反映されます。TTRM INPUT では自然落下があり、操作感は Engine 側で処理します。</p>
+        <p class="match-note" id="match-human-note">LEFT BOTで <strong>You (1P)</strong> を選ぶと自分で対戦できます。ラウンドは 3・2・1・GO の約1秒のカウントダウンで始まり、カウント中は対局クロックが止まっているため、相手Botの手番も自分の持ち時間も進みません。操作は ← → 移動、↓ ソフトドロップ、Space ハードドロップ、Z/X 回転、A 180度回転、C ホールド、Esc リセット。キー割り当てと操作感（DAS・ARR・DCD・SDF）は SETTINGS で変更でき、変更は次のラウンドから反映されます。TTRM INPUT では自然落下があり、操作感は Engine 側で処理します。</p>
+        <p class="match-note">MATCH SETTINGS 最下段の <strong>STALL PENALTY</strong> をONにすると、両方の実行方式の1P（You）へ指定PPS（初期値2 PPS＝1ミノ30F）でストール判定を行います。ペナルティは「消去不能ラインを1段追加」（初期値）または「スポーン位置へ強制接地」から選べます。ライン方式では通常接地5回ごとに最下段のペナルティラインを1段除去し、その除去は火力・B2B・RENへ影響しません。持ち時間は対局クロックで減るため、一時停止中は進みません。設定はSTART時に固定し、ブラウザに保存します。STALL PENALTYを有効にしたTTRM INPUT対局は .ttrm 保存対象外です。</p>
         <p class="match-note" id="match-bot-note">START MATCH で対局が始まります。もう一度押すと一時停止、さらに押すと再開します。左右のBotは1つの共通クロックで進みます。探索条件はBotごとの SETTINGS で設定します。SELECTION（探索数）と THINK TIME（探索時間）は少なくとも一方をONにする必要があり、先に達した方で探索を打ち切ります。THINK TIME は端末やブラウザの状態で結果が変わるため、既定はOFFです。PPS をOFFにすると探索が終わり次第すぐ置きます。FAIR COMPARISON をONにすると、CC2系のBotを SELECTION 512・1 PPS に揃え、探索を順番に実行して条件差をなくします。</p>
         <p class="match-note">実行方式は2つあります。<strong>固定探索モード</strong>（TTRM INPUT がOFF）は同じSEEDで再現でき、EXPORT では1手目以降の .json を保存します。<strong>TTRM INPUT</strong> は実時間で進み、実際の入力と探索完了時刻が結果に影響します。各BotのPPS設定に沿って動き（PPSがOFFなら準備ができ次第入力、探索や入力経路が間に合わない場合は指定速度を下回ります）、FAIR COMPARISON は適用しません。QUEUE DEPTH は最大15（current＋NEXT 14）で、ONにした時点で保存値も15に切り下げます。PRE-LOCK PREVIEW は使いません。同じSEEDでも固定探索モードとはミノ列・ガベージ列・終局条件が異なります。round 終了後、EXPORT で実際に消費した入力を .ttrm として保存できます。EXPORT の保存ボタンは1つで、選んだ実行方式に応じて保存形式が決まります。</p>
         <p class="match-note">TTRM INPUT が使えるのは Raw CC2、chouhy、CC2 S2 F14、current champion 同士、または左側の You (1P) との組み合わせです。ONの間、対応しないBotは LEFT/RIGHT BOT の一覧でグレーアウトし、選べません。非対応のBotを選んだままONにした場合は、開始時に理由を表示します。切替状態と個別設定はブラウザに保存されます。</p>

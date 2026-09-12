@@ -22,6 +22,14 @@ export function createInputExecutionRound({ seed, ids = ['left', 'right'], handl
   const pending = [[], []];
   const nextIgeId = [0, 0];
   const nextCid = [1, 1];
+  const completeTopOut = (losingIndex = null) => {
+    terminal = { frame, winnerId: losingIndex === null
+      ? (sessions.filter(session => !session.toppedOut).length === 1
+        ? ids[sessions.findIndex(session => !session.toppedOut)] : null)
+      : ids[1 - losingIndex], reason: 'top-out' };
+    for (const session of sessions) session.finish();
+    status = 'complete';
+  };
   const round = {
     get status() { return status; },
     get frame() { return frame; },
@@ -44,6 +52,25 @@ export function createInputExecutionRound({ seed, ids = ['left', 'right'], handl
       const request = { id: engineId === type ? INPUT_DECISION_REQUEST_ID : 's2-amount-only-decision-request/1', sessionKey: 'input-round',
         decision, moves, type, engine: { botType: type, engineId } };
       return resolveQualifiedInputSubmission(request, movement, budget);
+    },
+    applyStallPenalty(id, penalty) {
+      const index = ids.indexOf(id);
+      if (index < 0 || status !== 'active') throw new Error('active input round player required');
+      if (penalty === 'penalty-line') {
+        const result = sessions[index].applyStallPenaltyLine();
+        if (result.toppedOut) completeTopOut(index);
+        return result;
+      }
+      if (penalty === 'forced-lock') {
+        sessions[index].prepareStallForcedLock();
+        return { rows: sessions[index].stallPenaltyRows, toppedOut: false };
+      }
+      throw new Error('unsupported STALL PENALTY');
+    },
+    removeStallPenaltyLine(id) {
+      const index = ids.indexOf(id);
+      if (index < 0 || status !== 'active') throw new Error('active input round player required');
+      return sessions[index].removeStallPenaltyLine();
     },
     tick(inputs = {}) {
       if (status !== 'active') throw new Error('input round is not active');
@@ -85,13 +112,7 @@ export function createInputExecutionRound({ seed, ids = ['left', 'right'], handl
             );
           }
         }
-        if (sessions.some(session => session.toppedOut)) {
-          terminal = { frame, winnerId: sessions.filter(session => !session.toppedOut).length === 1
-            ? ids[sessions.findIndex(session => !session.toppedOut)] : null,
-            reason: 'top-out' };
-          for (const session of sessions) session.finish();
-          status = 'complete';
-        }
+        if (sessions.some(session => session.toppedOut)) completeTopOut();
       } catch (error) {
         status = 'invalid';
         throw error;

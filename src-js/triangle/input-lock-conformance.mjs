@@ -16,10 +16,12 @@ export function createInputLockConformance(engine, rulesetId) {
   let pending = null;
   let hardDrop = false;
   let comparedLocks = 0;
+  let enabled = true;
   const rotationObserver = createInputRotationObserver(engine);
   let expectedGarbage = garbage(engine.garbageQueue.snapshot());
   const queueOptions = structuredClone(engine.garbageQueue.options);
   const compareGarbage = () => {
+    if (!enabled) return;
     const actual = garbage(engine.garbageQueue.snapshot());
     for (const key of ['packets', 'generatorState']) {
       if (JSON.stringify(actual[key]) !== JSON.stringify(expectedGarbage[key])) {
@@ -29,6 +31,7 @@ export function createInputLockConformance(engine, rulesetId) {
   };
   const receive = engine.receiveGarbage.bind(engine);
   engine.receiveGarbage = (...packets) => {
+    if (!enabled) return receive(...packets);
     for (const packet of packets) {
       if (packet.amount > 0) expectedGarbage = receiveGarbage(expectedGarbage, {
         packetId: packet.cid, sourceGameId: packet.gameid, amount: packet.amount,
@@ -41,6 +44,7 @@ export function createInputLockConformance(engine, rulesetId) {
   };
   const confirm = engine.garbageQueue.confirm.bind(engine.garbageQueue);
   engine.garbageQueue.confirm = (packetId, sourceGameId, arrivalFrame) => {
+    if (!enabled) return confirm(packetId, sourceGameId, arrivalFrame);
     const next = confirmGarbage(expectedGarbage, { packetId, sourceGameId, arrivalFrame }, queueOptions);
     const result = confirm(packetId, sourceGameId, arrivalFrame);
     if (result !== (next !== null)) throw new Error('input garbage confirmation result differs');
@@ -55,14 +59,21 @@ export function createInputLockConformance(engine, rulesetId) {
   };
   return {
     get comparedLocks() { return comparedLocks; },
+    disable() {
+      enabled = false;
+      pending = null;
+    },
     checkBoundary() {
+      if (!enabled) return;
       compareGarbage();
       rotationObserver.checkBoundary();
     },
     beforeTick(events) {
+      if (!enabled) return;
       rotationObserver.beforeTick(events);
     },
     beforeMerge() {
+      if (!enabled) return null;
       rotationObserver.beforeMerge();
       compareGarbage();
       if (pending !== null) throw new Error('canonical input observer missed a lock completion');
@@ -88,6 +99,7 @@ export function createInputLockConformance(engine, rulesetId) {
       return structuredClone(rotationEvidence);
     },
     afterLock(result) {
+      if (!enabled) return;
       if (pending === null) throw new Error('canonical input observer has no pre-merge state');
       const { transition, attack, sent, frame } = pending;
       const expected = transition.nextState;

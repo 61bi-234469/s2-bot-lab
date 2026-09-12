@@ -235,8 +235,8 @@ footer { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line-di
 .match-setting-group[data-scope="execution"] > .group-name { color: var(--accent); }
 .match-setting-group[data-inactive="true"] { opacity: .5; }
 .match-scope-note { flex-basis: 100%; color: var(--muted); font-size: 9px; line-height: 1.4; }
-.fair-comparison-setting span:last-child, .pre-lock-preview-setting span:last-child, .ttrm-compatible-setting span:last-child { display: flex; align-items: center; gap: 6px; min-height: 30px; color: var(--text); }
-.fair-comparison-setting input, .pre-lock-preview-setting input, .ttrm-compatible-setting input { accent-color: var(--accent); }
+.fair-comparison-setting span:last-child, .pre-lock-preview-setting span:last-child, .ttrm-compatible-setting span:last-child, .stall-lock-setting span:last-child { display: flex; align-items: center; gap: 6px; min-height: 30px; color: var(--text); }
+.fair-comparison-setting input, .pre-lock-preview-setting input, .ttrm-compatible-setting input, .stall-lock-setting input { accent-color: var(--accent); }
 .bot-picker { display: grid; gap: 4px; min-width: 0; }
 .bot-picker-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; }
 .bot-settings-button { padding-inline: 9px; font-size: 9px; }
@@ -248,6 +248,7 @@ select option:disabled { color: var(--muted); }
 input[type="number"]:disabled { border-color: var(--line-dim); color: #4a504a; cursor: not-allowed; }
 .match-setting { display: grid; gap: 4px; }
 .match-limit-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; }
+.unit-label { display: flex; align-items: center; justify-content: center; min-width: 42px; padding: 0 6px; border: 1px solid var(--line); background: #0d0f0d; color: var(--muted); font-size: 11px; letter-spacing: .08em; }
 .infinity-toggle, .random-seed-toggle { display: flex; align-items: center; gap: 4px; min-width: 42px; padding: 0 6px; border: 1px solid var(--line); background: #0d0f0d; color: var(--text); font-size: 14px; }
 .infinity-toggle input, .random-seed-toggle input { accent-color: var(--accent); }
 .match-summary { display: block; min-height: 26px; margin-top: 8px; padding: 6px 8px; border: 1px solid var(--line); border-left: 2px solid var(--cyan); background: transparent; color: var(--cyan); font-size: 10px; line-height: 1.4; }
@@ -263,7 +264,11 @@ input[type="number"]:disabled { border-color: var(--line-dim); color: #4a504a; c
 .match-export-message[data-state="saved"] { color: var(--green); }
 .match-export-message[data-state="failed"] { color: var(--red); }
 .match-export-message[hidden] { display: none; }
-.match-fields { display: grid; grid-template-columns: 1fr auto 1fr; gap: 14px; align-items: center; width: min(1040px, 100%); margin: 14px auto 0; }
+.match-fields { position: relative; display: grid; grid-template-columns: 1fr auto 1fr; gap: 14px; align-items: center; width: min(1040px, 100%); margin: 14px auto 0; }
+/* The 1P start countdown is one flat readout in the middle of the arena, built
+   like the deck's other status boxes. Both fields, the NEXT queues and the
+   gauges stay readable around it, which is the point of holding the round. */
+.match-countdown { position: absolute; left: 50%; top: 50%; z-index: 3; transform: translate(-50%, -50%); min-width: 1.5em; padding: 10px 22px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: clamp(52px, 9vw, 96px); font-weight: 700; line-height: 1; text-align: center; pointer-events: none; }
 .match-player { min-width: 0; }
 .match-player header, .match-player footer { display: flex; justify-content: space-between; gap: 8px; margin: 0; padding: 5px 2px; border: 0; color: var(--muted); font-size: 9px; }
 .match-player header { border-bottom: 1px solid var(--line-dim); }
@@ -400,6 +405,7 @@ input[type="number"]:disabled { border-color: var(--line-dim); color: #4a504a; c
    not one of the seven tetrominoes is garbage, so the gray is also the fallback. */
 [data-piece="G"], .cell.filled:not([data-piece="I"]):not([data-piece="O"]):not([data-piece="T"]):not([data-piece="L"]):not([data-piece="J"]):not([data-piece="S"]):not([data-piece="Z"]) { --piece-color: #767c76; }
 .cell.filled[data-piece="G"] { background: #767c76; }
+.cell.filled[data-piece="P"] { background: #343934; box-shadow: inset 0 0 0 1px #8b928b; }
 
 @media (max-width: 720px) {
   :root { --cell: min(7.8vw, 27px); }

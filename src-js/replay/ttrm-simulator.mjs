@@ -253,6 +253,7 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
     engine.queue.minLength = INPUT_EXECUTION_PROFILE.publicNext + 1;
   }
   const conformance = canonicalProfile === null ? null : createInputLockConformance(engine, INPUT_EXECUTION_PROFILE.rulesetId);
+  let externallyMutated = false;
 
   // The starting position is overwritten by the first tick, so it is read here.
   const initial = readInitialPoint(engine);
@@ -317,7 +318,7 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
   let lastPlacedBlocks = new Set();
   const add = engine.board.add;
   engine.board.add = function (...args) {
-    const rotationEvidence = conformance?.beforeMerge() ?? null;
+    const rotationEvidence = !externallyMutated ? conformance?.beforeMerge() ?? null : null;
     lastPlacedBlocks = new Set(args.map(([block]) => block));
     preLock = {
       rotationEvidence,
@@ -344,7 +345,7 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
   });
 
   engine.events.on("falling.lock", (res) => {
-    conformance?.afterLock(res);
+    if (!externallyMutated) conformance?.afterLock(res);
     if (preLock === null) throw new TtrmError("observe", "lock arrived without a pre-merge observation");
     const after = convertEngineBoard(engine.board.state);
     totalLines += res.lines || 0;
@@ -448,6 +449,35 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
   let finished = null;
   let failure = null;
   const executedEvents = [];
+  let stallPenaltyRows = 0;
+  const board = engine.board;
+  const originalClearBombsAndLines = board.clearBombsAndLines.bind(board);
+  const originalInsertGarbage = board.insertGarbage.bind(board);
+  const emptyRow = () => Array(board.width).fill(null);
+  const penaltyRow = () => Array.from({ length: board.width }, () =>
+    ({ mino: "bomb", connections: 0, stallPenalty: true }));
+  const disableConformance = () => {
+    externallyMutated = true;
+    conformance?.disable();
+  };
+  const withPenaltyFloorDetached = (work) => {
+    if (stallPenaltyRows === 0) return work();
+    const floor = board.state.splice(0, stallPenaltyRows);
+    board.state.push(...Array.from({ length: stallPenaltyRows }, emptyRow));
+    try { return work(); }
+    finally {
+      board.state.splice(board.state.length - stallPenaltyRows, stallPenaltyRows);
+      board.state.unshift(...floor);
+    }
+  };
+  // The local floor is collision geometry, not a Simulator line. Keep it out
+  // of line clears, garbage insertion and perfect-clear attack calculation.
+  board.clearBombsAndLines = (placedBlocks) => withPenaltyFloorDetached(() =>
+    originalClearBombsAndLines(placedBlocks.map(([x, y]) => [x, y - stallPenaltyRows])));
+  board.insertGarbage = (packet) => withPenaltyFloorDetached(() => originalInsertGarbage(packet));
+  Object.defineProperty(board, "perfectClear", { configurable: true, get() {
+    return board.state.slice(stallPenaltyRows).every(row => row.every(cell => cell === null));
+  } });
   return {
     get frame() { return engine.frame; },
     get canonicalProfile() { return canonicalProfile; },
@@ -456,10 +486,11 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
     get lockCount() { return locks.length; },
     get processingMs() { return processingMs; },
     get toppedOut() { return engine.toppedOut; },
+    get stallPenaltyRows() { return stallPenaltyRows; },
     refereeLastLock() { return structuredClone(locks.at(-1) ?? null); },
     refereeView() {
       return { board: engine.board.state.map(row => row.map(cell => cell === null ? null :
-        cell.mino.length === 1 ? cell.mino.toUpperCase() : 'G')),
+        cell.stallPenalty === true ? 'P' : cell.mino.length === 1 ? cell.mino.toUpperCase() : 'G')),
         lastPlaced: engine.board.state.flatMap((row, y) => row.flatMap((cell, x) => lastPlacedBlocks.has(cell) ? [[x, y]] : [])),
         current: engine.falling.symbol.toUpperCase(), hold: engine.held?.toUpperCase() ?? null,
         next: Array.from(engine.queue).slice(0, 14).map(value => value.toUpperCase()),
@@ -492,6 +523,47 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
     },
     executedEvents() { return structuredClone(executedEvents); },
     takeOutgoing() { return outgoing.splice(0); },
+    applyStallPenaltyLine() {
+      if (status !== "active") throw new TtrmError("execute", "input session is not active");
+      disableConformance();
+      const overflow = board.state.at(-1).some(cell => cell !== null);
+      board.state.pop();
+      board.state.unshift(penaltyRow());
+      stallPenaltyRows += 1;
+      engine.falling.location[1] += 1;
+      engine.falling.highestY += 1;
+      recordBoard(engine.frame);
+      recordActive(engine.frame);
+      // No Lockout: occupied hidden rows do not end a TETR.IO input round.
+      // The current piece rises with the stack and remains playable. Ordinary
+      // next-piece blockout (including Clutch) stays owned by Engine; only
+      // exhausting the full board buffer is terminal at this external rise.
+      return { rows: stallPenaltyRows, toppedOut: overflow || stallPenaltyRows >= board.state.length };
+    },
+    removeStallPenaltyLine() {
+      if (status !== "active" || stallPenaltyRows === 0) return { rows: stallPenaltyRows };
+      if (!board.state[0].every(cell => cell?.stallPenalty === true)) {
+        throw new TtrmError("execute", "STALL PENALTY floor identity was lost");
+      }
+      board.state.shift();
+      board.state.push(emptyRow());
+      stallPenaltyRows -= 1;
+      engine.falling.location[1] -= 1;
+      engine.falling.highestY -= 1;
+      recordBoard(engine.frame);
+      recordActive(engine.frame);
+      return { rows: stallPenaltyRows };
+    },
+    prepareStallForcedLock() {
+      if (status !== "active") throw new TtrmError("execute", "input session is not active");
+      disableConformance();
+      const piece = engine.falling.symbol;
+      engine.falling.rotation = engine.kickTable.spawn_rotation[piece] ?? 0;
+      engine.falling.location[0] = piece === "o" ? 4 : 3;
+      engine.falling.location[1] = board.height + 2.04 + stallPenaltyRows;
+      engine.falling.highestY = board.height + 2 + stallPenaltyRows;
+      recordActive(engine.frame);
+    },
     tick(events) {
       if (status !== "active") throw new TtrmError("execute", "input session is not active");
       const startedAt = now();
@@ -512,9 +584,9 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
           pendingFrames.push(...frames);
           confirmSenderFrames.set(key, pendingFrames);
         }
-        conformance?.beforeTick(consumed);
+        if (!externallyMutated) conformance?.beforeTick(consumed);
         engine.tick(consumed);
-        conformance?.checkBoundary();
+        if (!externallyMutated) conformance?.checkBoundary();
         executedEvents.push(...consumed);
         recordActive(engine.frame);
         processingMs += now() - startedAt;
@@ -529,7 +601,7 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
       if (status === "invalid") throw new TtrmError("execute", "invalid input session cannot be finalized");
       if (finished !== null) return structuredClone(finished);
       checkBudget();
-      conformance?.checkBoundary();
+      if (!externallyMutated) conformance?.checkBoundary();
       const terminalBoard = convertEngineBoard(engine.board.state);
       const terminalQueue = readQueueFrame(engine, engine.frame);
       recordBoard(engine.frame, terminalBoard);
@@ -553,7 +625,8 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
           attack: engine.stats.garbage.attack, sent: engine.stats.garbage.sent,
           received: receivedAtConfirm, cleared: engine.stats.garbage.cleared,
         } },
-        canonicalLockVerification: conformance === null ? null : { comparedLocks: conformance.comparedLocks, scope: "lock-and-garbage-queue", matched: true },
+        canonicalLockVerification: conformance === null || externallyMutated ? null :
+          { comparedLocks: conformance.comparedLocks, scope: "lock-and-garbage-queue", matched: true },
         initial,
         locks,
         garbageEvents,

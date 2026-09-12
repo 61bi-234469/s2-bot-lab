@@ -70,6 +70,7 @@ import {
 import { initReplayView, setReplayActive } from "./replay-view.mjs";
 import { MATCH_REPLAY_SCHEMA } from "/shared/replay-ir-validation.mjs";
 import {
+  FRAME_DURATION_MS,
   createPieceRepeat,
   dropped,
   lockSubmission,
@@ -78,7 +79,12 @@ import {
   shifted,
   shiftedToEnd,
   spawnPlacement,
+  stallLockPlacement,
+  projectStallPenaltyRows,
+  unprojectStallPenaltyPlacement,
+  isPlaceable,
 } from "./human-play.mjs";
+import { stallPenaltyProjectionTopsOut } from "/shared/stall-penalty-topout.mjs";
 import {
   INPUT_PUMP_INTERVAL_MS,
   earliestPendingInputFrame,
@@ -91,6 +97,22 @@ const BOT_SIDES = Object.freeze(["left", "right"]);
 const INPUT_EXECUTION_PROFILE = "s2-input-execution/1";
 const INPUT_MATCH_ENDPOINT = "/api/input-match";
 const INPUT_SUPPORTED_TYPES = new Set(["human", ...Object.keys(INPUT_BOT_PROFILES)]);
+/* The 1P stall penalty. Its identifiers and stored preference keys keep the
+   original `stallLock` spelling so a saved setting still loads, while the UI
+   names the group STALL PENALTY: a forced lock is only one of its two
+   penalties.
+
+   In the legacy path the poll interval is how often an armed penalty re-checks
+   a stopped match clock. Input execution enforces its deadline in the Engine
+   step loop instead. Neither paused clock produces budget frames. */
+const STALL_LOCK_POLL_MS = 100;
+const STALL_LOCK_PPS_BOUNDS = Object.freeze({ minimum: 0.1, maximum: 20 });
+const STALL_LOCK_PENALTIES = new Set(["forced-lock", "penalty-line"]);
+// The 1P start countdown. Three labels hold the round back before GO, which is
+// the first instant of play rather than a fourth wait, so a round a person is
+// on opens just under a second after its board reaches the screen.
+const START_COUNTDOWN_LABELS = Object.freeze(["3", "2", "1", "GO"]);
+const START_COUNTDOWN_STEP_MS = 300;
 const INPUT_ACTION_KEYS = Object.freeze({
   MoveLeft: "moveLeft",
   MoveRight: "moveRight",
@@ -183,6 +205,17 @@ let humanRenderRequested = false;
    shared clock rather than chained off the previous reply, because the player's
    own locks advance that clock in between. */
 let humanBotStepTimer = null;
+/* The legacy path's pending stall penalty deadline for the turn the player is
+   on. It is a timer over the match clock, so it re-arms rather than fires
+   whenever it wakes before that clock has spent the configured frames. */
+let stallLockTimer = null;
+/* The start countdown a 1P round opens behind. It holds that round between its
+   server session and its first running frame, then stays one more step to show
+   GO while play is already under way. Null whenever neither is on screen. */
+let startCountdown = null;
+/* Game actions held during the start countdown. Keyup removes an action, so
+   only keys that are physically still down at GO become frame-zero input. */
+const countdownHeldActions = new Set();
 /* Identifies the server session whose step is in flight. A new round advances
    matchGeneration, so an old request can neither block nor clear the new
    round's first step. */
@@ -227,6 +260,10 @@ elements["match-reset"].addEventListener("click", resetMatch);
 elements["match-save-replay"].addEventListener("click", saveMatchExport);
 elements["match-unlimited-turns"].addEventListener("change", syncMaxTurnsControl);
 elements["match-random-seed"].addEventListener("change", () => syncRandomSeedControl());
+elements["match-stall-lock"].addEventListener("change", () => {
+  syncStallLockControl();
+  renderExecutionScopeNotes();
+});
 /* One delegated listener rather than one per control: every setting in this row
    shows up on the disclosure's closed bar, so each of them has to refresh it. */
 elements["match-settings"].addEventListener("input", () => renderExecutionScopeNotes());
@@ -258,6 +295,7 @@ window.addEventListener("keyup", handleHumanKeyUp);
    the local clock has moved on. */
 window.addEventListener("blur", () => {
   pieceRepeat.endAll();
+  countdownHeldActions.clear();
   clearInputEvents({ releaseHeld: true });
   requestInputPump(0);
 });
@@ -266,6 +304,7 @@ document.addEventListener("visibilitychange", () => {
 });
 syncMaxTurnsControl();
 syncRandomSeedControl();
+syncStallLockControl();
 syncHumanMatchControls();
 syncFairComparisonControls();
 /* The export buttons ship disabled in the markup, so their reason has to be
@@ -1270,6 +1309,7 @@ async function performStartMatch({ excludedRandomSeed = null } = {}) {
   clearInputEvents();
   inputMatchState = null;
   cancelHumanMatchBotStep();
+  cancelStartCountdown();
   stopHumanPlay();
   matchClock = createMatchClock(performance.now());
   matchRoundStatus = "";
@@ -1366,6 +1406,10 @@ function startHumanGame(view) {
     active: null,
     holdUsed: false,
     pending: false,
+    turnStartedAtMs: 0,
+    refereeBoard: player.board,
+    stallPenaltyRows: 0,
+    nonPenaltyLocks: 0,
   };
   spawnHumanPiece();
 }
@@ -1373,28 +1417,50 @@ function startHumanGame(view) {
 /* Adopts the position the server confirmed after the player's own lock. Nothing
    else can move that board: incoming garbage is only tanked by the lock itself,
    so an opponent's step never invalidates the piece being moved. */
-function adoptHumanView(view) {
-  if (human === null) return;
+function adoptHumanView(view, { penaltyLock = false } = {}) {
+  if (human === null) return false;
   const player = view.bots.find((bot) => bot.id === human.side);
-  human.board = player.board;
+  if (!penaltyLock) {
+    human.nonPenaltyLocks = (human.nonPenaltyLocks + 1) % 5;
+    if (human.nonPenaltyLocks === 0 && human.stallPenaltyRows > 0) human.stallPenaltyRows -= 1;
+  }
+  human.refereeBoard = player.board;
+  human.board = projectStallPenaltyRows(human.refereeBoard, human.stallPenaltyRows);
+  if (human.board === null) throw new Error("STALL PENALTY line overflowed the board");
   human.queue = [player.current, ...player.next];
   human.hold = player.hold;
   human.pending = false;
   human.active = null;
-  if (view.outcome.complete) requestHumanRender();
-  else spawnHumanPiece();
+  if (view.outcome.complete) {
+    requestHumanRender();
+    return false;
+  }
+  if (human.stallPenaltyRows > 0 &&
+      stallPenaltyProjectionTopsOut(human.refereeBoard, human.stallPenaltyRows)) {
+    human.pending = true;
+    requestHumanRender();
+    return true;
+  }
+  spawnHumanPiece();
+  return false;
 }
 
 function spawnHumanPiece() {
   const piece = human.queue[0] ?? null;
   human.holdUsed = false;
   human.active = piece === null ? null : spawnPlacement(placementGeometry, human.board, piece, false);
+  /* The stall penalty budget belongs to the turn rather than to the piece on
+     screen. Only a turn starting here restarts it, which is what keeps HOLD
+     from buying more time: swapping the piece leaves this reading alone. */
+  human.turnStartedAtMs = readMatchClock(matchClock, performance.now());
   if (human.active !== null) pieceRepeat.activateDasCut(humanHandling(humanControls).dcdFrames);
   requestHumanRender();
+  armStallLock();
 }
 
 function humanCanAct() {
-  return human !== null && human.active !== null && !human.pending && matchRunning && matchAutoplay;
+  return human !== null && human.active !== null && !human.pending && matchRunning &&
+    matchAutoplay && !matchCountingDown();
 }
 
 function humanMoveBy(dx) {
@@ -1465,13 +1531,95 @@ function currentHumanLockFrame() {
   return Math.max(0, Math.round(readMatchClock(matchClock, performance.now()) * 60 / 1000));
 }
 
+/* The stall penalty: the 1P side's frame budget for the turn it is on.
+ *
+ * The budget is a property of the series, read once at START, and it is spent in
+ * match-clock frames. The timer below therefore treats its own wake-up as a
+ * question rather than an answer: a paused match, or a browser that woke the
+ * callback early, re-arms instead of taking the turn away. */
+function stallLockFrames() {
+  return matchSeries?.config.stallLock.enabled === true ? 60 / matchSeries.config.stallLock.pps : null;
+}
+
+function stallLockDueAtMs(frames) {
+  return human?.turnStartedAtMs + frames * FRAME_DURATION_MS;
+}
+
+function cancelStallLock() {
+  if (stallLockTimer === null) return;
+  clearTimeout(stallLockTimer);
+  stallLockTimer = null;
+}
+
+function armStallLock() {
+  cancelStallLock();
+  // Input execution advances through every authoritative Engine frame. Its
+  // server-side step loop applies STALL PENALTY at that exact boundary; a
+  // browser timer would add request latency and could repeatedly defer while
+  // a step is in flight.
+  if (inputHumanActive()) return;
+  const frames = stallLockFrames();
+  if (frames === null || !humanCanAct()) return;
+  const remainingMs = stallLockDueAtMs(frames) - readMatchClock(matchClock, performance.now());
+  stallLockTimer = setTimeout(applyStallLock,
+    matchClock.running ? Math.max(0, remainingMs) : STALL_LOCK_POLL_MS);
+}
+
+function applyStallLock() {
+  stallLockTimer = null;
+  const frames = stallLockFrames();
+  if (frames === null || !humanCanAct()) return;
+  if (readMatchClock(matchClock, performance.now()) < stallLockDueAtMs(frames)) {
+    armStallLock();
+    return;
+  }
+  if (matchSeries.config.stallLock.penalty === "penalty-line") {
+    const nextRows = human.stallPenaltyRows + 1;
+    const board = projectStallPenaltyRows(human.refereeBoard, nextRows);
+    const active = { ...human.active, y: human.active.y + 1 };
+    if (board === null) {
+      handleMatchError(new Error("STALL PENALTY line overflowed the board"));
+      return;
+    }
+    human.stallPenaltyRows = nextRows;
+    human.board = board;
+    human.active = active;
+    if (stallPenaltyProjectionTopsOut(human.refereeBoard, nextRows)) {
+      human.pending = true;
+      requestHumanRender();
+      void submitHumanPenaltyTopOut();
+      return;
+    }
+    if (!isPlaceable(placementGeometry, board, active)) {
+      handleMatchError(new Error("STALL PENALTY line blocked the active piece"));
+      return;
+    }
+    human.turnStartedAtMs = readMatchClock(matchClock, performance.now());
+    requestHumanRender();
+    armStallLock();
+    return;
+  }
+  const forced = stallLockPlacement(placementGeometry, human.board, human.active);
+  // No spawn placement left means the board is already topped out; the ordinary
+  // spawn path owns that, so there is nothing for this deadline to lock.
+  if (forced === null) return;
+  // Keep held movement and soft-drop inputs alive across the forced lock, just
+  // like an ordinary hard drop. Their callbacks are inert while the lock is
+  // pending, then the next spawn applies the still-held inputs.
+  void submitHumanLock(forced, { penaltyLock: true });
+}
+
 async function humanHardDrop() {
   if (inputHumanActive()) {
     enqueueInputTap("hardDrop");
     return;
   }
   if (!humanCanAct()) return;
-  const landed = dropped(placementGeometry, human.board, human.active);
+  await submitHumanLock(dropped(placementGeometry, human.board, human.active));
+}
+
+async function submitHumanLock(landed, { penaltyLock = false } = {}) {
+  cancelStallLock();
   human.active = landed;
   human.pending = true;
   requestHumanRender();
@@ -1481,7 +1629,7 @@ async function humanHardDrop() {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        placement: lockSubmission(landed),
+        placement: lockSubmission(unprojectStallPenaltyPlacement(landed, human.stallPenaltyRows)),
         lockFrame: currentHumanLockFrame(),
       }),
     });
@@ -1493,8 +1641,9 @@ async function humanHardDrop() {
     if (generation !== matchGeneration) return;
     if (body.outcome.complete && !matchRunning) return;
     renderMatch(body);
-    adoptHumanView(body);
+    const penaltyTopOut = adoptHumanView(body, { penaltyLock });
     if (body.outcome.complete) finishSeriesGame(body);
+    else if (penaltyTopOut) await submitHumanPenaltyTopOut();
   } catch (error) {
     if (generation === matchGeneration) handleMatchError(error);
   }
@@ -1532,14 +1681,20 @@ function renderHumanField() {
 /* Hands the field back to the server view. Until the player stops, that side is
    drawn from the live piece state, so the last confirmed position has to be
    painted once by whoever ends the game. */
-function stopHumanPlay(view = null) {
+function stopHumanPlay(view = null, { preserveHumanBoard = false } = {}) {
+  cancelStallLock();
   pieceRepeat.endAll();
   const side = human?.side ?? null;
+  const terminalBoard = preserveHumanBoard ? human?.board ?? null : null;
   human = null;
   if (side === null || view === null) return;
   const player = view.bots.find((bot) => bot.id === side);
   if (player === undefined) return;
-  renderMatchField(elements[`match-${side}-field`], player.board, player.lastPlaced);
+  // Penalty rows are deliberately absent from the referee board. Keep the
+  // final projected board for a penalty top-out instead of repainting those
+  // rows away as soon as the terminal server view arrives.
+  renderMatchField(elements[`match-${side}-field`], terminalBoard ?? player.board,
+    terminalBoard === null ? player.lastPlaced : []);
   renderMini(elements[`match-${side}-hold`], player.hold);
   renderNextList(elements[`match-${side}-next`], player.next.slice(0, 5));
 }
@@ -1548,6 +1703,7 @@ function stopHumanPlay(view = null) {
    Settings fields remain editable, but a configured game key never falls
    through to the browser (for example, Space must not scroll the page). */
 function humanInputEnabled() {
+  if (matchCountingDown()) return false;
   if (inputHumanActive() && !matchAutoplay) return false;
   return (inputHumanActive() || human !== null) && mode === "match" && matchRunning &&
     !elements["bot-settings-dialog"].open;
@@ -1570,8 +1726,39 @@ function handleHumanKeyDown(event) {
     requestHumanMatchRestart();
     return;
   }
+  if (matchCountingDown()) {
+    if (!event.repeat) countdownHeldActions.add(action);
+    return;
+  }
   if (!humanInputEnabled()) return;
   if (event.repeat) return;
+  startHumanAction(action);
+}
+
+async function submitHumanPenaltyTopOut() {
+  cancelStallLock();
+  if (human === null) return;
+  human.pending = true;
+  requestHumanRender();
+  const generation = matchGeneration;
+  try {
+    const response = await fetch("/api/match/human-penalty-topout", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ penaltyRows: human.stallPenaltyRows }),
+    });
+    const body = await response.json();
+    if (!response.ok && body.error === "match-complete") return;
+    if (!response.ok) throw new Error(body.error ?? "STALL PENALTY top-out rejected");
+    if (generation !== matchGeneration || !matchRunning) return;
+    renderMatch(body);
+    finishSeriesGame(body);
+  } catch (error) {
+    if (generation === matchGeneration) handleMatchError(error);
+  }
+}
+
+function startHumanAction(action) {
   const handling = humanHandling(humanControls);
   if (inputHumanActive()) {
     handleInputAction(action);
@@ -1619,6 +1806,10 @@ function handleHumanKeyDown(event) {
 function handleHumanKeyUp(event) {
   if (!inputHumanActive() && human === null) return;
   const action = actionForCode(humanControls, event.code);
+  if (matchCountingDown()) {
+    if (action !== null) countdownHeldActions.delete(action);
+    return;
+  }
   if (inputHumanActive()) {
     handleInputAction(action, "keyup");
   } else if (action !== null) pieceRepeat.end(action);
@@ -1661,6 +1852,7 @@ function createMatchSeries({ excludedRandomSeed = null } = {}) {
         : readBoundedInteger("match-max-turns", 1, 10_000),
       firstTo: readBoundedInteger("match-count", 1, 100),
       preLockPreview: elements["match-pre-lock-preview"].checked,
+      stallLock: stallLockSettings(),
     },
     completed: 0,
     leftWins: 0,
@@ -1694,7 +1886,8 @@ async function startSeriesGame() {
       leftParameters: config.leftParameters,
       rightParameters: config.rightParameters,
       fairComparison: config.fairComparison,
-      ...(inputMode ? { ttrmCompatible: true, humanControls: structuredClone(humanControls) } : {}),
+      ...(inputMode ? { ttrmCompatible: true, humanControls: structuredClone(humanControls),
+        stallLock: structuredClone(config.stallLock ?? { enabled: false, pps: null, penalty: null }) } : {}),
       seed,
       maxTurns: config.maxTurns,
       firstTo: config.firstTo,
@@ -1714,6 +1907,9 @@ async function startSeriesGame() {
   matchComputeRatio = 1;
   matchComputeLimited = false;
   matchRunning = true;
+  // A round a person is on opens behind a countdown, which is the one stretch of
+  // a started round where nothing may advance yet.
+  const opensWithCountdown = body.humanSide !== null && matchAutoplay;
   if (inputMode) {
     inputMatchState = {
       sessionId: body.sessionId,
@@ -1729,14 +1925,23 @@ async function startSeriesGame() {
       pumpRequested: false,
     };
     inputEventSequence = 0;
-    elements["match-step"].disabled = false;
+    elements["match-step"].disabled = opensWithCountdown;
   } else {
     elements["match-step"].disabled = body.humanSide !== null;
     if (body.humanSide !== null) startHumanGame(body);
   }
   renderMatch(body);
+  if (opensWithCountdown) {
+    // The board is already painted and the clock is still stopped, so the round
+    // simply waits here. A RESET taken during the countdown releases it and is
+    // seen on the generation below rather than opening a match nobody is on.
+    await runStartCountdown();
+    if (generation !== matchGeneration || !matchRunning) return;
+    if (inputMode) elements["match-step"].disabled = false;
+  }
   matchClock = setMatchClockRunning(matchClock, matchAutoplay, performance.now());
   if (!matchAutoplay) return;
+  applyCountdownInputs();
   if (inputMode) {
     requestInputPump(0);
     return;
@@ -1745,7 +1950,84 @@ async function startSeriesGame() {
   // allows. A match a human is playing runs on the shared clock instead, so the
   // opponent's first lock waits for the real time that lock frame stands for.
   if (human === null) setTimeout(stepMatch, 0);
-  else scheduleHumanMatchBotStep(body);
+  else {
+    // The turn was spawned before the clock was started, and a countdown holds
+    // it in the same state a pause does. Its stall penalty budget is armed here,
+    // against the running clock, exactly as RESUME arms it.
+    armStallLock();
+    scheduleHumanMatchBotStep(body);
+  }
+}
+
+/* A round a person is on opens behind a short countdown. The match clock is
+   still stopped while it runs, so the opponent's first lock, the player's own
+   turn and the stall penalty budget all begin at GO rather than at the moment the
+   server answered the round request. */
+function runStartCountdown() {
+  cancelStartCountdown();
+  countdownHeldActions.clear();
+  return new Promise((resolve) => {
+    startCountdown = { index: 0, timer: null, resolve };
+    advanceStartCountdown();
+  });
+}
+
+/* Every label holds for one step. GO is the first instant of play rather than a
+   further wait: the round is released as it appears, and the label clears itself
+   one step later without holding anything up. */
+function advanceStartCountdown() {
+  const countdown = startCountdown;
+  if (countdown === null) return;
+  const label = START_COUNTDOWN_LABELS[countdown.index] ?? null;
+  renderStartCountdown(label);
+  if (label === null) {
+    startCountdown = null;
+    return;
+  }
+  countdown.index += 1;
+  countdown.timer = setTimeout(advanceStartCountdown, START_COUNTDOWN_STEP_MS);
+  if (countdown.index === START_COUNTDOWN_LABELS.length) releaseStartCountdown(countdown);
+}
+
+/* True only while the countdown is still holding a round back. The GO label is
+   on screen with that round already running, so it gates nothing. */
+function matchCountingDown() {
+  return startCountdown !== null && startCountdown.resolve !== null;
+}
+
+function releaseStartCountdown(countdown) {
+  const resolve = countdown.resolve;
+  if (resolve === null) return;
+  countdown.resolve = null;
+  resolve();
+}
+
+/* RESET, a fresh START and a failed round each take the arena away from the
+   countdown. The round it is holding is released rather than waited out, so its
+   start unwinds against the newer generation immediately. */
+function cancelStartCountdown() {
+  const countdown = startCountdown;
+  if (countdown === null) return;
+  startCountdown = null;
+  if (countdown.timer !== null) clearTimeout(countdown.timer);
+  renderStartCountdown(null);
+  releaseStartCountdown(countdown);
+  countdownHeldActions.clear();
+}
+
+/* Apply the keys that are still held at GO only after the match clock starts.
+   Legacy play starts its ordinary repeat handlers; TTRM INPUT records the same
+   frame-zero keydowns for the Engine-owned piece. */
+function applyCountdownInputs() {
+  const actions = [...countdownHeldActions];
+  countdownHeldActions.clear();
+  for (const action of actions) startHumanAction(action);
+}
+
+function renderStartCountdown(label) {
+  const element = elements["match-countdown"];
+  element.textContent = label ?? "";
+  element.hidden = label === null;
 }
 
 function scheduleHumanMatchBotStep(view) {
@@ -1799,6 +2081,12 @@ function enqueueInputEvent(frame, type, key, subframe = 0) {
     data: { key, subframe },
   });
   inputMatchState.pending.sort((left, right) => left.frame - right.frame || left.data.subframe - right.data.subframe || left.sequence - right.sequence);
+}
+
+function enqueueInputTap(key) {
+  const frame = currentInputEventFrame();
+  enqueueInputEvent(frame, "keydown", key);
+  enqueueInputEvent(frame + 1, "keyup", key);
 }
 
 function inputTargetFrame(manual) {
@@ -2003,7 +2291,15 @@ async function finishSeriesGame(view) {
     cancelInputPump();
     clearInputEvents();
   }
-  stopHumanPlay(view);
+  const preservePenaltyBoard = view.outcome.reason === "top-out" &&
+    (human?.stallPenaltyRows ?? 0) > 0;
+  // renderMatch() normally paints on the next animation frame. If the local
+  // penalty board were painted first, that queued terminal view would run
+  // afterwards with human === null and replace it with the referee board.
+  // Consume the terminal paint while the human view still owns this side,
+  // then make the projected penalty board the final field paint.
+  if (preservePenaltyBoard) flushMatchPaint();
+  stopHumanPlay(view, { preserveHumanBoard: preservePenaltyBoard });
   if (view.outcome.proposalResult?.status === "failure" ||
       view.outcome.reason === "proposal-failure") {
     matchAutoplay = false;
@@ -2133,6 +2429,7 @@ function handleMatchError(error) {
   matchSeries = completedInputSeries;
   if (matchSeries) matchSeries.failed = true;
   cancelHumanMatchBotStep();
+  cancelStartCountdown();
   cancelInputPump();
   clearInputEvents();
   inputMatchState = null;
@@ -2177,6 +2474,7 @@ async function resetMatch({ restartCurrentGame = false, rerollRandomSeed = false
   matchRoundStatus = "";
   matchGeneration += 1;
   cancelHumanMatchBotStep();
+  cancelStartCountdown();
   cancelInputPump();
   clearInputEvents();
   inputMatchState = null;
@@ -2229,7 +2527,11 @@ async function resetMatch({ restartCurrentGame = false, rerollRandomSeed = false
    series ends it opens a fresh series. A random-seed restart rerolls the
    current game, while a manual seed keeps its deterministic queue. */
 function requestHumanMatchRestart() {
-  if (humanMatchRestartInFlight !== null) return;
+  // A previous Reset operation may itself be waiting on the replacement
+  // match's countdown. Permit another deliberate Reset in that countdown to
+  // supersede it; outside a countdown the in-flight guard still prevents
+  // duplicate restart work.
+  if (humanMatchRestartInFlight !== null && !matchCountingDown()) return;
   const operation = activateHumanMatchReset();
   humanMatchRestartInFlight = operation;
   operation.catch(handleMatchError).finally(() => {
@@ -2238,6 +2540,20 @@ function requestHumanMatchRestart() {
 }
 
 async function activateHumanMatchReset() {
+  if (matchCountingDown()) {
+    // Tear down first: resetMatch synchronously invalidates the generation and
+    // cancels the visible countdown before its close request is awaited. The
+    // original start then unwinds, after which a genuinely fresh series can be
+    // opened instead of replaying the same FT-series game.
+    const interruptedStart = matchStartInFlight;
+    const previousSeed = matchSeries?.currentSeed ?? lastStartedMatchSeed;
+    const excludePreviousSeed = elements["match-random-seed"].checked;
+    elements["match-status"].textContent = "RESTARTING";
+    await resetMatch();
+    if (interruptedStart !== null) await interruptedStart;
+    await startMatch({ excludedRandomSeed: excludePreviousSeed ? previousSeed : null });
+    return;
+  }
   if (matchStartInFlight !== null) await matchStartInFlight;
   if (matchRoundFinalization !== null) await matchRoundFinalization;
   if (!matchSeriesActive()) {
@@ -2268,6 +2584,7 @@ function pauseMatchAutoplay() {
   if (!matchAutoplay) return;
   matchAutoplay = false;
   cancelHumanMatchBotStep();
+  cancelStallLock();
   if (inputModeActive()) {
     cancelInputPump();
     clearInputEvents({ releaseHeld: true });
@@ -2305,11 +2622,15 @@ function toggleMatchRun() {
     return;
   }
   if (inputModeActive()) {
+    armStallLock();
     requestInputPump(0);
     return;
   }
   if (human === null) stepMatch();
-  else scheduleHumanMatchBotStep(lastMatchView);
+  else {
+    armStallLock();
+    scheduleHumanMatchBotStep(lastMatchView);
+  }
 }
 
 /* The round line survives a pause: a trailing step still lands after the press,
@@ -2366,9 +2687,11 @@ function renderMatchSaveButton() {
     : matchRoundFinalization !== null ? "対局の記録をまとめています"
     : "";
   if (format === "ttrm") {
+    const stallReplayDisabled = inputModeActive() && matchSeries?.config.stallLock.enabled === true;
     const ready = (matchSeries?.rounds ?? []).some((round) => round.executedTtrm?.text);
     setMatchExportButton(button,
       busy !== "" ? busy
+        : stallReplayDisabled ? "STALL PENALTYを使用したINPUT対局は .ttrm に保存できません"
         : !ready ? "保存できる完了ラウンドがまだありません。TTRM INPUT はround終了後に保存できます"
         : "",
       "実際に消費した入力を検証済みの .ttrm として保存します");
@@ -2453,6 +2776,7 @@ function renderEmptyMatchFields() {
 
 async function saveMatchTtrm() {
   if (matchSaveInFlight || matchSeries === null || !inputModeActive()) return;
+  if (matchSeries.config.stallLock.enabled) return;
   matchSaveInFlight = true;
   setMatchExportMessage(null, "EXPORTING .ttrm …");
   renderMatchSaveButton();
@@ -2536,9 +2860,11 @@ function setMatchSettingsDisabled(disabled) {
   for (const id of [
     "left-bot", "right-bot", "left-bot-settings", "right-bot-settings",
     "match-fair-comparison", "match-pre-lock-preview", "match-ttrm-compatible", "match-seed", "match-max-turns", "match-unlimited-turns", "match-count",
+    "match-stall-lock",
   ]) elements[id].disabled = disabled;
   elements["match-max-turns"].disabled = disabled || elements["match-unlimited-turns"].checked;
   syncRandomSeedControl(disabled);
+  syncStallLockControl(disabled);
   syncHumanMatchControls(disabled);
 }
 
@@ -2593,7 +2919,9 @@ function renderExecutionScopeNotes() {
   const inputMode = inputModeSelected() || (matchRunning && inputModeActive());
   const playing = selectedHumanSide() !== null;
   elements["match-execution-note"].textContent = inputMode
-    ? "TTRM INPUT：実入力を60Hzで消費し、EXPORT は .ttrm を保存します。"
+    ? elements["match-stall-lock"].checked
+      ? "TTRM INPUT：STALL PENALTYを適用します。この設定の対局は .ttrm 保存対象外です。"
+      : "TTRM INPUT：実入力を60Hzで消費し、EXPORT は .ttrm を保存します。"
     : "従来モード：最終配置で進行し、EXPORT は .json を保存します。";
   elements["match-legacy-settings"].dataset.inactive = String(inputMode);
   elements["match-legacy-note"].textContent = inputMode
@@ -2601,6 +2929,16 @@ function renderExecutionScopeNotes() {
     : playing
       ? "You (1P) 参加中は FAIR COMPARISON を使いません。"
       : "TTRM INPUT では適用されません。";
+  elements["match-stall-lock-settings"].dataset.inactive = String(!playing);
+  const penaltyLineNote = inputMode
+    ? "ONの間、指定PPSを下回ると最下段へ消去不能ラインを1段追加します。通常接地5回ごとに1段除去し、攻撃・B2B・RENに影響しません。STALL有効のINPUT対局は .ttrm 保存対象外です。"
+    : "ONの間、指定PPSを下回ると最下段へ消去不能ラインを1段追加します。通常接地5回ごとに1段除去し、攻撃・B2B・RENに影響しません。";
+  const forcedLockNote = inputMode
+    ? "ONの間、指定PPSを下回る前にスポーン位置へ強制接地します。HOLDしても手番の時間は延びません。STALL有効のINPUT対局は .ttrm 保存対象外です。"
+    : "ONの間、指定PPSを下回る前にスポーン位置へ強制接地します。HOLDしても手番の時間は延びません。";
+  elements["match-stall-lock-note"].textContent = playing
+      ? elements["match-stall-lock-penalty"].value === "penalty-line" ? penaltyLineNote : forcedLockNote
+      : "LEFT BOT に You (1P) を選んだときだけ使います。Bot側には適用しません。";
   elements["match-settings-state"].textContent = matchSettingsStateText(inputMode);
 }
 
@@ -2615,8 +2953,11 @@ function matchSettingsStateText(inputMode) {
     `MAX ${elements["match-unlimited-turns"].checked ? "∞" : elements["match-max-turns"].value}`,
     `FT${elements["match-count"].value}`,
   ];
-  if (inputMode) return parts.join(" · ");
-  return [...parts, `FAIR ${onOff(elements["match-fair-comparison"])}`, `GHOST ${onOff(elements["match-pre-lock-preview"])}`].join(" · ");
+  const penalty = elements["match-stall-lock-penalty"].value === "penalty-line" ? "LINE" : "LOCK";
+  const stall = elements["match-stall-lock"].checked ? `${elements["match-stall-lock-pps"].value} PPS ${penalty}` : "OFF";
+  if (inputMode) return [...parts, `STALL ${stall}`].join(" · ");
+  return [...parts, `FAIR ${onOff(elements["match-fair-comparison"])}`,
+    `GHOST ${onOff(elements["match-pre-lock-preview"])}`, `STALL ${stall}`].join(" · ");
 }
 
 function onOff(checkbox) {
@@ -2625,6 +2966,30 @@ function onOff(checkbox) {
 
 function syncMaxTurnsControl() {
   elements["match-max-turns"].disabled = elements["match-unlimited-turns"].checked;
+}
+
+/* The pace field is meaningless while the switch above it is off, so it follows
+   that switch the way MAX TURNS follows its own infinity toggle. */
+function syncStallLockControl(matchSettingsDisabled = false) {
+  elements["match-stall-lock-pps"].disabled =
+    matchSettingsDisabled || !elements["match-stall-lock"].checked;
+  elements["match-stall-lock-penalty"].disabled =
+    matchSettingsDisabled || !elements["match-stall-lock"].checked;
+}
+
+/* Read once, when a series starts: a pace changed mid-round would not be the
+   threshold the pieces already on that board were played under. */
+function stallLockSettings() {
+  const enabled = elements["match-stall-lock"].checked;
+  const penalty = elements["match-stall-lock-penalty"].value;
+  if (enabled && !STALL_LOCK_PENALTIES.has(penalty)) throw new Error("unsupported STALL PENALTY option");
+  return {
+    enabled,
+    pps: enabled
+      ? readBoundedNumber("match-stall-lock-pps", STALL_LOCK_PPS_BOUNDS.minimum, STALL_LOCK_PPS_BOUNDS.maximum)
+      : null,
+    penalty: enabled ? penalty : null,
+  };
 }
 
 function syncRandomSeedControl(matchSettingsDisabled = false) {
@@ -2663,6 +3028,14 @@ function readBoundedInteger(id, minimum, maximum) {
   const value = Number(elements[id].value);
   if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
     throw new Error(`${id} must be an integer from ${minimum} to ${maximum}`);
+  }
+  return value;
+}
+
+function readBoundedNumber(id, minimum, maximum) {
+  const value = Number(elements[id].value);
+  if (!Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new Error(`${id} must be a number from ${minimum} to ${maximum}`);
   }
   return value;
 }

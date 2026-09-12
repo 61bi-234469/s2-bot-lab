@@ -53,6 +53,13 @@ test("values this build no longer recognises are dropped rather than applied", (
   });
 });
 
+test("a saved frame-based STALL LOCK value is not reinterpreted as PPS", () => {
+  const preferences = sanitizePreferences({
+    controls: { "match-stall-lock-frames": "60", "match-stall-lock-pps": "2.5" },
+  }, normalizeBotParameters);
+  assert.deepEqual(preferences.controls, { "match-stall-lock-pps": "2.5" });
+});
+
 test("the 1P input settings are sanitized by the module that owns them", () => {
   const seen = [];
   const sanitize = (input) => {

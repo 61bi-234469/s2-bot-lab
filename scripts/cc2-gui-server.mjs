@@ -64,6 +64,7 @@ import {
 import { runBotProposals } from "../src-js/bot-proposal-runner.mjs";
 import { createLiveMatchMutationQueue } from "../src-js/live-match-mutation.mjs";
 import { realtimeDeadlineDelayMs, realtimeScheduledLockFrame } from "../src-js/realtime-match-pacing.mjs";
+import { stallPenaltyProjectionTopsOut } from "../src-js/stall-penalty-topout.mjs";
 import { calculatePlayerMetrics } from "../cc2-gui/player-metrics.mjs";
 import { botParameterCapability, fairComparisonBotParameters, normalizeBotParameters } from "../src-js/bot-parameters.mjs";
 import { loadS2Config, s2ConfigArguments } from "../src-js/cc2-s2-config.mjs";
@@ -189,6 +190,7 @@ const SHARED_MODULES = new Map([
   ["/shared/input-bot-contract.mjs", "../src-js/input-bot-contract.mjs"],
   ["/shared/bot-parameters.mjs", "../src-js/bot-parameters.mjs"],
   ["/shared/bot-match-options.mjs", "../src-js/bot-match-options.mjs"],
+  ["/shared/stall-penalty-topout.mjs", "../src-js/stall-penalty-topout.mjs"],
   ["/shared/pieces.mjs", "../src-js/replay/pieces.mjs"],
   ["/shared/replay-garbage.mjs", "../src-js/replay/replay-garbage.mjs"],
   ["/shared/replay-timeline.mjs", "../src-js/replay/replay-timeline.mjs"],
@@ -375,6 +377,19 @@ const server = createServer(async (request, response) => {
       if (outcome.complete) return sendJson(response, 409, { error: "match-complete", outcome });
       const view = await withMatchMutation(() => commitHumanLock(session, body.placement, requestedFrame));
       return sendJson(response, 200, view);
+    }
+    if (request.method === "POST" && request.url === "/api/match/human-penalty-topout") {
+      if (matchSession === null) return sendJson(response, 409, { error: "match-not-started" });
+      const session = matchSession;
+      if (session.humanSide === null) return sendJson(response, 409, { error: "no-human-player" });
+      const body = await readJson(request);
+      try {
+        const view = await withMatchMutation(() => commitHumanPenaltyTopOut(session, body.penaltyRows));
+        await closeCc2MatchSessions(session);
+        return sendJson(response, 200, view);
+      } catch (error) {
+        return sendJson(response, 422, { error: error instanceof Error ? error.message : String(error) });
+      }
     }
     if (request.method === "POST" && request.url === "/api/match/close") {
       await readJson(request);
@@ -759,6 +774,23 @@ function commitHumanLock(session, placement, requestedFrame) {
   appendMatchLocks(session.recording, before, after, [submission]);
   session.match = after;
   const view = matchView(session, [submission]);
+  finalizeMatchRecording(session, view.outcome);
+  return view;
+}
+
+function commitHumanPenaltyTopOut(session, penaltyRows) {
+  const currentView = matchView(session);
+  if (currentView.outcome.complete) throw new Error("match-complete");
+  const player = currentView.bots.find((bot) => bot.id === session.humanSide);
+  if (!stallPenaltyProjectionTopsOut(player.board, penaltyRows)) {
+    throw new Error("stall penalty rows do not top out the player");
+  }
+  session.forcedOutcome = matchOutcome(
+    currentView.bots.map((bot) => bot.id === session.humanSide ? { ...bot, toppedOut: true } : bot),
+    session.match.turnNumber,
+    session.config.maxTurns,
+  );
+  const view = matchView(session);
   finalizeMatchRecording(session, view.outcome);
   return view;
 }

@@ -18,6 +18,7 @@ export const VISIBLE_ROWS = 20;
 // visible field, matching where the queue hands a piece over.
 export const SPAWN_ROW = VISIBLE_ROWS;
 export const FRAME_DURATION_MS = 1000 / 60;
+export const STALL_PENALTY_CELL = "P";
 
 const NO_ROTATION = Object.freeze({ lastInputWasRotation: false, kickIndex: null });
 const ROTATION_INDEX = Object.freeze({ spawn: 0, right: 1, reverse: 2, left: 3 });
@@ -130,6 +131,42 @@ export function rotated(geometry, board, placement, amount) {
     if (isPlaceable(geometry, board, kicked)) return kicked;
   }
   return null;
+}
+
+/**
+ * The placement the forced-lock stall penalty uses when a piece has been held
+ * past its frame budget.
+ *
+ * The forced lock is deliberately not a function of where the player had moved
+ * the piece to: it is the placement the queue handed over — spawn column, spawn
+ * rotation — dropped straight down. Reading the piece back out of the live
+ * placement keeps a HOLD swap's piece and its `usedHold` flag, so the lock is
+ * still the one the referee can witness, while nothing the player did to the
+ * piece before the deadline changes where it lands.
+ *
+ * `null` means the piece no longer has a spawn placement on this board, which
+ * is the same top-out condition an ordinary spawn reports.
+ */
+export function stallLockPlacement(geometry, board, placement) {
+  const anchor = spawnPlacement(geometry, board, placement.piece, placement.usedHold);
+  return anchor === null ? null : dropped(geometry, board, anchor);
+}
+
+/** Adds an indestructible local floor without exposing it to the Simulator. */
+export function projectStallPenaltyRows(board, count) {
+  if (!Number.isSafeInteger(count) || count < 0 || count >= BOARD_HEIGHT) {
+    throw new Error("stall penalty row count is out of range");
+  }
+  if (board.slice(BOARD_HEIGHT - count).some((row) => row.some((cell) => cell !== null))) return null;
+  return [
+    ...Array.from({ length: count }, () => Array(BOARD_WIDTH).fill(STALL_PENALTY_CELL)),
+    ...board.slice(0, BOARD_HEIGHT - count).map((row) => [...row]),
+  ];
+}
+
+/** Converts a placement above the local penalty floor back to referee space. */
+export function unprojectStallPenaltyPlacement(placement, count) {
+  return { ...placement, y: placement.y - count };
 }
 
 /** The placement payload `/api/match/human-lock` accepts. */
