@@ -139,7 +139,7 @@ function harness() {
     // No start countdown is open here: these are the rules of a round already
     // under way, so the production countdown state simply reports none.
     startCountdown: null,
-    elements: { 'match-step': {}, 'bot-settings-dialog': { open: false } },
+    elements: { 'match-step': {}, 'bot-settings-dialog': { open: false }, 'help-dialog': { open: false } },
     setTimeout: () => 1, clearTimeout: () => {}, INPUT_MATCH_ENDPOINT: '/api/input-match',
     renderMatch: body => { context.lastMatchView = body; }, finishSeriesGame: () => {},
     armStallLock() {}, cancelStallLock() {}, cancelInputPump() {},
