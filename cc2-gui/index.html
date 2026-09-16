@@ -12,21 +12,18 @@
   <main class="shell">
     <header class="masthead">
       <div>
-        <p class="eyebrow">TETR.IO SEASON 2 · LOCAL</p>
+        <p class="eyebrow">TETR.IO SEASON 2</p>
         <h1>s2-bot-lab</h1>
-        <p class="subtitle">Botの着手を、TETR.IO Season 2 のルールで検証するローカルGUI</p>
+        <p class="subtitle">Botの着手を、TETR.IO Season 2 のルールで検証するGUI</p>
       </div>
-      <div class="engine-status" id="engine-status" data-state="idle">
-        <span class="status-light"></span>
-        <span id="status-text">READY</span>
+      <div class="header-actions">
+        <button class="help-button" id="help-button" type="button" aria-haspopup="dialog" aria-controls="help-dialog">? HELP</button>
+        <div class="engine-status" id="engine-status" data-state="idle">
+          <span class="status-light"></span>
+          <span id="status-text">READY</span>
+        </div>
       </div>
     </header>
-
-    <section class="rule-boundary" aria-label="ルールに関する注意">
-      <strong>ABOUT</strong>
-      <span>Botが選ぶのは「どこに置くか」だけです。ライン消去・攻撃・B2B・REN・相殺・せり上がりは、すべてS2 Simulator（TETR.IO Season 2 のルール再現）が判定します。Raw CC2とchouhy forkは、探索を固定して結果が毎回同じになるようにした別々のBotです。</span>
-      <em title="回転やキックの入力手順までは再現していないため、スピン判定など一部はS2 Simulatorの独自判定に依存します">S2 AUTHORITY: PROVISIONAL</em>
-    </section>
 
     <nav class="mode-tabs" aria-label="表示モード">
       <div class="mode-tablist" role="tablist">
@@ -166,7 +163,6 @@
           <span id="candidate-status">READY</span>
         </div>
         <div class="candidate-list" id="candidate-list"></div>
-        <p class="candidate-note">選択中のANALYSIS BOTが返した候補です。並びはBotが返した順で、クリックすると盤面のプレビューが切り替わり、「提案を適用」で確定します。数値はS2 Simulatorで検証した結果で、検証できなかった候補は理由を表示したまま選べません。Raw CC2とchouhy forkは実際に指す1手しか返さないため、候補は1行だけになります。</p>
       </section>
     </div>
 
@@ -357,12 +353,7 @@
             <dl class="match-metrics" id="match-right-metrics" aria-label="Right bot detailed metrics"></dl>
           </article>
         </div>
-        <p class="match-note" id="match-human-note">LEFT BOTで <strong>You (1P)</strong> を選ぶと自分で対戦できます。ラウンドは 3・2・1・GO の約1秒のカウントダウンで始まり、カウント中は対局クロックが止まっているため、相手Botの手番も自分の持ち時間も進みません。操作は ← → 移動、↓ ソフトドロップ、Space ハードドロップ、Z/X 回転、A 180度回転、C ホールド、Esc リセット。キー割り当てと操作感（DAS・ARR・DCD・SDF）は SETTINGS で変更でき、変更は次のラウンドから反映されます。TTRM INPUT では自然落下があり、操作感は Engine 側で処理します。</p>
-        <p class="match-note">MATCH SETTINGS 最下段の <strong>STALL PENALTY</strong> をONにすると、両方の実行方式の1P（You）へ指定PPS（初期値2 PPS＝1ミノ30F）でストール判定を行います。ペナルティは「消去不能ラインを1段追加」（初期値）または「スポーン位置へ強制接地」から選べます。ライン方式では通常接地5回ごとに最下段のペナルティラインを1段除去し、その除去は火力・B2B・RENへ影響しません。持ち時間は対局クロックで減るため、一時停止中は進みません。設定はSTART時に固定し、ブラウザに保存します。STALL PENALTYを有効にしたTTRM INPUT対局は .ttrm 保存対象外です。</p>
-        <p class="match-note" id="match-bot-note">START MATCH で対局が始まります。もう一度押すと一時停止、さらに押すと再開します。左右のBotは1つの共通クロックで進みます。探索条件はBotごとの SETTINGS で設定します。SELECTION（探索数）と THINK TIME（探索時間）は少なくとも一方をONにする必要があり、先に達した方で探索を打ち切ります。THINK TIME は端末やブラウザの状態で結果が変わるため、既定はOFFです。PPS をOFFにすると探索が終わり次第すぐ置きます。FAIR COMPARISON をONにすると、CC2系のBotを SELECTION 512・1 PPS に揃え、探索を順番に実行して条件差をなくします。</p>
-        <p class="match-note">実行方式は2つあります。<strong>固定探索モード</strong>（TTRM INPUT がOFF）は同じSEEDで再現でき、EXPORT では1手目以降の .json を保存します。<strong>TTRM INPUT</strong> は実時間で進み、実際の入力と探索完了時刻が結果に影響します。各BotのPPS設定に沿って動き（PPSがOFFなら準備ができ次第入力、探索や入力経路が間に合わない場合は指定速度を下回ります）、FAIR COMPARISON は適用しません。QUEUE DEPTH は最大15（current＋NEXT 14）で、ONにした時点で保存値も15に切り下げます。PRE-LOCK PREVIEW は使いません。同じSEEDでも固定探索モードとはミノ列・ガベージ列・終局条件が異なります。round 終了後、EXPORT で実際に消費した入力を .ttrm として保存できます。EXPORT の保存ボタンは1つで、選んだ実行方式に応じて保存形式が決まります。</p>
-        <p class="match-note">TTRM INPUT が使えるのは Raw CC2、chouhy、CC2 S2 F14、current champion 同士、または左側の You (1P) との組み合わせです。ONの間、対応しないBotは LEFT/RIGHT BOT の一覧でグレーアウトし、選べません。非対応のBotを選んだままONにした場合は、開始時に理由を表示します。切替状態と個別設定はブラウザに保存されます。</p>
-        <p class="match-note">お邪魔ゲージは攻撃の塊ごとに区切り、相殺・せり上がり後の残り段数を表示します。S2では塊の中の穴は同じ列に揃いますが、位置はせり上がるまで分かりません。サージ成分は3つの攻撃に分かれます（相殺で減る場合があります）。CNLは実際に相殺したお邪魔の段数です。TTRM INPUT では SCORE（配置評価点）は表示されません。入力経路の探索予算を使い切った場合は無操作で待機し、自然落下と対局を続行します。自然固定や盤面変化後に再探索し、実際のトップアウトで勝敗を決めます。その他の実行エラーでは対局を中止します。低PPS設定でも重力で先に自然接地する場合があり、その接地を記録して続行します。</p>
+        <p class="match-note" id="match-bot-note" hidden></p>
       </section>
     </div>
 
@@ -472,7 +463,6 @@
             <dl class="match-metrics" id="replay-right-metrics" aria-label="Right player detailed metrics"></dl>
           </article>
         </div>
-        <p class="match-note" id="replay-note">TETR.IOのリプレイファイルを読み込むと、記録された操作をそのまま再生し、対戦画面と同じ2面で表示します。タイムラインは左右共通の時間軸で、下のマーカーは左プレイヤー基準（赤＝せり上がったガベージ、緑＝相殺したガベージ）です。◀◀ / ▶▶ は左プレイヤーの手番送りで、接地直前の姿勢で止まります。Space で再生・一時停止、← → で手番送り。ガベージの数値とゲージは再生から求めた値で、TETR.IO の集計値そのものではありません。</p>
       </section>
     </div>
 
@@ -495,10 +485,38 @@
       </form>
     </dialog>
 
-    <footer>
-      <span id="engine-version">Cold Clear 2 · 接続待ち</span>
-      <span>表示は上から20行（内部の盤面は40行）</span>
-    </footer>
+    <dialog id="help-dialog" class="help-dialog" aria-labelledby="help-dialog-title">
+      <form method="dialog">
+        <header>
+          <div>
+            <p class="deck-label">HELP</p>
+            <h2 id="help-dialog-title">使い方</h2>
+          </div>
+          <button class="dialog-close" value="cancel" formmethod="dialog" aria-label="ヘルプを閉じる">×</button>
+        </header>
+        <div class="help-dialog-body">
+          <section>
+            <h3>このアプリについて</h3>
+            <p>Botが決めるのは「どこに置くか」だけです。ライン消去・攻撃・B2B・REN・相殺・せり上がりの判定は、すべてTETR.IO Season 2 のルールを再現したSimulatorが行います。回転やキックの入力手順そのものは再現していないため、スピン判定の一部はSimulator側の独自判定に依存します。</p>
+          </section>
+          <section>
+            <h3>SINGLE ANALYSIS（1手解析）</h3>
+            <p>ANALYSIS BOTを選び「考える」を押すと、その局面での1手を提案します。「候補」で複数の候補手を一覧表示でき、クリックすると盤面プレビューが切り替わり、「提案を適用」で確定します。「自動再生」は提案の適用を繰り返し、「リセット」で盤面を初期化します。候補の数値はSimulatorで検証済みのものだけが表示され、検証できなかった候補は理由付きで選べません。Raw CC2とchouhy forkは実際に指す1手しか返さないため、候補は1行だけになります。</p>
+          </section>
+          <section>
+            <h3>BOT vs BOT / 1P（対戦）</h3>
+            <p>LEFT BOTとRIGHT BOTを選び、START MATCHで対局を開始します。もう一度押すと一時停止、さらに押すと再開します。STEPで1手だけ進めることもできます。LEFT BOTで「You (1P)」を選ぶと自分でプレイできます（← → 移動、↓ ソフトドロップ、Space ハードドロップ、Z/X 回転、A 180度回転、C ホールド、Esc リセット）。キー割り当てや操作感（DAS・ARR・DCD・SDF）はSETTINGSから変更できます。</p>
+            <p>実行方式は2つあります。<strong>TTRM INPUT</strong>（既定でON）は実際の入力と経過時間で進み、対局後に <code>.ttrm</code> として保存できます。OFFにすると<strong>固定探索モード</strong>になり、同じSEEDで再現できる <code>.json</code> として保存できます。TTRM INPUTで使えるBotの組み合わせは限られており、使えないBotはLEFT/RIGHT BOTの一覧でグレーアウトします。</p>
+            <p>MATCH SETTINGSでは、対局条件（SEED・MAX TURNS・FIRST TOなど）に加えて、1P向けのハンデを設定できます。「1P INITIAL GARBAGE」はランダムな地形を積んだ状態から始めるハンデ、「STALL PENALTY」はどちらの実行方式でも使え、指定したペース（PPS）を下回ると自動でペナルティを課す設定です。どちらか一方でもONにした対局は <code>.ttrm</code> として保存できません。各Botの探索条件（SELECTION・THINK TIME・PPSなど）はBotごとのSETTINGSボタンから設定します。</p>
+          </section>
+          <section>
+            <h3>REPLAY（リプレイ再生）</h3>
+            <p><code>.ttrm</code>または<code>.json</code>ファイルを読み込むと、記録された対局をそのまま再生できます。PLAYで再生・一時停止、◀◀ / ▶▶ で手番送り、SPEEDで再生速度を変更できます。タイムライン下のマーカーは赤＝せり上がったガベージ、緑＝相殺したガベージです。表示されるガベージの数値は再生から計算した値で、TETR.IOの集計値そのものではありません。</p>
+          </section>
+        </div>
+      </form>
+    </dialog>
+
   </main>
   <script type="module" src="app.mjs"></script>
 </body>

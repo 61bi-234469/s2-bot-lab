@@ -244,6 +244,7 @@ elements["analysis-bot"].addEventListener("change", () => {
   clearAnalysisProposal();
   renderAnalysisEngineIdentity();
 });
+elements["help-button"].addEventListener("click", () => elements["help-dialog"].showModal());
 elements["think-button"].addEventListener("click", think);
 elements["candidates-button"].addEventListener("click", toggleCandidates);
 /* Changing the width while the list is open reloads it, because the number on
@@ -442,7 +443,8 @@ async function loadBotCapabilities() {
   syncInputBotOptions();
   const unavailable = [...byId.values()].filter((bot) => bot.available === false);
   if (unavailable.length > 0) {
-    elements["match-bot-note"].textContent += `　現在使えないBot: ${unavailable.map((bot) => `${bot.label}（${bot.reason}）`).join("、")}`;
+    elements["match-bot-note"].hidden = false;
+    elements["match-bot-note"].textContent = `現在使えないBot: ${unavailable.map((bot) => `${bot.label}（${bot.reason}）`).join("、")}`;
   }
   renderAnalysisEngineIdentity();
   for (const side of BOT_SIDES) renderBotSettingsSummary(side);
@@ -926,12 +928,10 @@ async function think() {
     const clear = clearLabel(lock.spin, lock.lines, lock.perfectClear) || "NO CLEAR";
     const cc2Diagnostic = engine === "s2-simple" ? "" : ` · CC2 label ${pendingMove.spin}`;
     if (engine === "s2-simple") {
-      elements["engine-version"].textContent = "S2 placement bot · final-placement depth 1";
       elements["nodes-value"].textContent = compact(s2.generatedMoves);
       elements["nps-value"].textContent = "—";
     } else {
       const info = body.suggestion.move_info;
-      elements["engine-version"].textContent = `${body.engine.label} · ${body.info.version} · ${body.engine.commit.slice(0, 7)}`;
       elements["nodes-value"].textContent = compact(info.nodes);
       elements["nps-value"].textContent = Number.isFinite(info.nps) ? compact(Math.round(info.nps)) : "—";
     }
@@ -1710,7 +1710,7 @@ function humanInputEnabled() {
   if (matchCountingDown()) return false;
   if (inputHumanActive() && !matchAutoplay) return false;
   return (inputHumanActive() || human !== null) && mode === "match" && matchRunning &&
-    !elements["bot-settings-dialog"].open;
+    !elements["bot-settings-dialog"].open && !elements["help-dialog"].open;
 }
 
 function isKeyboardEditingTarget(target) {

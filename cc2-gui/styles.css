@@ -29,22 +29,20 @@ body {
 button, select, input, h1, h2, p, time { font-family: var(--mono); }
 
 .shell { width: min(1120px, 100%); margin: 0 auto; padding: 18px clamp(10px, 3vw, 28px) 14px; }
-.masthead, footer { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
+.masthead { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
 .masthead { padding-bottom: 10px; border-bottom: 1px solid var(--line); }
 .eyebrow, .deck-label, h2 { margin: 0; color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: .14em; }
 h1 { margin: 3px 0 0; font-size: clamp(17px, 2.4vw, 22px); font-weight: 700; letter-spacing: .1em; }
 /* The prompt marker is the whole masthead ornament. */
 h1::before { content: "> "; color: var(--green); }
 .subtitle { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
+.header-actions { display: flex; align-items: center; gap: 8px; }
+.help-button { padding: 4px 10px; font-size: 11px; }
 .engine-status { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border: 1px solid var(--line); color: var(--muted); font-size: 11px; letter-spacing: .1em; }
 .status-light { width: 7px; height: 7px; background: #4a504a; }
 .engine-status[data-state="thinking"] .status-light { background: var(--accent); }
 .engine-status[data-state="ready"] .status-light { background: var(--green); }
 .engine-status[data-state="error"] .status-light { background: var(--red); }
-
-.rule-boundary { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; margin-top: 12px; padding: 7px 9px; border: 1px solid var(--line); border-left: 2px solid var(--accent); background: var(--panel); color: var(--muted); font-size: 11px; }
-.rule-boundary strong, .rule-boundary em { color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: .1em; font-style: normal; }
-.rule-boundary em { color: var(--red); }
 
 /* Mode tabs. The single-bot analysis view and the Bot vs Bot arena are two
    modes of the same page, so only the selected panel is in the document flow. */
@@ -163,7 +161,6 @@ button.quiet { border-color: var(--line-dim); background: transparent; color: va
 .think-control { grid-column: 1 / -1; display: grid; grid-template-columns: auto 1fr; gap: 11px; align-items: center; color: var(--muted); font-size: 10px; letter-spacing: .08em; }
 #reset-button { grid-column: 1 / -1; }
 input[type="range"] { accent-color: var(--accent); width: 100%; }
-footer { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line-dim); color: #4f554f; font-size: 10px; }
 
 /* The proposer's ranked root placements. Each row draws the same 20 visible
    rows the main field draws, at thumbnail scale, so a candidate is read against
@@ -187,7 +184,6 @@ footer { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line-di
 .candidate-facts .candidate-score { color: var(--cyan); }
 .candidate-facts .candidate-reason { color: var(--red); }
 .candidate-item:disabled .candidate-thumb { opacity: .4; }
-.candidate-note { margin: 9px 0 0; color: #565c56; font-size: 10px; line-height: 1.5; }
 
 .match-deck { margin-top: 14px; padding: 13px 15px; border: 1px solid var(--line); background: var(--panel); }
 .match-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
@@ -393,6 +389,17 @@ input[type="number"]:disabled { border-color: var(--line-dim); color: #4a504a; c
 .bot-parameter-control .key-binding:focus { border-color: var(--accent); color: var(--accent); }
 .dialog-actions { display: flex; justify-content: end; gap: 6px; padding: 10px 15px 14px; border-top: 1px solid var(--line); }
 
+.help-dialog { width: min(560px, calc(100vw - 28px)); padding: 0; border: 1px solid var(--line); background: #0d0f0d; color: var(--text); }
+.help-dialog::backdrop { background: rgba(0,0,0,.8); }
+.help-dialog form { margin: 0; }
+.help-dialog header { display: flex; align-items: start; justify-content: space-between; gap: 16px; padding: 12px 15px 10px; border-bottom: 1px solid var(--line); }
+.help-dialog h2 { margin-top: 4px; font-size: 15px; letter-spacing: .1em; color: var(--text); }
+.help-dialog-body { display: grid; gap: 16px; max-height: 65vh; padding: 13px 15px 16px; overflow-y: auto; }
+.help-dialog-body h3 { margin: 0 0 6px; color: var(--cyan); font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+.help-dialog-body p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.help-dialog-body p + p { margin-top: 8px; }
+.help-dialog-body code { color: var(--text); font-size: 10px; }
+
 /* The seven tetrominoes, flat. */
 [data-piece="I"] { --piece-color: #23c3d6; }
 [data-piece="O"] { --piece-color: #d8c02e; }
@@ -415,7 +422,6 @@ input[type="number"]:disabled { border-color: var(--line-dim); color: #4a504a; c
   .clear-info { padding: 0 7px 7px; font-size: 9px; }
   .next-item { min-height: 54px; }
   .control-deck { grid-template-columns: 1fr; }
-  .rule-boundary { grid-template-columns: 1fr; gap: 5px; }
   .buttons { grid-template-columns: repeat(2, 1fr); }
   .comparison-grid { grid-template-columns: 1fr; }
   .comparison-grid > div + div { border-left: 0; border-top: 1px solid var(--line); }
@@ -462,7 +468,6 @@ input[type="number"]:disabled { border-color: var(--line-dim); color: #4a504a; c
   /* A number field needs the whole width, but a toggle dropped onto its own row
      reads as a separate setting from the label above it. */
   .bot-parameter[data-control="boolean"] { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
-  footer { display: none; }
 }
 
 /* REPLAY: the transport that drives the two fields. The timeline, its marker

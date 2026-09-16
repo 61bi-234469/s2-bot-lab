@@ -137,7 +137,7 @@ test("bot-vs-bot exposes You (1P) only in the left-player selector", async () =>
   const optionsFor = (id) => html.match(new RegExp(`<select id="${id}">([\\s\\S]*?)</select>`))?.[1] ?? "";
   assert.match(optionsFor("left-bot"), /<option value="human">You \(1P\)<\/option>/);
   assert.doesNotMatch(optionsFor("right-bot"), /value="human"/);
-  assert.match(html, /LEFT BOTで <strong>You \(1P\)<\/strong> を選ぶ/);
+  assert.match(html, /LEFT BOTで「You \(1P\)」を選ぶと自分でプレイできます/);
 });
 
 test("bot-vs-bot defaults to a random seed and unlimited turns", async () => {

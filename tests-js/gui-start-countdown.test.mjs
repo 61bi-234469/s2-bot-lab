@@ -120,6 +120,7 @@ function harness({ humanSide = 'left', inputMode = false } = {}) {
       'match-step': { disabled: true },
       'match-countdown': { textContent: '', hidden: true },
       'bot-settings-dialog': { open: false },
+      'help-dialog': { open: false },
     },
     setTimeout(callback, delayMs) {
       context.timer = { callback, delayMs };
