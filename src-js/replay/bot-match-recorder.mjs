@@ -22,14 +22,23 @@ const CELL_CODES = Object.freeze({
  * Starts a pure recording around the match's initial canonical states.
  * `meta` is deliberately supplied by the caller so this module has no GUI or
  * session dependency.
+ *
+ * `handicap` describes a start position this one round was played from. It
+ * belongs to the round rather than to the series meta: every game of an FT
+ * series and every restart draws its own seed, so a terrain recorded once for
+ * a whole series would describe the wrong board.
  */
-export function createMatchRecording({ match, meta } = {}) {
+export function createMatchRecording({ match, meta, handicap = null } = {}) {
   assertMatch(match);
+  if (handicap !== null && (typeof handicap !== "object" || Array.isArray(handicap))) {
+    throw new Error("match recording handicap must be an object or null");
+  }
   const users = new Map((meta?.users ?? []).map((user) => [user.id, user]));
   const rules = resolvePlacementRules(match.rulesetId);
   return {
     match: structuredClone(match),
     meta: structuredClone(meta ?? {}),
+    handicap: handicap === null ? null : structuredClone(handicap),
     players: match.bots.map((bot) => ({
       id: bot.id,
       username: users.get(bot.id)?.username ?? bot.id,
@@ -277,6 +286,11 @@ function roundFromRecording(recording, match, outcome) {
     startFrame: 0,
     endFrame: match.clock.logicalFrame,
     status: "ok",
+    // The terrain this round actually opened from, next to the initial boards
+    // it describes. `null` is an ordinary empty-board start.
+    handicap: recording.handicap === null || recording.handicap === undefined
+      ? null
+      : structuredClone(recording.handicap),
     result: {
       reasons,
       winnerId: outcome.complete ? (outcome.winnerBotId ?? null) : null,

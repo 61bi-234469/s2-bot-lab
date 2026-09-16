@@ -16,6 +16,11 @@ import {
   externalLockFrameWindow,
 } from "./bot-match-controller.mjs";
 import { applyHumanFinalPlacementUnderObservedS2 } from "./human-s2-adapter.mjs";
+import {
+  HANDICAP_GARBAGE_ID,
+  applyHandicapToLegacyStart,
+  normalizeHandicapGarbage,
+} from "./gui-1p-handicap-garbage.mjs";
 import { guiStateToCc2NativeStart } from "./cc2-s2-native-start.mjs";
 import { resolveStaticCc2Proposal } from "./static-cc2-proposal.mjs";
 import { resolveGuiStaticSubmission as resolveQualifiedStaticCc2Submission } from "./gui-static-public-resolver.mjs";
@@ -171,6 +176,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       const humanSide = left === "human" ? "left" : null;
       const config = normalizeBotMatchOptions(body);
       if (humanSide !== null && config.fairComparison) throw new Error("fair comparison cannot include a human player");
+      const handicap = normalizeHandicapGarbage(body.handicap, { humanSide });
       const botParameters = {
         left: config.fairComparison
           ? fairComparisonBotParameters(left, body.leftParameters)
@@ -189,10 +195,18 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       const queueModel = QUEUE_MODE_LEGACY_LCG;
       const scenario = createGame(config.seed, { queueModel });
       const initial = guiStateToCanonical(toS2GuiState(scenario));
+      // The 1P handicap changes only the human side's start position. The
+      // opposing bot keeps the ordinary empty board.
+      const handicapStart = handicap.enabled
+        ? applyHandicapToLegacyStart(initial, { seed: config.seed, appliedTo: humanSide })
+        : null;
+      const startState = (botId) => structuredClone(
+        handicapStart !== null && botId === humanSide ? handicapStart.state : initial,
+      );
       const match = createBotMatch({
         bots: [
-          { id: "left", gameId: 1, state: structuredClone(initial) },
-          { id: "right", gameId: 2, state: structuredClone(initial) },
+          { id: "left", gameId: 1, state: startState("left") },
+          { id: "right", gameId: 2, state: startState("right") },
         ],
         mode: "paced",
         ppsByBotId: {
@@ -202,13 +216,18 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       });
       session = {
         types: { left, right }, humanSide, botParameters, config, ttrmCompatible, queueModel, invalidated: false,
+        handicap: handicapStart?.record ?? { id: HANDICAP_GARBAGE_ID, enabled: false },
         mutations: createLiveMatchMutationQueue(), inFlightStep: null,
         queueSeeds: { left: scenario.bagSeed, right: scenario.bagSeed }, match, recording: createMatchRecording({
-          match, meta: { origin: "s2-bot-match/1", users: [{ id: "left", username: "LEFT · ${left}" }, { id: "right", username: "RIGHT · ${right}" }],
+          match, handicap: handicapStart?.record ?? null,
+          meta: { origin: "s2-bot-match/1", users: [{ id: "left", username: "LEFT · ${left}" }, { id: "right", username: "RIGHT · ${right}" }],
             gamemode: "s2-bot-match", ts: new Date().toISOString(), version: 1, parseMs: 0,
             match: { seed: config.seed, fairComparison: config.fairComparison,
               maxTurns: config.maxTurns, firstTo: 1, ttrmCompatible, queueModel,
               declaredPpsByBotId: structuredClone(match.pace.ppsByBotId),
+              // Series-level meta keeps only what every game shares. The
+              // per-game seed and terrain live in each round record.
+              handicap: { id: HANDICAP_GARBAGE_ID, enabled: handicap.enabled },
               bots: { left: { type: left, parameters: botParameters.left }, right: { type: right, parameters: botParameters.right } }, rulesetId: match.rulesetId } },
         }), finishedRound: null, lastSubmissions: [],
       };
@@ -595,6 +614,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       matchOutcome(bots, activeSession.match.turnNumber, activeSession.config.maxTurns);
     return { status: outcome.complete ? "complete" : "active", turnNumber: activeSession.match.turnNumber, humanSide: activeSession.humanSide,
       mode: activeSession.match.mode, clock: activeSession.match.clock, config: activeSession.config, botParameters: activeSession.botParameters, outcome,
+      handicap: structuredClone(activeSession.handicap),
       pacing: { authority: activeSession.humanSide === null ? "synthetic" : "realtime-1p", declaredPpsByBotId: structuredClone(activeSession.match.pace.ppsByBotId) },
       deliveries: activeSession.match.lastStep?.deliveries ?? [], metricElapsedMs: activeSession.match.clock.logicalFrame * 1000 / 60,
       nextStepFrames: outcome.complete ? null : botMatchNextStep(activeSession.match).frames, bots, replayMeta: activeSession.recording?.meta ?? null };

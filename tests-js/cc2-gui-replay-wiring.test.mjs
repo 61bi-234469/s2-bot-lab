@@ -274,15 +274,29 @@ test("the deck exports through one button whose format follows the execution pat
 
 test("each match setting group names the execution path it belongs to", () => {
   const settings = markup.slice(markup.indexOf('class="match-settings"'), markup.indexOf('class="match-outcome"'));
-  assert.deepEqual([...settings.matchAll(/data-scope="([a-z]+)"/g)].map((match) => match[1]), ["execution", "legacy", "both", "both"]);
+  assert.deepEqual([...settings.matchAll(/data-scope="([a-z]+)"/g)].map((match) => match[1]),
+    ["execution", "legacy", "both", "both"]);
   for (const id of ["match-execution-note", "match-legacy-note", "match-legacy-settings",
-    "match-stall-lock-note", "match-stall-lock-settings"]) assert.ok(ids.has(id), id);
+    "match-handicap-settings", "match-handicap-note", "match-stall-lock-note",
+    "match-handicap-scope-note"]) assert.ok(ids.has(id), id);
+  // The two 1P settings share one group, in the order they take effect: the
+  // start position first, then the rule that bounds the pace during play.
+  const handicapGroup = settings.slice(settings.indexOf('id="match-handicap-settings"'));
+  assert.match(handicapGroup, /HANDICAP \/ ハンデ/);
+  assert.ok(handicapGroup.indexOf('id="match-handicap-garbage"') <
+    handicapGroup.indexOf('id="match-stall-lock"'), "INITIAL GARBAGE comes before STALL PENALTY");
+  assert.equal(settings.lastIndexOf('class="match-setting-group"'),
+    settings.indexOf('class="match-setting-group" id="match-handicap-settings"'),
+    "the 1P group is the last one in the row");
 
   const notes = app.slice(app.indexOf("function renderExecutionScopeNotes"), app.indexOf("function syncMaxTurnsControl"));
   assert.match(notes, /elements\["match-legacy-settings"\]\.dataset\.inactive = String\(inputMode\)/);
   // With no You (1P) side there is no piece for the deadline to take, so the
   // otherwise shared group states that reason in both execution modes.
-  assert.match(notes, /elements\["match-stall-lock-settings"\]\.dataset\.inactive = String\(!playing\)/);
+  // With no You (1P) side the whole 1P group is dimmed, and its foot states that
+  // reason once for both settings rather than inside each control's own note.
+  assert.match(notes, /elements\["match-handicap-settings"\]\.dataset\.inactive = String\(!playing\)/);
+  assert.match(notes, /elements\["match-handicap-scope-note"\]\.textContent = playing/);
   // The scope has to be stated while the group is still usable, so no branch of
   // either note may fall back to an empty string.
   assert.doesNotMatch(notes, /: ""/);
@@ -298,7 +312,7 @@ test("the settings row opens and closes as one, and its bar keeps the values", (
 
   const notes = app.slice(app.indexOf("function renderExecutionScopeNotes"), app.indexOf("function onOff"));
   assert.match(notes, /elements\["match-settings-state"\]\.textContent = matchSettingsStateText\(inputMode\)/);
-  assert.match(notes, /if \(inputMode\) return \[\.\.\.parts, `STALL \$\{stall\}`\]\.join/);
+  assert.match(notes, /if \(inputMode\) return \[\.\.\.parts, `HANDI \$\{handicap\}`, `STALL \$\{stall\}`\]\.join/);
   // A closed row must not take its state with it, so every control refreshes it.
   assert.match(app, /elements\["match-settings"\]\.addEventListener\("input", \(\) => renderExecutionScopeNotes\(\)\)/);
 });

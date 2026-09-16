@@ -264,6 +264,10 @@ elements["match-stall-lock"].addEventListener("change", () => {
   syncStallLockControl();
   renderExecutionScopeNotes();
 });
+elements["match-handicap-garbage"].addEventListener("change", () => {
+  renderExecutionScopeNotes();
+  renderMatchSaveButton();
+});
 /* One delegated listener rather than one per control: every setting in this row
    shows up on the disclosure's closed bar, so each of them has to refresh it. */
 elements["match-settings"].addEventListener("input", () => renderExecutionScopeNotes());
@@ -1853,6 +1857,7 @@ function createMatchSeries({ excludedRandomSeed = null } = {}) {
       firstTo: readBoundedInteger("match-count", 1, 100),
       preLockPreview: elements["match-pre-lock-preview"].checked,
       stallLock: stallLockSettings(),
+      handicap: handicapSettings(),
     },
     completed: 0,
     leftWins: 0,
@@ -1888,6 +1893,7 @@ async function startSeriesGame() {
       fairComparison: config.fairComparison,
       ...(inputMode ? { ttrmCompatible: true, humanControls: structuredClone(humanControls),
         stallLock: structuredClone(config.stallLock ?? { enabled: false, pps: null, penalty: null }) } : {}),
+      handicap: structuredClone(config.handicap ?? { enabled: false }),
       seed,
       maxTurns: config.maxTurns,
       firstTo: config.firstTo,
@@ -2687,11 +2693,18 @@ function renderMatchSaveButton() {
     : matchRoundFinalization !== null ? "対局の記録をまとめています"
     : "";
   if (format === "ttrm") {
-    const stallReplayDisabled = inputModeActive() && matchSeries?.config.stallLock.enabled === true;
+    const started = matchSeries !== null && inputModeActive();
+    const stallReplayDisabled = started && matchSeries.config.stallLock.enabled === true;
+    // Before a series starts the toggles are the only claim there is; a started
+    // series answers for the rounds it was actually started with.
+    const handicapReplayDisabled = started
+      ? matchSeries.config.handicap?.enabled === true
+      : inputModeSelected() && handicapSettings().enabled;
     const ready = (matchSeries?.rounds ?? []).some((round) => round.executedTtrm?.text);
     setMatchExportButton(button,
       busy !== "" ? busy
         : stallReplayDisabled ? "STALL PENALTYを使用したINPUT対局は .ttrm に保存できません"
+        : handicapReplayDisabled ? "1Pハンデを使用したINPUT対局は .ttrm に保存できません"
         : !ready ? "保存できる完了ラウンドがまだありません。TTRM INPUT はround終了後に保存できます"
         : "",
       "実際に消費した入力を検証済みの .ttrm として保存します");
@@ -2860,7 +2873,7 @@ function setMatchSettingsDisabled(disabled) {
   for (const id of [
     "left-bot", "right-bot", "left-bot-settings", "right-bot-settings",
     "match-fair-comparison", "match-pre-lock-preview", "match-ttrm-compatible", "match-seed", "match-max-turns", "match-unlimited-turns", "match-count",
-    "match-stall-lock",
+    "match-stall-lock", "match-handicap-garbage",
   ]) elements[id].disabled = disabled;
   elements["match-max-turns"].disabled = disabled || elements["match-unlimited-turns"].checked;
   syncRandomSeedControl(disabled);
@@ -2918,10 +2931,13 @@ function syncInputBotOptions() {
 function renderExecutionScopeNotes() {
   const inputMode = inputModeSelected() || (matchRunning && inputModeActive());
   const playing = selectedHumanSide() !== null;
+  const handicapActive = elements["match-handicap-garbage"].checked && playing;
   elements["match-execution-note"].textContent = inputMode
     ? elements["match-stall-lock"].checked
       ? "TTRM INPUT：STALL PENALTYを適用します。この設定の対局は .ttrm 保存対象外です。"
-      : "TTRM INPUT：実入力を60Hzで消費し、EXPORT は .ttrm を保存します。"
+      : handicapActive
+        ? "TTRM INPUT：1Pハンデの初期地形は入力ログから再現できないため、この対局は .ttrm 保存対象外です。"
+        : "TTRM INPUT：実入力を60Hzで消費し、EXPORT は .ttrm を保存します。"
     : "従来モード：最終配置で進行し、EXPORT は .json を保存します。";
   elements["match-legacy-settings"].dataset.inactive = String(inputMode);
   elements["match-legacy-note"].textContent = inputMode
@@ -2929,16 +2945,24 @@ function renderExecutionScopeNotes() {
     : playing
       ? "You (1P) 参加中は FAIR COMPARISON を使いません。"
       : "TTRM INPUT では適用されません。";
-  elements["match-stall-lock-settings"].dataset.inactive = String(!playing);
+  /* One 1P group, so the "only with You (1P)" condition is stated once at its
+     foot instead of inside each control's own note. Each note then always
+     describes what its own switch does, including the export it rules out. */
+  elements["match-handicap-settings"].dataset.inactive = String(!playing);
+  elements["match-handicap-note"].textContent = inputMode
+    ? "ONの間、1P側だけ28マスのランダムガベージ（空洞なし・完成ラインなし）から開始します。Bot側は空の盤面です。地形は局ごとのSEEDから決まります。この設定の対局は .ttrm 保存対象外です。"
+    : "ONの間、1P側だけ28マスのランダムガベージ（空洞なし・完成ラインなし）から開始します。Bot側は空の盤面です。地形は局ごとのSEEDから決まります。";
   const penaltyLineNote = inputMode
     ? "ONの間、指定PPSを下回ると最下段へ消去不能ラインを1段追加します。通常接地5回ごとに1段除去し、攻撃・B2B・RENに影響しません。STALL有効のINPUT対局は .ttrm 保存対象外です。"
     : "ONの間、指定PPSを下回ると最下段へ消去不能ラインを1段追加します。通常接地5回ごとに1段除去し、攻撃・B2B・RENに影響しません。";
   const forcedLockNote = inputMode
     ? "ONの間、指定PPSを下回る前にスポーン位置へ強制接地します。HOLDしても手番の時間は延びません。STALL有効のINPUT対局は .ttrm 保存対象外です。"
     : "ONの間、指定PPSを下回る前にスポーン位置へ強制接地します。HOLDしても手番の時間は延びません。";
-  elements["match-stall-lock-note"].textContent = playing
-      ? elements["match-stall-lock-penalty"].value === "penalty-line" ? penaltyLineNote : forcedLockNote
-      : "LEFT BOT に You (1P) を選んだときだけ使います。Bot側には適用しません。";
+  elements["match-stall-lock-note"].textContent =
+    elements["match-stall-lock-penalty"].value === "penalty-line" ? penaltyLineNote : forcedLockNote;
+  elements["match-handicap-scope-note"].textContent = playing
+    ? "どちらも 1P（You）側にだけ適用します。Bot側の盤面と手番は変わりません。"
+    : "LEFT BOT に You (1P) を選んだときだけ使います。この対局には適用しません。";
   elements["match-settings-state"].textContent = matchSettingsStateText(inputMode);
 }
 
@@ -2955,9 +2979,14 @@ function matchSettingsStateText(inputMode) {
   ];
   const penalty = elements["match-stall-lock-penalty"].value === "penalty-line" ? "LINE" : "LOCK";
   const stall = elements["match-stall-lock"].checked ? `${elements["match-stall-lock-pps"].value} PPS ${penalty}` : "OFF";
-  if (inputMode) return [...parts, `STALL ${stall}`].join(" · ");
+  // A setting kept ON with nobody playing is neither on nor off for this match:
+  // "—" says it is not applicable rather than claiming it was turned off.
+  const handicap = !elements["match-handicap-garbage"].checked ? "OFF"
+    : selectedHumanSide() === null ? "—" : "ON";
+  if (inputMode) return [...parts, `HANDI ${handicap}`, `STALL ${stall}`].join(" · ");
   return [...parts, `FAIR ${onOff(elements["match-fair-comparison"])}`,
-    `GHOST ${onOff(elements["match-pre-lock-preview"])}`, `STALL ${stall}`].join(" · ");
+    `GHOST ${onOff(elements["match-pre-lock-preview"])}`, `HANDI ${handicap}`,
+    `STALL ${stall}`].join(" · ");
 }
 
 function onOff(checkbox) {
@@ -2990,6 +3019,13 @@ function stallLockSettings() {
       : null,
     penalty: enabled ? penalty : null,
   };
+}
+
+/* Read once, when a series starts, like the other match settings. A person who
+   is not playing has nothing to be handicapped: the request is then not
+   applicable rather than refused, and the server normalizes it the same way. */
+function handicapSettings() {
+  return { enabled: elements["match-handicap-garbage"].checked && selectedHumanSide() !== null };
 }
 
 function syncRandomSeedControl(matchSettingsDisabled = false) {

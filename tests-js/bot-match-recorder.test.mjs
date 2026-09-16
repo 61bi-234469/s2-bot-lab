@@ -14,6 +14,7 @@ import {
   recordMatchLocks,
 } from "../src-js/replay/bot-match-recorder.mjs";
 import { validateReplayIRDocument } from "../src-js/replay/replay-ir-validation.mjs";
+import { applyHandicapToLegacyStart } from "../src-js/gui-1p-handicap-garbage.mjs";
 import { garbageViewAt } from "../src-js/replay/replay-garbage.mjs";
 import { PIECE } from "../src-js/replay/pieces.mjs";
 import { statsAt, visualAtFrame } from "../src-js/replay/replay-timeline.mjs";
@@ -228,4 +229,50 @@ test("browser ReplayIR validation accepts gray cells only on fields", () => {
 
   document.rounds[0].players[0].locks[0].next[0] = PIECE.GRAY;
   assert.throws(() => validateReplayIRDocument(document), /next is invalid/);
+});
+
+test("a handicap round records its own terrain next to the board it describes", () => {
+  const state = guiStateToCanonical(toS2GuiState(createGame(4242)));
+  const { state: stackedState, record } = applyHandicapToLegacyStart(state, { seed: 4242 });
+  const match = createBotMatch({
+    bots: [
+      { id: "left", gameId: 1, state: stackedState },
+      { id: "right", gameId: 2, state: structuredClone(state) },
+    ],
+    mode: "paced",
+    ppsByBotId: { left: 1, right: 1 },
+  });
+  const submissions = submissionsFor(match);
+  const after = advanceBotMatch(match, submissions);
+  let recording = createMatchRecording({
+    match,
+    handicap: record,
+    meta: { users: [{ id: "left", username: "LEFT" }, { id: "right", username: "RIGHT" }] },
+  });
+  recording = recordMatchLocks(recording, match, after, submissions);
+  const round = finishMatchRecording(recording, {
+    match: after,
+    outcome: { complete: false, reason: "in-progress", winnerBotId: null },
+  });
+
+  // A round record with a terrain still passes the browser's import validation.
+  validateReplayIRDocument(buildMatchReplay([round], { users: [] }));
+  assert.equal(round.handicap.id, "s2-gui-1p-handicap-garbage/1");
+  assert.equal(round.handicap.seed, 4242);
+  const left = round.players.find((player) => player.id === "left");
+  const right = round.players.find((player) => player.id === "right");
+  const heights = Array.from({ length: 10 }, (_, x) =>
+    left.initial.field.filter((cell, index) => cell === PIECE.GRAY && index % 10 === x).length);
+  assert.deepEqual(heights, [...round.handicap.columnHeights]);
+  assert.equal(right.initial.field.filter((cell) => cell !== PIECE.EMPTY).length, 0);
+  // The terrain is still on the board the timeline renders after the first lock.
+  assert.equal(visualAtFrame(left, left.locks[0].frame).field
+    .filter((cell) => cell === PIECE.GRAY).length, 28);
+  // An ordinary round keeps `null`, so a handicap round is distinguishable.
+  const plain = finishMatchRecording(createMatchRecording({ match, meta: {} }), {
+    match, outcome: { complete: false, reason: "in-progress", winnerBotId: null },
+  });
+  assert.equal(plain.handicap, null);
+  assert.throws(() => createMatchRecording({ match, meta: {}, handicap: "28" }),
+    /handicap must be an object or null/);
 });

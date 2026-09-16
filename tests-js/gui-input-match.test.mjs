@@ -11,6 +11,7 @@ import { buildExecutedInputTtrm } from '../src-js/replay/bot-match-ttrm-export.m
 import { Engine, Tetromino } from '@haelp/teto/engine';
 import { guiStateToCc2NativeStart } from '../src-js/cc2-s2-native-start.mjs';
 import { decisionStateToSyntheticGui } from '../src-js/s2-amount-only-decision-state.mjs';
+import { handicapColumnHeights } from '../src-js/gui-1p-handicap-garbage.mjs';
 
 const tap = (frame, key) => ['keydown', 'keyup'].map(type => ({ frame, type, data: { key, subframe: 0 } }));
 const config = { left: 'human', right: 'cc2-s2-f14', seed: 42, maxTurns: null };
@@ -723,4 +724,101 @@ test('input STALL top-out keeps the penalty board for scoring but refuses .ttrm 
   assert.equal(ttrm.status, 409);
   assert.match(ttrm.body.error, /STALL PENALTY.*\.ttrm/);
   assert.ok(closed.length >= 2);
+});
+
+/* The 1P handicap in the natural-gravity path. The load-bearing claim is that
+   the terrain does not weaken the referee: the canonical lock conformance
+   comparison stays enabled, so every hard drop on top of the stack is still
+   checked against the S2 Simulator's own transition. A complete row would break
+   exactly that, which is why the generator refuses to produce one. */
+test('input 1P handicap stacks only the human board and keeps lock conformance', async () => {
+  const handlers = createGuiInputMatchHandlers({ runtime: {
+    propose: () => new Promise(() => {}), closeSessions: async () => {}, resolveInput: resolveInputJob,
+  } });
+  const seed = 4242;
+  const started = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
+    ...config, seed, handicap: { enabled: true },
+  } });
+  assert.equal(started.status, 200, JSON.stringify(started.body));
+  const [left, right] = started.body.bots;
+  const stacked = board => board.flat().filter(cell => cell === 'G').length;
+  assert.equal(stacked(left.board), 28);
+  assert.equal(right.board.flat().filter(cell => cell !== null).length, 0);
+  assert.equal(left.board.filter(row => row.every(cell => cell !== null)).length, 0);
+  assert.equal(started.body.handicap.id, 's2-gui-1p-handicap-garbage/1');
+  assert.equal(started.body.handicap.seed, seed);
+  assert.deepEqual([...started.body.handicap.columnHeights], [...handicapColumnHeights(seed)]);
+  const heights = board => Array.from({ length: 10 }, (_, x) =>
+    board.reduce((total, row) => total + (row[x] === 'G' ? 1 : 0), 0));
+  assert.deepEqual(heights(left.board), [...handicapColumnHeights(seed)]);
+  // Row 0 of a referee board is the floor: the terrain rests on it, and stays
+  // inside the declared height cap rather than floating in the spawn area.
+  assert.ok(left.board[0].includes('G'), 'the stack starts on the floor');
+  assert.ok(left.board.slice(6).every(row => row.every(cell => cell === null)),
+    'the stack stays within the declared height cap');
+
+  // Real hard drops onto the terrain. A conformance failure would surface as a
+  // session failure rather than as a quiet difference.
+  let result = { body: started.body };
+  for (let frame = 1; frame <= 24 && !result.body.outcome.complete; frame += 2) {
+    result = await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: {
+      sessionId: started.body.sessionId, frame, inputs: frame % 4 === 1 ? tap(frame - 1, 'hardDrop') : [],
+    } });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+  }
+  assert.ok(result.body.bots[0].stats.turns >= 3, 'the human side kept locking on the terrain');
+  assert.equal(stacked(result.body.bots[0].board) > 0, true, 'the terrain is still the board being played');
+  assert.equal(result.body.handicap.replayDisabled, true);
+});
+
+test('input rounds without the handicap keep an empty board and the .ttrm export', async () => {
+  const handlers = createGuiInputMatchHandlers({ runtime: {
+    propose: () => new Promise(() => {}), closeSessions: async () => {}, resolveInput: resolveInputJob,
+  } });
+  const off = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
+    ...config, handicap: { enabled: false },
+  } });
+  assert.equal(off.status, 200, JSON.stringify(off.body));
+  assert.equal(off.body.bots.every(bot => bot.board.flat().every(cell => cell === null)), true);
+  assert.equal(off.body.handicap.enabled, false);
+  assert.equal(off.body.handicap.replayDisabled, false);
+  // No 1P side is nothing to handicap, and must not block the round.
+  const botsOnly = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
+    ...config, left: 'cc2-s2-f14', handicap: { enabled: true },
+  } });
+  assert.equal(botsOnly.status, 200, JSON.stringify(botsOnly.body));
+  assert.equal(botsOnly.body.handicap.enabled, false);
+  assert.equal(botsOnly.body.bots.every(bot => bot.board.flat().every(cell => cell === null)), true);
+  for (const handicap of [{ enabled: 'yes' }, [], 28]) {
+    const rejected = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
+      ...config, handicap,
+    } });
+    assert.equal(rejected.status, 409, JSON.stringify(rejected.body));
+  }
+});
+
+test('a completed handicap round stays scorable but is refused as .ttrm', async () => {
+  const handlers = createGuiInputMatchHandlers({ runtime: {
+    propose: () => new Promise(() => {}), closeSessions: async () => {}, resolveInput: resolveInputJob,
+  } });
+  const started = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
+    ...config, seed: 77, handicap: { enabled: true },
+  } });
+  assert.equal(started.status, 200, JSON.stringify(started.body));
+  let result = { body: started.body };
+  for (let frame = 1; frame <= 30001 && !result.body.outcome.complete; frame += 120) {
+    result = await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: {
+      sessionId: started.body.sessionId, frame, inputs: [],
+    } });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+  }
+  assert.equal(result.body.outcome.complete, true, 'the round still ends on an observed top-out');
+  const round = await handlers.handle({ method: 'GET', path: '/api/input-match/round' });
+  assert.equal(round.status, 200, JSON.stringify(round.body));
+  assert.equal(round.body.replayDisabled, 'handicap-garbage');
+  assert.equal(round.body.handicap.seed, 77);
+  assert.equal(round.body.result.winnerId, 'right');
+  const ttrm = await handlers.handle({ method: 'GET', path: '/api/input-match/ttrm' });
+  assert.equal(ttrm.status, 409);
+  assert.match(ttrm.body.error, /handicap.*\.ttrm/);
 });
