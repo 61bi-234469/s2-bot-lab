@@ -547,3 +547,110 @@ test('GUI FT export retains both completed input rounds and replays their origin
   assert.equal(file.meta.releaseEvidence, false);
   assert.ok(buildReplayIR(parseTtrm(JSON.stringify(file))).rounds.every(round => round.status === 'ok'));
 });
+
+/* The 1P handicap's browser side, run as the shipped functions: what the closed
+   settings bar claims, what the group says while nobody is playing, and which
+   export the setting blocks. */
+function handicapDeck({ checked = true, human = true, inputMode = true, series = null } = {}) {
+  const checkbox = (value) => ({ checked: value, value: String(value) });
+  const elements = {
+    'match-handicap-garbage': checkbox(checked),
+    'match-handicap-settings': { dataset: {} },
+    'match-handicap-note': { textContent: '' },
+    'match-stall-lock': checkbox(false),
+    'match-stall-lock-penalty': { value: 'penalty-line' },
+    'match-stall-lock-pps': { value: '2' },
+    'match-stall-lock-note': { textContent: '' },
+    'match-handicap-scope-note': { textContent: '' },
+    'match-legacy-settings': { dataset: {} },
+    'match-legacy-note': { textContent: '' },
+    'match-execution-note': { textContent: '' },
+    'match-settings-state': { textContent: '' },
+    'match-fair-comparison': checkbox(false),
+    'match-pre-lock-preview': checkbox(false),
+    'match-random-seed': checkbox(true),
+    'match-seed': { value: '1506' },
+    'match-unlimited-turns': checkbox(true),
+    'match-max-turns': { value: '500' },
+    'match-count': { value: '1' },
+    'match-save-replay': { dataset: {}, disabled: false, title: '', textContent: '' },
+  };
+  const app = vm.createContext({
+    elements, matchRunning: false, matchSaveInFlight: false, matchRoundFinalization: null,
+    matchSeries: series, lastMatchView: null,
+    selectedHumanSide: () => (human ? 'left' : null),
+    inputModeSelected: () => inputMode,
+    inputModeActive: () => (series === null ? inputMode : series.config.ttrmCompatible === true),
+    onOff: (checkbox) => (checkbox.checked ? 'ON' : 'OFF'),
+  });
+  // Index slicing rather than a regular expression: the production function is
+  // taken verbatim from its declaration to its closing brace.
+  const declaration = (name) => {
+    const at = source.indexOf(`function ${name}(`);
+    assert.ok(at >= 0, `${name} not found in app.mjs`);
+    return source.slice(at, source.indexOf("\n}\n", at) + 3);
+  };
+  for (const name of ['renderExecutionScopeNotes', 'matchSettingsStateText', 'handicapSettings',
+    'selectedExportFormat', 'renderMatchSaveButton', 'setMatchExportButton']) {
+    vm.runInContext(declaration(name), app);
+  }
+  return app;
+}
+
+test('the settings bar reports the 1P handicap, and says "not applicable" without a 1P side', () => {
+  const playing = handicapDeck({ checked: true, human: true });
+  playing.renderExecutionScopeNotes();
+  assert.match(playing.elements['match-settings-state'].textContent, /HANDI ON/);
+  assert.equal(playing.elements['match-handicap-settings'].dataset.inactive, 'false');
+  assert.match(playing.elements['match-handicap-note'].textContent, /28マス/);
+  assert.match(playing.elements['match-handicap-scope-note'].textContent, /1P（You）側にだけ適用/);
+  // Each control keeps its own note inside the shared group.
+  assert.match(playing.elements['match-stall-lock-note'].textContent, /消去不能ライン/);
+  assert.match(playing.elements['match-execution-note'].textContent, /\.ttrm 保存対象外/);
+  assert.equal(playing.handicapSettings().enabled, true);
+
+  // A saved ON setting with two bots is not applicable rather than turned off.
+  const botsOnly = handicapDeck({ checked: true, human: false });
+  botsOnly.renderExecutionScopeNotes();
+  assert.match(botsOnly.elements['match-settings-state'].textContent, /HANDI —/);
+  assert.equal(botsOnly.elements['match-handicap-settings'].dataset.inactive, 'true');
+  assert.match(botsOnly.elements['match-handicap-scope-note'].textContent, /You \(1P\)/);
+  assert.match(botsOnly.elements['match-handicap-note'].textContent, /28マス/,
+    "a dimmed control still says what it would do");
+  assert.equal(botsOnly.handicapSettings().enabled, false, 'no 1P side is nothing to handicap');
+
+  const off = handicapDeck({ checked: false, human: true });
+  off.renderExecutionScopeNotes();
+  assert.match(off.elements['match-settings-state'].textContent, /HANDI OFF/);
+  assert.doesNotMatch(off.elements['match-execution-note'].textContent, /保存対象外/);
+});
+
+test('the 1P handicap blocks the .ttrm export and leaves the .json export alone', () => {
+  const pending = handicapDeck({ checked: true, human: true, inputMode: true });
+  pending.renderMatchSaveButton();
+  assert.equal(pending.elements['match-save-replay'].textContent, 'SAVE .ttrm');
+  assert.equal(pending.elements['match-save-replay'].disabled, true);
+  assert.match(pending.elements['match-save-replay'].title, /1Pハンデ.*\.ttrm/);
+
+  // A started series answers for the rounds it was started with.
+  const startedWithout = handicapDeck({ checked: true, human: true, inputMode: true,
+    series: { config: { ttrmCompatible: true, stallLock: { enabled: false }, handicap: { enabled: false } },
+      rounds: [{ executedTtrm: { text: '{}' } }] } });
+  startedWithout.renderMatchSaveButton();
+  assert.equal(startedWithout.elements['match-save-replay'].disabled, false);
+
+  const startedWith = handicapDeck({ checked: false, human: true, inputMode: true,
+    series: { config: { ttrmCompatible: true, stallLock: { enabled: false }, handicap: { enabled: true } },
+      rounds: [{ executedTtrm: { text: '{}' } }] } });
+  startedWith.renderMatchSaveButton();
+  assert.equal(startedWith.elements['match-save-replay'].disabled, true);
+  assert.match(startedWith.elements['match-save-replay'].title, /1Pハンデ/);
+
+  // The legacy record keeps the start position, so .json stays available.
+  const legacy = handicapDeck({ checked: true, human: true, inputMode: false,
+    series: { config: { ttrmCompatible: false, stallLock: { enabled: false }, handicap: { enabled: true } },
+      rounds: [{}] } });
+  legacy.renderMatchSaveButton();
+  assert.equal(legacy.elements['match-save-replay'].textContent, 'SAVE .json');
+  assert.equal(legacy.elements['match-save-replay'].disabled, false);
+});

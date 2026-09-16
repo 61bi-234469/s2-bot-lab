@@ -12,7 +12,7 @@
  * are captured from engine events rather than inferred from hard-drop keys.
  */
 
-import { Engine } from "@haelp/teto/engine";
+import { Engine, Mino } from "@haelp/teto/engine";
 
 import { convertEngineBoard } from "./board-converter.mjs";
 import { buildEngineConfig, inputExecutionOptions, INPUT_EXECUTION_PROFILE } from "./engine-config.mjs";
@@ -143,6 +143,29 @@ function rawConfirmSenderFrames(playerRound) {
 // The round's starting position (zero placements). `Engine#falling` and
 // `Engine#queue` are not optional by type, but the engine is ticked once and
 // read again in case the construction left them uninitialised.
+/** Places caller-supplied garbage on an untouched Engine board. */
+function applyInitialGarbage(engine, cells) {
+  if (cells === null || cells === undefined) return 0;
+  if (!Array.isArray(cells)) throw new TtrmError("validate", "initial garbage cells must be an array");
+  const board = engine.board;
+  if (engine.frame !== 0) throw new TtrmError("execute", "initial garbage requires an unstarted round");
+  for (const cell of cells) {
+    const [x, y] = cell ?? [];
+    if (!Number.isSafeInteger(x) || !Number.isSafeInteger(y) ||
+        x < 0 || x >= board.width || y < 0 || y >= board.state.length) {
+      throw new TtrmError("validate", "initial garbage cell is outside the board");
+    }
+    if (board.state[y][x] !== null) {
+      throw new TtrmError("validate", "initial garbage cell is already occupied");
+    }
+    board.state[y][x] = { mino: Mino.GARBAGE, connections: 0 };
+  }
+  if (board.state.some((row) => row.every((tile) => tile !== null))) {
+    throw new TtrmError("validate", "initial garbage must not complete a row");
+  }
+  return cells.length;
+}
+
 function readInitialPoint(engine) {
   const read = () => ({
     frame: 0,
@@ -209,7 +232,7 @@ export function simulatePlayerRound(playerRound, options = {}) {
  * Session snapshots and observations are not policy input.
  */
 export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, signal = null, now = nowMs, canonicalProfile = null,
-  forgiveStallPenalty = false } = {}) {
+  forgiveStallPenalty = false, initialGarbageCells = null } = {}) {
   validateTtrmPlayerRound(playerRound);
   if (!Number.isFinite(maxTimeMs) || maxTimeMs <= 0 || maxTimeMs > 10_000) {
     throw new TtrmError("budget", "replay time budget must be positive and at most 10000ms");
@@ -255,6 +278,15 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
   }
   const conformance = canonicalProfile === null ? null : createInputLockConformance(engine, INPUT_EXECUTION_PROFILE.rulesetId);
   let externallyMutated = false;
+
+  /* A start position the caller supplies, placed once before the round opens.
+     Unlike the STALL PENALTY floor this is ordinary garbage on the board: it is
+     part of the position every later lock is evaluated from, changes no garbage
+     queue, RNG, handling or option, and therefore leaves the canonical lock
+     conformance comparison enabled. The caller owes the no-complete-row
+     invariant, which is what keeps this Engine and the S2 Simulator agreeing
+     about the rows a lock clears. */
+  const initialGarbageCellCount = applyInitialGarbage(engine, initialGarbageCells);
 
   // The starting position is overwritten by the first tick, so it is read here.
   const initial = readInitialPoint(engine);
@@ -508,6 +540,7 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
     get processingMs() { return processingMs; },
     get toppedOut() { return engine.toppedOut; },
     get stallPenaltyRows() { return stallPenaltyRows; },
+    get initialGarbageCellCount() { return initialGarbageCellCount; },
     refereeLastLock() { return structuredClone(locks.at(-1) ?? null); },
     refereeView() {
       return { board: engine.board.state.map(row => row.map(cell => cell === null ? null :

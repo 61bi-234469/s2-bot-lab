@@ -33,6 +33,7 @@ export const TOGGLE_PREFERENCE_IDS = Object.freeze([
   "match-unlimited-turns",
   "match-random-seed",
   "match-stall-lock",
+  "match-handicap-garbage",
 ]);
 
 export function emptyPreferences() {

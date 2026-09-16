@@ -11,6 +11,8 @@ import { parseTtrm } from './replay/ttrm-parser.mjs';
 import { buildReplayIR } from './replay/ttrm-simulator.mjs';
 import { canonicalize } from '../scripts/cs1.mjs';
 import { humanEngineHandling } from '../cc2-gui/human-controls.mjs';
+import { HANDICAP_GARBAGE_ID, handicapColumnHeights, handicapGarbageCells,
+  handicapRecord, normalizeHandicapGarbage } from './gui-1p-handicap-garbage.mjs';
 
 const IDS = ['left', 'right'];
 const KEYS = new Set(['moveLeft', 'moveRight', 'softDrop', 'hardDrop', 'rotateCW', 'rotateCCW', 'rotate180', 'hold']);
@@ -52,7 +54,9 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           }
           if (!runtime) throw new Error('input CC2 runtime unavailable');
           const parameters = Object.fromEntries(IDS.map(id => [id, normalizeBotParameters(types[id], body[`${id}Parameters`])]));
-          const stallPenalty = normalizeStallPenalty(body.stallLock, types.left === 'human' ? 'left' : null);
+          const humanSide = types.left === 'human' ? 'left' : null;
+          const stallPenalty = normalizeStallPenalty(body.stallLock, humanSide);
+          const handicap = normalizeHandicapGarbage(body.handicap, { humanSide });
           if (IDS.some(id => types[id] !== 'human' && parameters[id].queueDepth > 15)) throw new Error('TTRM INPUT supports QUEUE DEPTH up to 15 (current + 14 NEXT)');
           if (body.maxTurns != null && (!Number.isSafeInteger(body.maxTurns) || body.maxTurns < 1 || body.maxTurns > 10000)) throw new Error('invalid MAX TURNS');
           if (current) current.closed = true;
@@ -61,9 +65,15 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           current = null;
           await runtime.closeSessions({ sessionKeys: previous?.keys ?? [] });
           if (sessionId !== `input-${generation}`) throw new Error('match-replaced');
+          // The 1P handicap places its terrain before the round opens, so the
+          // referee owns it and every later lock is compared against a board
+          // that already has it. It is per-round: each game of an FT series and
+          // each restart arrives here with its own seed.
+          const handicapTerrain = handicap.enabled ? handicapColumnHeights(body.seed) : null;
           current = { sessionId, keys: IDS.map(id => `${sessionId}/${id}`), types, parameters,
             round: createInputExecutionRound({ seed: body.seed,
               stallPenaltyForgivenessId: stallPenalty.enabled && stallPenalty.penalty === 'penalty-line' ? 'left' : null,
+              initialGarbageById: handicapTerrain === null ? {} : { [humanSide]: handicapGarbageCells(handicapTerrain) },
               handlingById: types.left === 'human' ? { left: humanEngineHandling(body.humanControls) } : {} }), closed: false, failure: null,
             jobs: {}, ready: {}, plans: {}, proposals: {}, pathWaits: {}, lastLock: {}, misses: {}, leadFrames: {}, paceDeadline: {}, saved: null, maxTurns: body.maxTurns ?? null,
             selections: {}, stallPenalty: { ...stallPenalty, rows: 0,
@@ -74,8 +84,12 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
                 pathBudgetWaits: 0, lastPathBudgetWait: null,
                 resolutionOutcomes: { preferred: 0, fallback: 0, notFound: 0, stale: 0 },
                 fallbackReasons: {}, pacedLocks: 0, deadlineExceededLocks: 0 }])),
+            handicap: handicapTerrain === null
+              ? { id: HANDICAP_GARBAGE_ID, enabled: false }
+              : handicapRecord({ seed: body.seed, columnHeights: handicapTerrain, appliedTo: humanSide }),
             config: { seed: body.seed, firstTo: body.firstTo ?? 1, fairComparison: false,
-              maxTurns: body.maxTurns ?? null, stallLock: stallPenalty } };
+              maxTurns: body.maxTurns ?? null, stallLock: stallPenalty,
+              handicap: { id: HANDICAP_GARBAGE_ID, enabled: handicap.enabled } } };
           return ok(view(current));
         }
         const session = current;
@@ -178,14 +192,24 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
         }
         if (method === 'GET' && ['/api/input-match/round', '/api/input-match/ttrm'].includes(path)) {
           if (session.failure || session.round.status !== 'complete') throw new Error('only a completed valid input round can be saved');
-          if (session.stallPenalty.enabled) {
-            if (path.endsWith('/ttrm')) throw new Error('STALL PENALTY rounds cannot be saved as .ttrm');
+          // A round the consumed input log cannot reproduce: an externally
+          // applied start position or penalty floor. It stays valid to play and
+          // to score, and its receipt says why no `.ttrm` is offered.
+          const replayDisabled = session.stallPenalty.enabled ? 'stall-penalty'
+            : session.handicap.enabled ? 'handicap-garbage' : null;
+          if (replayDisabled !== null) {
+            if (path.endsWith('/ttrm')) {
+              throw new Error(replayDisabled === 'stall-penalty'
+                ? 'STALL PENALTY rounds cannot be saved as .ttrm'
+                : '1P handicap rounds cannot be saved as .ttrm');
+            }
             const receipt = session.round.refereeView();
             return ok({ index: 0, startFrame: 0, endFrame: session.round.frame, status: 'ok',
               result: { winnerId: receipt.terminal?.winnerId ?? null,
                 reasons: Object.fromEntries(IDS.map(id => [id, receipt.terminal?.winnerId === id
                   ? 'winner' : receipt.terminal?.reason ?? 'unknown'])) },
-              players: [], replayDisabled: 'stall-penalty' });
+              players: [], handicap: session.handicap.enabled ? structuredClone(session.handicap) : null,
+              replayDisabled });
           }
           if (!session.saved) {
             const output = buildExecutedInputTtrm(session.round);
@@ -376,6 +400,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
       stallPenalty: { rows: session.stallPenalty.rows, enabled: session.stallPenalty.enabled,
         dueFrame: session.stallPenalty.dueFrame,
         replayDisabled: session.stallPenalty.enabled },
+      handicap: { ...structuredClone(session.handicap), replayDisabled: session.handicap.enabled },
       replayMeta: { origin: 's2-bot-lab-generated', users: IDS.map(id => ({ id, username: session.types[id] })) },
       pacing: { authority: 'realtime-input', declaredPpsByBotId: Object.fromEntries(IDS.map(id =>
         [id, session.types[id] === 'human' || session.parameters[id].ppsEnabled === false ? null : session.parameters[id].pps])) } };

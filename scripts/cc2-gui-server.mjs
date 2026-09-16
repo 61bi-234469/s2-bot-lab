@@ -40,6 +40,11 @@ import {
   externalLockFrameWindow,
 } from "../src-js/bot-match-controller.mjs";
 import { applyHumanFinalPlacementUnderObservedS2 } from "../src-js/human-s2-adapter.mjs";
+import {
+  HANDICAP_GARBAGE_ID,
+  applyHandicapToLegacyStart,
+  normalizeHandicapGarbage,
+} from "../src-js/gui-1p-handicap-garbage.mjs";
 import { placementGeometry } from "../src-js/triangle/placement-geometry.mjs";
 import {
   QUEUE_MODE_LEGACY_LCG,
@@ -292,11 +297,13 @@ const server = createServer(async (request, response) => {
       let config;
       let botParameters;
       let humanSide;
+      let handicap;
       try {
         leftType = assertBotType(body.left ?? "cc2-raw");
         rightType = assertBotType(body.right ?? "s2-simple");
         humanSide = resolveHumanSide(leftType, rightType);
         config = normalizeBotMatchOptions(body);
+        handicap = normalizeHandicapGarbage(body.handicap, { humanSide });
         if (humanSide !== null && config.fairComparison) {
           throw new Error("fair comparison fixes both sides at 1 PPS and cannot include a human player");
         }
@@ -317,10 +324,18 @@ const server = createServer(async (request, response) => {
       const queueModel = QUEUE_MODE_LEGACY_LCG;
       const scenario = createGame(config.seed, { queueModel });
       const initial = guiStateToCanonical(toS2GuiState(scenario));
+      // The 1P handicap changes only the human side's start position. The
+      // opposing bot keeps the ordinary empty board.
+      const handicapStart = handicap.enabled
+        ? applyHandicapToLegacyStart(initial, { seed: config.seed, appliedTo: humanSide })
+        : null;
+      const startState = (botId) => structuredClone(
+        handicapStart !== null && botId === humanSide ? handicapStart.state : initial,
+      );
       const match = createBotMatch({
         bots: [
-          { id: "left", gameId: 1, state: initial },
-          { id: "right", gameId: 2, state: structuredClone(initial) },
+          { id: "left", gameId: 1, state: startState("left") },
+          { id: "right", gameId: 2, state: startState("right") },
         ],
         mode: "paced",
         // A human side is declared as externally paced: their lock times come
@@ -341,7 +356,8 @@ const server = createServer(async (request, response) => {
         inFlightStep: null,
         queueSeeds: { left: scenario.bagSeed, right: scenario.bagSeed },
         match,
-        recording: createMatchRecording({ match, meta: matchReplayMeta({
+        handicap: handicapStart?.record ?? { id: HANDICAP_GARBAGE_ID, enabled: false },
+        recording: createMatchRecording({ match, handicap: handicapStart?.record ?? null, meta: matchReplayMeta({
           match,
           config,
           types: { left: leftType, right: rightType },
@@ -349,6 +365,7 @@ const server = createServer(async (request, response) => {
           firstTo: positiveIntegerOrDefault(body.firstTo, 1),
           ttrmCompatible,
           queueModel,
+          handicapEnabled: handicap.enabled,
         }) }),
         finishedRound: null,
       };
@@ -1021,6 +1038,7 @@ function matchView(session, submissions = [], preLockMatch = null) {
     clock: session.match.clock,
     config: session.config,
     botParameters: session.botParameters,
+    handicap: structuredClone(session.handicap ?? { id: HANDICAP_GARBAGE_ID, enabled: false }),
     pacing: {
       authority: session.humanSide === null ? "synthetic" : "realtime-1p",
       declaredPpsByBotId: structuredClone(session.match.pace.ppsByBotId),
@@ -1059,7 +1077,8 @@ function finalizeMatchRecording(session, outcome) {
   });
 }
 
-function matchReplayMeta({ match, config, types, botParameters, firstTo, ttrmCompatible, queueModel }) {
+function matchReplayMeta({ match, config, types, botParameters, firstTo, ttrmCompatible, queueModel,
+  handicapEnabled = false }) {
   const users = ["left", "right"].map((id) => ({
     id,
     username: `${id.toUpperCase()} · ${matchBotLabel(types[id])}`,
@@ -1079,6 +1098,9 @@ function matchReplayMeta({ match, config, types, botParameters, firstTo, ttrmCom
       ttrmCompatible: ttrmCompatible === true,
       queueModel: queueModel ?? QUEUE_MODE_LEGACY_LCG,
       declaredPpsByBotId: structuredClone(match.pace.ppsByBotId),
+      // Series-level meta keeps only what every game shares. The per-game seed
+      // and terrain live in each round record.
+      handicap: { id: HANDICAP_GARBAGE_ID, enabled: handicapEnabled === true },
       bots: {
         left: { type: types.left, label: matchBotLabel(types.left), parameters: structuredClone(botParameters.left) },
         right: { type: types.right, label: matchBotLabel(types.right), parameters: structuredClone(botParameters.right) },

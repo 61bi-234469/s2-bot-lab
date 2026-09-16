@@ -920,3 +920,104 @@ test("the 1P Reset key restarts every match state and rerolls RND", async () => 
   assert.match(restart, /excludedRandomSeed:[\s\S]*match-random-seed/);
   assert.match(restart, /rerollRandomSeed: true/);
 });
+
+/* The 1P handicap opens the human side on a stacked board. The canary runs the
+   real start/lock/step/round path, because the invariants that matter (28 cells,
+   no cavity, no complete row, an untouched opponent board, and a round record
+   that describes the board it was played on) are properties of that path rather
+   than of the generator alone. */
+const HANDICAP_CELLS = 28;
+const stackedCells = (board) => board.flat().filter((cell) => cell === "G").length;
+const completeRows = (board) => board.filter((row) => row.every((cell) => cell !== null)).length;
+
+async function startHandicapMatch(handlers, { seed = 4242, handicap = { enabled: true }, left = "human" } = {}) {
+  return handlers.handle({ method: "POST", path: "/api/match/start", body: {
+    left, right: "s2-simple", seed, handicap, maxTurns: null, firstTo: 2,
+  } });
+}
+
+test("static 1P handicap stacks only the human board and records the terrain per round", async () => {
+  const handlers = createGuiRequestHandlers({});
+  const started = await startHandicapMatch(handlers, { seed: 4242 });
+  assert.equal(started.status, 200, JSON.stringify(started.body));
+  const [left, right] = started.body.bots;
+  assert.equal(stackedCells(left.board), HANDICAP_CELLS);
+  assert.equal(completeRows(left.board), 0, "a complete row would be cleared differently by each path");
+  // Row 0 of a canonical board is the floor: the terrain sits on it, not in the air.
+  assert.ok(left.board[0].includes("G"), "the stack starts on the floor");
+  assert.ok(left.board.slice(6).every((row) => row.every((cell) => cell === null)),
+    "the stack stays within the declared height cap");
+  assert.equal(right.board.flat().filter((cell) => cell !== null).length, 0, "the bot side stays empty");
+  assert.equal(left.toppedOut, false);
+  assert.equal(started.body.handicap.enabled, true);
+  assert.equal(started.body.handicap.appliedTo, "left");
+  assert.equal(started.body.handicap.seed, 4242);
+  assert.equal(started.body.replayMeta.match.handicap.enabled, true);
+  assert.equal(started.body.replayMeta.match.handicap.seed, undefined,
+    "the per-game terrain does not belong to the series meta");
+
+  // A human lock on top of the terrain, then one bot step: the real committing path.
+  const humanState = guiStateToCanonical(toS2GuiState(createGame(4242)));
+  humanState.board = { ...humanState.board, cells: left.board.flat().map((cell) => cell ?? "_").join("") };
+  const placement = analyzeSimpleS2FinalPlacements(humanState, { topN: 1 }).moves[0].placement;
+  const locked = await handlers.handle({ method: "POST", path: "/api/match/human-lock", body: { lockFrame: 30, placement } });
+  assert.equal(locked.status, 200, JSON.stringify(locked.body));
+  const stepped = await handlers.handle({ method: "POST", path: "/api/match/step", body: { lockFrame: 60 } });
+  assert.equal(stepped.status, 200, JSON.stringify(stepped.body));
+
+  const round = await request(handlers, "GET", "/api/match/round");
+  assert.equal(round.handicap.id, "s2-gui-1p-handicap-garbage/1");
+  assert.equal(round.handicap.seed, 4242);
+  const recordedLeft = round.players.find((player) => player.id === "left");
+  const recordedCells = recordedLeft.initial.field.filter((cell) => cell === 8).length;
+  assert.equal(recordedCells, HANDICAP_CELLS, "the recorded initial board is the board that was played");
+  assert.deepEqual(round.handicap.columnHeights.reduce((sum, height) => sum + height, 0), HANDICAP_CELLS);
+});
+
+test("static handicap terrain follows each series game rather than the first one", async () => {
+  const handlers = createGuiRequestHandlers({});
+  const first = await startHandicapMatch(handlers, { seed: 4242 });
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  const firstRound = await request(handlers, "GET", "/api/match/round");
+  // Game two of the FT series uses seed + 1, exactly as the browser sends it.
+  const second = await startHandicapMatch(handlers, { seed: 4243 });
+  assert.equal(second.status, 200, JSON.stringify(second.body));
+  const secondRound = await request(handlers, "GET", "/api/match/round");
+  assert.equal(secondRound.handicap.seed, 4243);
+  assert.notDeepEqual(secondRound.handicap.columnHeights, firstRound.handicap.columnHeights);
+  // `initial.field` is one flat 10-wide array with row 0 on the floor.
+  const heightsOf = (round) => {
+    const field = round.players.find((player) => player.id === "left").initial.field;
+    return Array.from({ length: 10 }, (_, x) =>
+      field.filter((cell, index) => cell === 8 && index % 10 === x).length);
+  };
+  assert.deepEqual(heightsOf(secondRound), [...secondRound.handicap.columnHeights]);
+  assert.deepEqual(heightsOf(firstRound), [...firstRound.handicap.columnHeights]);
+});
+
+test("static matches without the handicap still open on an empty board", async () => {
+  const handlers = createGuiRequestHandlers({});
+  const off = await startHandicapMatch(handlers, { handicap: { enabled: false } });
+  assert.equal(off.status, 200, JSON.stringify(off.body));
+  assert.equal(off.body.bots.every((bot) => bot.board.flat().every((cell) => cell === null)), true);
+  assert.equal(off.body.handicap.enabled, false);
+  const absent = await handlers.handle({ method: "POST", path: "/api/match/start", body: {
+    left: "human", right: "s2-simple", seed: 7,
+  } });
+  assert.equal(absent.status, 200, JSON.stringify(absent.body));
+  assert.equal(absent.body.handicap.enabled, false);
+  const round = await request(handlers, "GET", "/api/match/round");
+  assert.equal(round.handicap, null);
+});
+
+test("a handicap request without a 1P side is not applicable, and a malformed one fails closed", async () => {
+  const handlers = createGuiRequestHandlers({});
+  const botsOnly = await startHandicapMatch(handlers, { left: "s2-simple", handicap: { enabled: true } });
+  assert.equal(botsOnly.status, 200, JSON.stringify(botsOnly.body));
+  assert.equal(botsOnly.body.handicap.enabled, false, "there is no 1P side to handicap");
+  assert.equal(botsOnly.body.bots.every((bot) => bot.board.flat().every((cell) => cell === null)), true);
+  for (const handicap of [{ enabled: "yes" }, [], 28]) {
+    const rejected = await startHandicapMatch(handlers, { handicap });
+    assert.equal(rejected.status, 400, JSON.stringify(rejected.body));
+  }
+});

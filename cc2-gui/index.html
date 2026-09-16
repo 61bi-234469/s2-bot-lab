@@ -264,9 +264,13 @@
                 <small class="match-scope-note">両方の実行方式で使います。同じSEEDでもミノ列・ガベージRNG・終局条件は方式ごとに異なります。</small>
               </div>
             </section>
-            <section class="match-setting-group" id="match-stall-lock-settings" data-scope="both">
-              <h3 class="group-name">STALL PENALTY / ストールペナルティ</h3>
+            <section class="match-setting-group" id="match-handicap-settings" data-scope="both">
+              <h3 class="group-name">HANDICAP / ハンデ</h3>
               <div class="match-setting-group-body">
+                <label class="handicap-setting" title="1P（You）側だけ、28マスのランダムなガベージが積まれた状態で開始します。空洞と完成ラインは作りません。">1P INITIAL GARBAGE
+                  <span><input id="match-handicap-garbage" type="checkbox"> 28マスのランダム地形から開始</span>
+                </label>
+                <small class="match-scope-note" id="match-handicap-note"></small>
                 <label class="stall-lock-setting" title="1P（You）側が指定PPSを下回ると、選択したペナルティを適用します。">STALL PENALTY
                   <span><input id="match-stall-lock" type="checkbox"> 1Pストール判定</span>
                 </label>
@@ -284,6 +288,7 @@
                   </div>
                 </div>
                 <small class="match-scope-note" id="match-stall-lock-note"></small>
+                <small class="match-scope-note" id="match-handicap-scope-note"></small>
               </div>
             </section>
           </div>

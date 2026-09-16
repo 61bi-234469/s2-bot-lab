@@ -25,6 +25,13 @@ export function buildExecutedInputTtrm(round) {
     session.profile !== 's2-input-execution/1')) {
     throw new BotMatchTtrmError('provenance', 'two finished input-profile sessions are required');
   }
+  // A round opened from an externally placed start position cannot be rebuilt
+  // from its consumed input log: the format carries no initial board. The file
+  // would replay from an empty field, so no file is offered at all.
+  if (sessions.some(session => (session.initialGarbageCellCount ?? 0) > 0)) {
+    throw new BotMatchTtrmError('provenance',
+      'a round started from placed garbage cannot be exported as .ttrm');
+  }
   const losers = sessions.filter(session => session.toppedOut);
   if (losers.length < 1 || (losers.length === 1 && terminal.winnerId === null) ||
       (losers.length === 2 && terminal.winnerId !== null)) throw new BotMatchTtrmError('terminal', 'export requires an observed top-out result');

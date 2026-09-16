@@ -8,16 +8,18 @@ const ROUNDS = new WeakMap();
 
 /** One referee owns both clocks, delivery and the observed terminal receipt. */
 export function createInputExecutionRound({ seed, ids = ['left', 'right'], handlingById = {},
-  stallPenaltyForgivenessId = null } = {}) {
+  stallPenaltyForgivenessId = null, initialGarbageById = {} } = {}) {
   if (!Array.isArray(ids) || ids.length !== 2 || new Set(ids).size !== 2 || ids.some(id => typeof id !== 'string' || !id)) {
     throw new Error('input round requires two distinct player ids');
   }
   ids = [...ids];
   if (Object.keys(handlingById).some(id => !ids.includes(id))) throw new Error('unknown handling player');
   if (stallPenaltyForgivenessId !== null && !ids.includes(stallPenaltyForgivenessId)) throw new Error('unknown STALL forgiveness player');
+  if (Object.keys(initialGarbageById).some(id => !ids.includes(id))) throw new Error('unknown initial garbage player');
   const sessions = ids.map(id => createInputReplaySession({ id, replay: {
     frames: 0, events: [], options: inputExecutionOptions({ seed, handling: handlingById[id] }), results: { stats: { garbage: { sent: 0 } } },
-  } }, { canonicalProfile: INPUT_EXECUTION_PROFILE.id, forgiveStallPenalty: id === stallPenaltyForgivenessId }));
+  } }, { canonicalProfile: INPUT_EXECUTION_PROFILE.id, forgiveStallPenalty: id === stallPenaltyForgivenessId,
+    initialGarbageCells: initialGarbageById[id] ?? null }));
   let status = 'active';
   let terminal = null;
   let frame = 0;
@@ -73,6 +75,11 @@ export function createInputExecutionRound({ seed, ids = ['left', 'right'], handl
       const index = ids.indexOf(id);
       if (index < 0) throw new Error('unknown input round player');
       return sessions[index].stallPenaltyRows;
+    },
+    refereeInitialGarbageCells(id) {
+      const index = ids.indexOf(id);
+      if (index < 0) throw new Error('unknown input round player');
+      return sessions[index].initialGarbageCellCount;
     },
     tick(inputs = {}) {
       if (status !== 'active') throw new Error('input round is not active');
@@ -134,6 +141,8 @@ export function completedInputRoundRecording(round) {
   return { players: owned.sessions.map(session => ({
     observed: session.finish(), events: session.executedEvents(), frame: session.frame,
     toppedOut: session.toppedOut, profile: session.canonicalProfile,
+    // A start position no consumed input log can reproduce. Export refuses it.
+    initialGarbageCellCount: session.initialGarbageCellCount,
   })), terminal: structuredClone(owned.readTerminal()) };
 }
 

@@ -90,3 +90,12 @@ test("the persisted schema covers every mode, both sides and no duplicate contro
   const ids = [...CONTROL_PREFERENCE_IDS, ...TOGGLE_PREFERENCE_IDS];
   assert.equal(new Set(ids).size, ids.length);
 });
+
+test("the 1P handicap toggle is stored and a foreign value falls back to the markup default", () => {
+  const stored = sanitizePreferences({ toggles: { "match-handicap-garbage": true } }, normalizeBotParameters);
+  assert.equal(stored.toggles["match-handicap-garbage"], true);
+  const disabled = sanitizePreferences({ toggles: { "match-handicap-garbage": false } }, normalizeBotParameters);
+  assert.equal(disabled.toggles["match-handicap-garbage"], false);
+  const foreign = sanitizePreferences({ toggles: { "match-handicap-garbage": "28" } }, normalizeBotParameters);
+  assert.equal("match-handicap-garbage" in foreign.toggles, false);
+});
