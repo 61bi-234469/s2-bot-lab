@@ -13,6 +13,7 @@ import { canonicalize } from '../scripts/cs1.mjs';
 import { humanEngineHandling } from '../cc2-gui/human-controls.mjs';
 import { HANDICAP_GARBAGE_ID, handicapColumnHeights, handicapGarbageCells,
   handicapRecord, normalizeHandicapGarbage } from './gui-1p-handicap-garbage.mjs';
+import { normalizeTurnMatch } from './gui-turn-match.mjs';
 
 const IDS = ['left', 'right'];
 const KEYS = new Set(['moveLeft', 'moveRight', 'softDrop', 'hardDrop', 'rotateCW', 'rotateCCW', 'rotate180', 'hold']);
@@ -32,6 +33,35 @@ const normalizeStallPenalty = (value, humanSide) => {
   if (!['penalty-line', 'forced-lock'].includes(value.penalty)) throw new Error('unsupported STALL PENALTY');
   return { enabled: true, pps: value.pps, penalty: value.penalty };
 };
+
+/**
+ * The lock a turn match still owes each side.
+ *
+ * The frame clock never stops on this route, so a turn is a lock-ordering rule
+ * rather than a stopped clock: one side leads a turn and the other follows it,
+ * and neither may take its (n+1)-th piece before the turn rule admits it. The
+ * leading side may lock while it is not ahead; the following side only once the
+ * leader has taken that turn. A simultaneous turn has two leaders, so neither
+ * can get more than one piece ahead of the other.
+ *
+ * Each side is therefore blocked only by its own lock and released only by the
+ * opponent's, which is what keeps an in-flight bot plan from being invalidated
+ * by the person locking underneath it.
+ */
+function turnAllowsLock(session, id) {
+  if (!session.turnMatch.enabled) return true;
+  const own = lockCount(session, id);
+  const opponent = lockCount(session, id === 'left' ? 'right' : 'left');
+  const human = session.types.left === 'human' ? 'left' : null;
+  const leads = session.turnMatch.order === 'simultaneous' ||
+    (session.turnMatch.order === 'human-first' ? id === human : id !== human);
+  return leads ? own <= opponent : own < opponent;
+}
+
+function lockCount(session, id) {
+  const last = session.lastLock[id];
+  return last === undefined ? 0 : last + 1;
+}
 
 /** Shared local/Pages input owner. Only the synchronous step path mutates a
  * round; asynchronous jobs receive public copies and can publish plans for a
@@ -57,6 +87,15 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           const humanSide = types.left === 'human' ? 'left' : null;
           const stallPenalty = normalizeStallPenalty(body.stallLock, humanSide);
           const handicap = normalizeHandicapGarbage(body.handicap, { humanSide });
+          const turnMatch = normalizeTurnMatch(body.turnMatch, { humanSide });
+          // A turn match has no pace for a minimum-pace budget to measure, so
+          // the pair is refused rather than silently resolved one way.
+          if (turnMatch.enabled && stallPenalty.enabled) throw new Error('a turn match has no pace for STALL PENALTY');
+          // Off keeps the observed S2 gravity and garbage multiplier at their
+          // starting values for the whole round; it changes no other rule and
+          // stays inside the exportable profile.
+          const timeProgression = body.timeProgression ?? true;
+          if (typeof timeProgression !== 'boolean') throw new Error('invalid TIME PROGRESSION setting');
           if (IDS.some(id => types[id] !== 'human' && parameters[id].queueDepth > 15)) throw new Error('TTRM INPUT supports QUEUE DEPTH up to 15 (current + 14 NEXT)');
           if (body.maxTurns != null && (!Number.isSafeInteger(body.maxTurns) || body.maxTurns < 1 || body.maxTurns > 10000)) throw new Error('invalid MAX TURNS');
           if (current) current.closed = true;
@@ -70,8 +109,11 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           // that already has it. It is per-round: each game of an FT series and
           // each restart arrives here with its own seed.
           const handicapTerrain = handicap.enabled ? handicapColumnHeights(body.seed) : null;
-          current = { sessionId, keys: IDS.map(id => `${sessionId}/${id}`), types, parameters,
-            round: createInputExecutionRound({ seed: body.seed,
+          current = { sessionId, keys: IDS.map(id => `${sessionId}/${id}`), types, parameters, turnMatch,
+            // A turn match removes natural gravity: the piece then waits where
+            // the player leaves it and only a hard drop locks it, which is the
+            // movement contract a turn needs on this 60 Hz route too.
+            round: createInputExecutionRound({ seed: body.seed, timeProgression, naturalGravity: !turnMatch.enabled,
               stallPenaltyForgivenessId: stallPenalty.enabled && stallPenalty.penalty === 'penalty-line' ? 'left' : null,
               initialGarbageById: handicapTerrain === null ? {} : { [humanSide]: handicapGarbageCells(handicapTerrain) },
               handlingById: types.left === 'human' ? { left: humanEngineHandling(body.humanControls) } : {} }), closed: false, failure: null,
@@ -87,8 +129,9 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
             handicap: handicapTerrain === null
               ? { id: HANDICAP_GARBAGE_ID, enabled: false }
               : handicapRecord({ seed: body.seed, columnHeights: handicapTerrain, appliedTo: humanSide }),
-            config: { seed: body.seed, firstTo: body.firstTo ?? 1, fairComparison: false,
+            config: { seed: body.seed, firstTo: body.firstTo ?? 1, fairComparison: false, timeProgression,
               maxTurns: body.maxTurns ?? null, stallLock: stallPenalty,
+              turnMatch: { ...turnMatch },
               handicap: { id: HANDICAP_GARBAGE_ID, enabled: handicap.enabled } } };
           return ok(view(current));
         }
@@ -129,6 +172,13 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
             if (session.types.left === 'human') {
               inputs.left = [];
               while (cursor < events.length && events[cursor].frame === frame) inputs.left.push(events[cursor++]);
+              // Out of turn, the hard drop is the one input a turn match has to
+              // withhold: with gravity off it is the only thing that can lock a
+              // piece. Both halves of the press are dropped so the Engine keeps
+              // no half-held key, and the next in-turn press works normally.
+              if (!turnAllowsLock(session, 'left')) {
+                inputs.left = inputs.left.filter(event => event.data.key !== 'hardDrop');
+              }
               if (session.stallPenalty.forcedLockPending) {
                 // The referee owns the deadline. A release/press pair makes
                 // the forced hard drop independent of the browser's held-key
@@ -157,11 +207,13 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
                   session.stallPenalty.dueFrame = lock.frame + 60 / session.stallPenalty.pps;
                 } else if (session.types[id] !== 'human') {
                   const parameters = session.parameters[id];
-                  const interval = parameters.ppsEnabled === false ? 0 : 60 / parameters.pps;
+                  // A turn match has no pace: the opponent's lock is what
+                  // releases the next one, so no PPS deadline is claimed.
+                  const interval = session.turnMatch.enabled || parameters.ppsEnabled === false ? 0 : 60 / parameters.pps;
                   const due = session.paceDeadline[id] ?? interval;
                   session.paceDeadline[id] = (lock.frame > paceFrame(due) ? lock.frame : due) + interval;
                   const stats = session.diagnostics[id];
-                  if (parameters.ppsEnabled !== false) {
+                  if (parameters.ppsEnabled !== false && !session.turnMatch.enabled) {
                     stats.pacedLocks++;
                     if (lock.frame > paceFrame(due)) stats.deadlineExceededLocks++;
                   }
@@ -195,13 +247,16 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           // A round the consumed input log cannot reproduce: an externally
           // applied start position or penalty floor. It stays valid to play and
           // to score, and its receipt says why no `.ttrm` is offered.
-          const replayDisabled = session.stallPenalty.enabled ? 'stall-penalty'
+          const replayDisabled = session.turnMatch.enabled ? 'turn-match'
+            : session.stallPenalty.enabled ? 'stall-penalty'
             : session.handicap.enabled ? 'handicap-garbage' : null;
           if (replayDisabled !== null) {
             if (path.endsWith('/ttrm')) {
-              throw new Error(replayDisabled === 'stall-penalty'
-                ? 'STALL PENALTY rounds cannot be saved as .ttrm'
-                : '1P handicap rounds cannot be saved as .ttrm');
+              throw new Error(replayDisabled === 'turn-match'
+                ? 'turn match rounds cannot be saved as .ttrm'
+                : replayDisabled === 'stall-penalty'
+                  ? 'STALL PENALTY rounds cannot be saved as .ttrm'
+                  : '1P handicap rounds cannot be saved as .ttrm');
             }
             const receipt = session.round.refereeView();
             return ok({ index: 0, startFrame: 0, endFrame: session.round.frame, status: 'ok',
@@ -270,6 +325,9 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
   }
   function schedule(session, id) {
     if (!live(session) || session.types[id] === 'human' || session.jobs[id] || session.plans[id] || session.ready[id]) return;
+    // The bot is released by the opponent's lock, never by a timer, so a turn
+    // it does not own is not planned for at all.
+    if (!turnAllowsLock(session, id)) return;
     if ((session.misses[id] ?? 0) > 30) {
       session.failure = 'input planning repeatedly missed its live boundary';
       void runtime.closeSessions({ sessionKeys: session.keys });
@@ -285,8 +343,10 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
     }
     const type = session.types[id];
     const parameters = session.parameters[id];
-    const interval = parameters.ppsEnabled === false ? 0 : 60 / parameters.pps;
-    const dueFrame = paceFrame(session.paceDeadline[id] ?? interval);
+    const interval = session.turnMatch.enabled || parameters.ppsEnabled === false ? 0 : 60 / parameters.pps;
+    const dueFrame = session.turnMatch.enabled
+      ? session.round.frame
+      : paceFrame(session.paceDeadline[id] ?? interval);
     // Forecast is bounded to 120 frames. Slow PPS limits wait without spending
     // worker time repeatedly forecasting the same distant deadline.
     if (dueFrame > session.round.frame + 120) return;
@@ -337,7 +397,8 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
         moves: structuredClone(proposed.moves) };
       const startFrame = Math.max(session.round.frame + (session.leadFrames[id] ?? 2), dueFrame);
       const resolveStarted = now();
-      const resolved = await runtime.resolveInput({ request, movement: latest.movement, startFrame });
+      const resolved = await runtime.resolveInput({ request, movement: latest.movement, startFrame,
+        timeProgression: session.round.timeProgression, naturalGravity: session.round.naturalGravity });
       if (!live(session)) return;
       const diagnostics = session.diagnostics[id];
       // Count completed resolution decisions, including plans discarded later.
@@ -401,8 +462,14 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
         dueFrame: session.stallPenalty.dueFrame,
         replayDisabled: session.stallPenalty.enabled },
       handicap: { ...structuredClone(session.handicap), replayDisabled: session.handicap.enabled },
+      turnMatch: { ...session.turnMatch, replayDisabled: session.turnMatch.enabled },
+      // Which side may take the next lock. The browser reads it to hold the
+      // player's own hard drop while the turn belongs to the opponent.
+      dueBotIds: IDS.filter(id => turnAllowsLock(session, id)),
       replayMeta: { origin: 's2-bot-lab-generated', users: IDS.map(id => ({ id, username: session.types[id] })) },
-      pacing: { authority: 'realtime-input', declaredPpsByBotId: Object.fromEntries(IDS.map(id =>
-        [id, session.types[id] === 'human' || session.parameters[id].ppsEnabled === false ? null : session.parameters[id].pps])) } };
+      pacing: { authority: session.turnMatch.enabled ? 'turn-input' : 'realtime-input',
+        declaredPpsByBotId: Object.fromEntries(IDS.map(id =>
+          [id, session.turnMatch.enabled || session.types[id] === 'human' ||
+            session.parameters[id].ppsEnabled === false ? null : session.parameters[id].pps])) } };
   }
 }

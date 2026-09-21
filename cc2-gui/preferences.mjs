@@ -24,16 +24,19 @@ export const CONTROL_PREFERENCE_IDS = Object.freeze([
   "match-count",
   "match-stall-lock-pps",
   "match-stall-lock-penalty",
+  "match-turn-order",
   "replay-speed",
 ]);
 export const TOGGLE_PREFERENCE_IDS = Object.freeze([
   "match-fair-comparison",
   "match-pre-lock-preview",
   "match-ttrm-compatible",
+  "match-time-progression",
   "match-unlimited-turns",
   "match-random-seed",
   "match-stall-lock",
   "match-handicap-garbage",
+  "match-turn-match",
 ]);
 
 export function emptyPreferences() {

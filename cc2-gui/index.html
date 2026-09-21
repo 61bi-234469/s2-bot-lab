@@ -48,9 +48,9 @@
           <section class="panel piece-panel">
             <h2>HOLD</h2>
             <div class="piece-preview" id="hold-piece" aria-label="Hold piece"></div>
-            <div class="clear-info" aria-label="B2B, REN and latest line clear">
+            <div class="clear-info" aria-label="B2B, COMBO and latest line clear">
               <span id="hold-b2b" data-active="false">B2B —</span>
-              <span id="hold-ren" data-active="false">REN 0</span>
+              <span id="hold-ren" data-active="false">COMBO 0</span>
               <span class="clear-name" id="hold-clear"></span>
             </div>
           </section>
@@ -94,7 +94,7 @@
           <p class="deck-label" id="suggestion-engine-label">RAW CC2 (MINUSKELVIN) SUGGESTION</p>
           <div class="suggestion-main">
             <strong id="suggestion-move">—</strong>
-            <span id="suggestion-detail">「考える」で探索を開始</span>
+            <span id="suggestion-detail">「THINK」で探索を開始</span>
           </div>
           <div class="metrics">
             <span>NODES <strong id="nodes-value">—</strong></span>
@@ -120,11 +120,11 @@
           </div>
         </div>
         <div class="buttons">
-          <button class="primary" id="think-button">考える</button>
-          <button id="candidates-button" aria-pressed="false">候補</button>
-          <button id="apply-button" disabled>提案を適用</button>
-          <button id="auto-button" aria-pressed="false">自動再生</button>
-          <button class="quiet" id="reset-button">リセット</button>
+          <button class="primary" id="think-button"><span class="button-label">THINK</span><small>考える</small></button>
+          <button id="candidates-button" aria-pressed="false"><span class="button-label">CANDIDATES</span><small>候補</small></button>
+          <button id="apply-button" disabled><span class="button-label">APPLY</span><small>提案を適用</small></button>
+          <button id="auto-button" aria-pressed="false"><span class="button-label">AUTOPLAY</span><small>自動再生</small></button>
+          <button class="quiet" id="reset-button"><span class="button-label">RESET</span><small>リセット</small></button>
         </div>
         <label class="think-control">
           ANALYSIS BOT
@@ -171,7 +171,7 @@
         <div class="match-heading">
           <div>
             <p class="deck-label">SIMPLIFIED S2 MATCH</p>
-            <h2>BOT vs BOT</h2>
+            <h2>BOT vs BOT / 1P</h2>
           </div>
           <span id="match-status">NOT STARTED</span>
         </div>
@@ -222,19 +222,21 @@
                 <label class="ttrm-compatible-setting" title="実入力の .ttrm 対局を有効にします。Raw CC2、chouhy、CC2 S2 F14、current champion同士、または左側のYou (1P)との対戦に対応します。">TTRM INPUT
                   <span><input id="match-ttrm-compatible" type="checkbox" checked> .ttrm対応 / 実入力実行</span>
                 </label>
+                <div class="match-setting-dependent" id="match-legacy-settings">
+                  <span class="dependent-name">従来モード専用 / LEGACY ONLY</span>
+                  <label class="fair-comparison-setting">FAIR COMPARISON
+                    <span><input id="match-fair-comparison" type="checkbox"> SERIAL · 1 PPS</span>
+                  </label>
+                  <label class="pre-lock-preview-setting">PRE-LOCK PREVIEW
+                    <span><input id="match-pre-lock-preview" type="checkbox"> GHOST</span>
+                  </label>
+                  <small class="match-scope-note" id="match-legacy-note"></small>
+                </div>
+                <label class="time-progression-setting" title="観測S2ルールでは、120秒経過後に落下速度が、180秒経過後に火力（ガベージ倍率）が上がり続けます。OFFにするとどちらも開始時の値のままで対局します。">TIME PROGRESSION
+                  <span><input id="match-time-progression" type="checkbox" checked> 時間経過で落下速度・火力を上げる</span>
+                </label>
                 <small class="match-scope-note" id="match-execution-note"></small>
-              </div>
-            </section>
-            <section class="match-setting-group" id="match-legacy-settings" data-scope="legacy">
-              <h3 class="group-name">従来モード専用 / LEGACY ONLY</h3>
-              <div class="match-setting-group-body">
-                <label class="fair-comparison-setting">FAIR COMPARISON
-                  <span><input id="match-fair-comparison" type="checkbox"> SERIAL · 1 PPS</span>
-                </label>
-                <label class="pre-lock-preview-setting">PRE-LOCK PREVIEW
-                  <span><input id="match-pre-lock-preview" type="checkbox"> GHOST</span>
-                </label>
-                <small class="match-scope-note" id="match-legacy-note"></small>
+                <small class="match-scope-note" id="match-time-progression-note"></small>
               </div>
             </section>
             <section class="match-setting-group" data-scope="both">
@@ -260,37 +262,13 @@
                 <small class="match-scope-note">両方の実行方式で使います。同じSEEDでもミノ列・ガベージRNG・終局条件は方式ごとに異なります。</small>
               </div>
             </section>
-            <section class="match-setting-group" id="match-handicap-settings" data-scope="both">
-              <h3 class="group-name">HANDICAP / ハンデ</h3>
-              <div class="match-setting-group-body">
-                <label class="handicap-setting" title="1P（You）側だけ、28マスのランダムなガベージが積まれた状態で開始します。空洞と完成ラインは作りません。">1P INITIAL GARBAGE
-                  <span><input id="match-handicap-garbage" type="checkbox"> 28マスのランダム地形から開始</span>
-                </label>
-                <small class="match-scope-note" id="match-handicap-note"></small>
-                <label class="stall-lock-setting" title="1P（You）側が指定PPSを下回ると、選択したペナルティを適用します。">STALL PENALTY
-                  <span><input id="match-stall-lock" type="checkbox"> 1Pストール判定</span>
-                </label>
-                <label class="match-setting" for="match-stall-lock-penalty">PENALTY
-                  <select id="match-stall-lock-penalty" disabled>
-                    <option value="penalty-line">消去不能ラインを1段追加</option>
-                    <option value="forced-lock">スポーン位置へ強制接地</option>
-                  </select>
-                </label>
-                <div class="match-setting">
-                  <label for="match-stall-lock-pps">MINIMUM PACE</label>
-                  <div class="match-limit-control">
-                    <input id="match-stall-lock-pps" type="number" min="0.1" max="20" step="0.1" value="2" disabled>
-                    <span class="unit-label">PPS</span>
-                  </div>
-                </div>
-                <small class="match-scope-note" id="match-stall-lock-note"></small>
-                <small class="match-scope-note" id="match-handicap-scope-note"></small>
-              </div>
-            </section>
           </div>
         </details>
         <div class="match-outcome">
-          <output id="match-summary" class="match-summary">NO SERIES RESULTS</output>
+          <div class="match-outcome-copy">
+            <p class="match-outcome-label">RESULT / 結果</p>
+            <output id="match-summary" class="match-summary" data-state="empty">NO SERIES RESULTS</output>
+          </div>
           <div class="match-exports" role="group" aria-label="対局の保存">
             <span class="export-label">EXPORT</span>
             <button id="match-save-replay" class="quiet" type="button" data-format="json" disabled>SAVE .json</button>
@@ -305,9 +283,9 @@
               <div class="match-rail">
                 <span class="rail-label">HOLD</span>
                 <div class="mini-box" id="match-left-hold" aria-label="Left bot hold piece"></div>
-                <div class="clear-info" aria-label="Left bot B2B, REN and latest line clear">
+                <div class="clear-info" aria-label="Left bot B2B, COMBO and latest line clear">
                   <span id="match-left-b2b" data-active="false">B2B —</span>
-                  <span id="match-left-ren" data-active="false">REN 0</span>
+                  <span id="match-left-ren" data-active="false">COMBO 0</span>
                   <span class="clear-name" id="match-left-clear"></span>
                 </div>
               </div>
@@ -332,9 +310,9 @@
               <div class="match-rail">
                 <span class="rail-label">HOLD</span>
                 <div class="mini-box" id="match-right-hold" aria-label="Right bot hold piece"></div>
-                <div class="clear-info" aria-label="Right bot B2B, REN and latest line clear">
+                <div class="clear-info" aria-label="Right bot B2B, COMBO and latest line clear">
                   <span id="match-right-b2b" data-active="false">B2B —</span>
-                  <span id="match-right-ren" data-active="false">REN 0</span>
+                  <span id="match-right-ren" data-active="false">COMBO 0</span>
                   <span class="clear-name" id="match-right-clear"></span>
                 </div>
               </div>
@@ -415,7 +393,7 @@
               <div class="match-rail">
                 <span class="rail-label">HOLD</span>
                 <div class="mini-box" id="replay-left-hold" aria-label="Left player hold piece"></div>
-                <div class="clear-info" aria-label="Left player B2B, REN and latest line clear">
+                <div class="clear-info" aria-label="Left player B2B, COMBO and latest line clear">
                   <span id="replay-left-b2b" data-active="false">B2B —</span>
                   <span id="replay-left-ren" data-active="false">COMBO —</span>
                   <span class="clear-name" id="replay-left-clear"></span>
@@ -442,7 +420,7 @@
               <div class="match-rail">
                 <span class="rail-label">HOLD</span>
                 <div class="mini-box" id="replay-right-hold" aria-label="Right player hold piece"></div>
-                <div class="clear-info" aria-label="Right player B2B, REN and latest line clear">
+                <div class="clear-info" aria-label="Right player B2B, COMBO and latest line clear">
                   <span id="replay-right-b2b" data-active="false">B2B —</span>
                   <span id="replay-right-ren" data-active="false">COMBO —</span>
                   <span class="clear-name" id="replay-right-clear"></span>
@@ -473,13 +451,65 @@
             <p class="deck-label" id="bot-settings-side">LEFT BOT</p>
             <h2 id="bot-settings-title">BOT SETTINGS</h2>
           </div>
-          <button class="dialog-close" value="cancel" formmethod="dialog" aria-label="設定を閉じる">×</button>
+          <button class="dialog-close" value="cancel" formmethod="dialog" formnovalidate aria-label="設定を閉じる">×</button>
         </header>
         <p class="bot-settings-description" id="bot-settings-description"></p>
         <div class="bot-settings-fields" id="bot-settings-fields"></div>
+        <div class="bot-settings-fields human-settings-fields" id="human-settings-fields" hidden>
+          <section class="bot-settings-section">
+            <h3 class="bot-settings-section-heading">HANDLING / 操作</h3>
+            <div id="human-handling-fields"></div>
+          </section>
+          <section class="bot-settings-section" id="human-match-rules">
+            <h3 class="bot-settings-section-heading">MATCH RULES / 対局ルール</h3>
+            <small class="bot-settings-section-note">MATCH RULES は変更時にすぐ反映します。CANCEL は未保存の HANDLING / KEY BINDINGS だけを破棄します。</small>
+            <section class="match-setting-group" id="match-turn-settings">
+              <h4 class="group-name">TURN MATCH / ターン勝負</h4>
+              <div class="match-setting-group-body">
+                <label class="turn-match-setting" title="1P（You）とBotが1手ずつ番で置きます。時間制限とミノの重力落下はありません。">TURN MATCH
+                  <span><input id="match-turn-match" type="checkbox"> 1手ずつのターン勝負にする</span>
+                </label>
+                <label class="match-setting" for="match-turn-order">ORDER
+                  <select id="match-turn-order" disabled>
+                    <option value="simultaneous">同時（互いの手を見ずに1手）</option>
+                    <option value="human-first">1P先行</option>
+                    <option value="bot-first">bot先行</option>
+                  </select>
+                </label>
+                <small class="match-scope-note" id="match-turn-note"></small>
+              </div>
+            </section>
+            <section class="match-setting-group" id="match-handicap-settings">
+              <h4 class="group-name">HANDICAP / ハンデ</h4>
+              <div class="match-setting-group-body">
+                <label class="handicap-setting" title="1P（You）側だけ、28マスのランダムなガベージが積まれた状態で開始します。空洞と完成ラインは作りません。">1P INITIAL GARBAGE
+                  <span><input id="match-handicap-garbage" type="checkbox"> 28マスのランダム地形から開始</span>
+                </label>
+                <small class="match-scope-note" id="match-handicap-note"></small>
+                <label class="stall-lock-setting" title="1P（You）側が指定PPSを下回ると、選択したペナルティを適用します。">STALL PENALTY
+                  <span><input id="match-stall-lock" type="checkbox"> 1Pストール判定</span>
+                </label>
+                <label class="match-setting" for="match-stall-lock-penalty">PENALTY
+                  <select id="match-stall-lock-penalty" disabled>
+                    <option value="penalty-line">消去不能ラインを1段追加</option>
+                    <option value="forced-lock">スポーン位置へ強制接地</option>
+                  </select>
+                </label>
+                <div class="match-setting">
+                  <label for="match-stall-lock-pps">MINIMUM PACE</label>
+                  <div class="match-limit-control">
+                    <input id="match-stall-lock-pps" type="number" min="0.1" max="20" step="0.1" value="2" disabled>
+                    <span class="unit-label">PPS</span>
+                  </div>
+                </div>
+                <small class="match-scope-note" id="match-stall-lock-note"></small>
+              </div>
+            </section>
+          </section>
+        </div>
         <p class="bot-settings-validation" id="bot-settings-validation" role="alert" hidden></p>
         <div class="dialog-actions">
-          <button value="cancel" formmethod="dialog">CANCEL</button>
+          <button value="cancel" formmethod="dialog" formnovalidate>CANCEL</button>
           <button class="primary" id="bot-settings-save" value="save">SAVE</button>
         </div>
       </form>
@@ -497,17 +527,17 @@
         <div class="help-dialog-body">
           <section>
             <h3>このアプリについて</h3>
-            <p>Botが決めるのは「どこに置くか」だけです。ライン消去・攻撃・B2B・REN・相殺・せり上がりの判定は、すべてTETR.IO Season 2 のルールを再現したSimulatorが行います。回転やキックの入力手順そのものは再現していないため、スピン判定の一部はSimulator側の独自判定に依存します。</p>
+            <p>Botが決めるのは「どこに置くか」だけです。ライン消去・攻撃・B2B・COMBO・相殺・せり上がりの判定は、すべてTETR.IO Season 2 のルールを再現したSimulatorが行います。回転やキックの入力手順そのものは再現していないため、スピン判定の一部はSimulator側の独自判定に依存します。</p>
           </section>
           <section>
             <h3>SINGLE ANALYSIS（1手解析）</h3>
-            <p>ANALYSIS BOTを選び「考える」を押すと、その局面での1手を提案します。「候補」で複数の候補手を一覧表示でき、クリックすると盤面プレビューが切り替わり、「提案を適用」で確定します。「自動再生」は提案の適用を繰り返し、「リセット」で盤面を初期化します。候補の数値はSimulatorで検証済みのものだけが表示され、検証できなかった候補は理由付きで選べません。Raw CC2とchouhy forkは実際に指す1手しか返さないため、候補は1行だけになります。</p>
+            <p>ANALYSIS BOTを選び「THINK」を押すと、その局面での1手を提案します。「CANDIDATES」で複数の候補手を一覧表示でき、クリックすると盤面プレビューが切り替わり、「APPLY」で確定します。「AUTOPLAY」は提案の適用を繰り返し、「RESET」で盤面を初期化します。候補の数値はSimulatorで検証済みのものだけが表示され、検証できなかった候補は理由付きで選べません。Raw CC2とchouhy forkは実際に指す1手しか返さないため、候補は1行だけになります。</p>
           </section>
           <section>
             <h3>BOT vs BOT / 1P（対戦）</h3>
             <p>LEFT BOTとRIGHT BOTを選び、START MATCHで対局を開始します。もう一度押すと一時停止、さらに押すと再開します。STEPで1手だけ進めることもできます。LEFT BOTで「You (1P)」を選ぶと自分でプレイできます（← → 移動、↓ ソフトドロップ、Space ハードドロップ、Z/X 回転、A 180度回転、C ホールド、Esc リセット）。キー割り当てや操作感（DAS・ARR・DCD・SDF）はSETTINGSから変更できます。</p>
             <p>実行方式は2つあります。<strong>TTRM INPUT</strong>（既定でON）は実際の入力と経過時間で進み、対局後に <code>.ttrm</code> として保存できます。OFFにすると<strong>固定探索モード</strong>になり、同じSEEDで再現できる <code>.json</code> として保存できます。TTRM INPUTで使えるBotの組み合わせは限られており、使えないBotはLEFT/RIGHT BOTの一覧でグレーアウトします。</p>
-            <p>MATCH SETTINGSでは、対局条件（SEED・MAX TURNS・FIRST TOなど）に加えて、1P向けのハンデを設定できます。「1P INITIAL GARBAGE」はランダムな地形を積んだ状態から始めるハンデ、「STALL PENALTY」はどちらの実行方式でも使え、指定したペース（PPS）を下回ると自動でペナルティを課す設定です。どちらか一方でもONにした対局は <code>.ttrm</code> として保存できません。各Botの探索条件（SELECTION・THINK TIME・PPSなど）はBotごとのSETTINGSボタンから設定します。</p>
+            <p>MATCH SETTINGSでは、対局条件（SEED・MAX TURNS・FIRST TOなど）を設定します。LEFT BOTで「You (1P)」を選んだあとのSETTINGSには、HANDLING / 操作とMATCH RULES / 対局ルールがあり、TURN MATCH・1P INITIAL GARBAGE・STALL PENALTYなどを設定できます。各Botの探索条件（SELECTION・THINK TIME・PPSなど）はBotごとのSETTINGSボタンから設定します。</p>
           </section>
           <section>
             <h3>REPLAY（リプレイ再生）</h3>

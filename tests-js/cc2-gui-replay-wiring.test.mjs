@@ -275,28 +275,30 @@ test("the deck exports through one button whose format follows the execution pat
 test("each match setting group names the execution path it belongs to", () => {
   const settings = markup.slice(markup.indexOf('class="match-settings"'), markup.indexOf('class="match-outcome"'));
   assert.deepEqual([...settings.matchAll(/data-scope="([a-z]+)"/g)].map((match) => match[1]),
-    ["execution", "legacy", "both", "both"]);
+    ["execution", "both"]);
   for (const id of ["match-execution-note", "match-legacy-note", "match-legacy-settings",
-    "match-handicap-settings", "match-handicap-note", "match-stall-lock-note",
-    "match-handicap-scope-note"]) assert.ok(ids.has(id), id);
-  // The two 1P settings share one group, in the order they take effect: the
-  // start position first, then the rule that bounds the pace during play.
-  const handicapGroup = settings.slice(settings.indexOf('id="match-handicap-settings"'));
-  assert.match(handicapGroup, /HANDICAP \/ ハンデ/);
-  assert.ok(handicapGroup.indexOf('id="match-handicap-garbage"') <
-    handicapGroup.indexOf('id="match-stall-lock"'), "INITIAL GARBAGE comes before STALL PENALTY");
-  assert.equal(settings.lastIndexOf('class="match-setting-group"'),
-    settings.indexOf('class="match-setting-group" id="match-handicap-settings"'),
-    "the 1P group is the last one in the row");
+    "match-turn-settings", "match-turn-match", "match-turn-order", "match-turn-note",
+    "match-handicap-settings", "match-handicap-note", "match-stall-lock-note"])
+    assert.ok(ids.has(id), id);
+  const humanSettings = markup.slice(markup.indexOf('id="human-settings-fields"'), markup.indexOf('id="bot-settings-validation"'));
+  assert.match(readFileSync(new URL("../cc2-gui/styles.css", import.meta.url), "utf8"),
+    /\.bot-settings-fields\[hidden\] \{ display: none; \}/, "the 1P panel must stay hidden in a bot's dialog");
+  assert.match(humanSettings, /HANDLING \/ 操作/);
+  assert.match(humanSettings, /MATCH RULES \/ 対局ルール/);
+  assert.ok(humanSettings.indexOf('id="match-turn-settings"') < humanSettings.indexOf('id="match-handicap-settings"'));
+  assert.ok(humanSettings.indexOf('id="match-handicap-garbage"') <
+    humanSettings.indexOf('id="match-stall-lock"'), "INITIAL GARBAGE comes before STALL PENALTY");
+  assert.doesNotMatch(settings, /match-turn-settings|match-handicap-settings|match-handicap-scope-note/);
+  assert.ok(settings.indexOf('id="match-ttrm-compatible"') < settings.indexOf('id="match-legacy-settings"'));
+  const legacy = settings.slice(settings.indexOf('id="match-legacy-settings"'), settings.indexOf('id="match-legacy-note"'));
+  assert.match(legacy, /LEGACY ONLY/, "the nested legacy rows keep their own label");
+  assert.match(markup.slice(markup.indexOf('id="bot-settings-dialog"'), markup.indexOf('id="help-dialog"')),
+    /value="cancel" formmethod="dialog" formnovalidate/, "CANCEL must not be blocked by a live match-rule field");
 
   const notes = app.slice(app.indexOf("function renderExecutionScopeNotes"), app.indexOf("function syncMaxTurnsControl"));
   assert.match(notes, /elements\["match-legacy-settings"\]\.dataset\.inactive = String\(inputMode\)/);
-  // With no You (1P) side there is no piece for the deadline to take, so the
-  // otherwise shared group states that reason in both execution modes.
-  // With no You (1P) side the whole 1P group is dimmed, and its foot states that
-  // reason once for both settings rather than inside each control's own note.
-  assert.match(notes, /elements\["match-handicap-settings"\]\.dataset\.inactive = String\(!playing\)/);
-  assert.match(notes, /elements\["match-handicap-scope-note"\]\.textContent = playing/);
+  assert.doesNotMatch(notes, /match-handicap-settings.*dataset\.inactive|match-turn-settings.*dataset\.inactive/s);
+  assert.doesNotMatch(notes, /match-handicap-scope-note|LEFT BOT に You \(1P\)/);
   // The scope has to be stated while the group is still usable, so no branch of
   // either note may fall back to an empty string.
   assert.doesNotMatch(notes, /: ""/);
@@ -312,7 +314,20 @@ test("the settings row opens and closes as one, and its bar keeps the values", (
 
   const notes = app.slice(app.indexOf("function renderExecutionScopeNotes"), app.indexOf("function onOff"));
   assert.match(notes, /elements\["match-settings-state"\]\.textContent = matchSettingsStateText\(inputMode\)/);
-  assert.match(notes, /if \(inputMode\) return \[\.\.\.parts, `HANDI \$\{handicap\}`, `STALL \$\{stall\}`\]\.join/);
+  assert.match(notes, /if \(inputMode\) return \[\.\.\.parts, `TIME \$\{onOff\(elements\["match-time-progression"\]\)\}`\]/);
+  assert.doesNotMatch(notes, /`TURN|`HANDI|`STALL/);
+  assert.match(app, /elements\["human-match-rules"\]\.addEventListener\("change", syncHumanMatchRuleSummary\)/);
   // A closed row must not take its state with it, so every control refreshes it.
   assert.match(app, /elements\["match-settings"\]\.addEventListener\("input", \(\) => renderExecutionScopeNotes\(\)\)/);
+});
+
+test("the series result line is accented only once a round has completed", () => {
+  const outcome = markup.slice(markup.indexOf('class="match-outcome"'), markup.indexOf('id="match-export-message"'));
+  assert.match(outcome, /RESULT \/ 結果/);
+  assert.match(outcome, /id="match-summary" class="match-summary" data-state="empty"/);
+  const render = app.slice(app.indexOf("function renderMatchSummary"), app.indexOf("function renderMatchSaveButton"));
+  assert.match(render, /dataset\.state = "empty"/);
+  assert.match(render, /dataset\.state = matchSeries\.completed === 0 \? "pending" : "result"/);
+  const startFailure = app.slice(app.indexOf("START FAILED"), app.indexOf("START FAILED") + 400);
+  assert.match(startFailure, /matchSeries = null;\s*renderMatchSummary\(\);/, "a failed start clears the result line");
 });

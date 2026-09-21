@@ -8,7 +8,10 @@ const ROUNDS = new WeakMap();
 
 /** One referee owns both clocks, delivery and the observed terminal receipt. */
 export function createInputExecutionRound({ seed, ids = ['left', 'right'], handlingById = {},
-  stallPenaltyForgivenessId = null, initialGarbageById = {} } = {}) {
+  stallPenaltyForgivenessId = null, initialGarbageById = {}, timeProgression = true,
+  naturalGravity = true } = {}) {
+  if (typeof timeProgression !== 'boolean') throw new Error('input round time progression must be boolean');
+  if (typeof naturalGravity !== 'boolean') throw new Error('input round natural gravity must be boolean');
   if (!Array.isArray(ids) || ids.length !== 2 || new Set(ids).size !== 2 || ids.some(id => typeof id !== 'string' || !id)) {
     throw new Error('input round requires two distinct player ids');
   }
@@ -17,7 +20,7 @@ export function createInputExecutionRound({ seed, ids = ['left', 'right'], handl
   if (stallPenaltyForgivenessId !== null && !ids.includes(stallPenaltyForgivenessId)) throw new Error('unknown STALL forgiveness player');
   if (Object.keys(initialGarbageById).some(id => !ids.includes(id))) throw new Error('unknown initial garbage player');
   const sessions = ids.map(id => createInputReplaySession({ id, replay: {
-    frames: 0, events: [], options: inputExecutionOptions({ seed, handling: handlingById[id] }), results: { stats: { garbage: { sent: 0 } } },
+    frames: 0, events: [], options: inputExecutionOptions({ seed, handling: handlingById[id], timeProgression, naturalGravity }), results: { stats: { garbage: { sent: 0 } } },
   } }, { canonicalProfile: INPUT_EXECUTION_PROFILE.id, forgiveStallPenalty: id === stallPenaltyForgivenessId,
     initialGarbageCells: initialGarbageById[id] ?? null }));
   let status = 'active';
@@ -37,6 +40,12 @@ export function createInputExecutionRound({ seed, ids = ['left', 'right'], handl
   const round = {
     get status() { return status; },
     get frame() { return frame; },
+    // Both sides play the round's own time rule; planners read it from here.
+    get timeProgression() { return timeProgression; },
+    // …and its own descent rule. A turn match removes natural gravity, so a
+    // planner that still searched routes under the observed descent would plan
+    // a path the referee never executes.
+    get naturalGravity() { return naturalGravity; },
     refereeView() {
       return { terminal: structuredClone(terminal), players: sessions.map((session, index) =>
         ({ id: ids[index], ...session.refereeView() })) };
@@ -55,7 +64,7 @@ export function createInputExecutionRound({ seed, ids = ['left', 'right'], handl
       const { decision, movement } = round.publicState(id);
       const request = { id: engineId === type ? INPUT_DECISION_REQUEST_ID : 's2-amount-only-decision-request/1', sessionKey: 'input-round',
         decision, moves, type, engine: { botType: type, engineId } };
-      return resolveQualifiedInputSubmission(request, movement, budget);
+      return resolveQualifiedInputSubmission(request, movement, { timeProgression, naturalGravity, ...budget });
     },
     applyStallPenalty(id, penalty) {
       const index = ids.indexOf(id);

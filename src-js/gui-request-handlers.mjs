@@ -21,6 +21,7 @@ import {
   applyHandicapToLegacyStart,
   normalizeHandicapGarbage,
 } from "./gui-1p-handicap-garbage.mjs";
+import { normalizeTurnMatch, turnMatchControllerOptions } from "./gui-turn-match.mjs";
 import { guiStateToCc2NativeStart } from "./cc2-s2-native-start.mjs";
 import { resolveStaticCc2Proposal } from "./static-cc2-proposal.mjs";
 import { resolveGuiStaticSubmission as resolveQualifiedStaticCc2Submission } from "./gui-static-public-resolver.mjs";
@@ -177,6 +178,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       const config = normalizeBotMatchOptions(body);
       if (humanSide !== null && config.fairComparison) throw new Error("fair comparison cannot include a human player");
       const handicap = normalizeHandicapGarbage(body.handicap, { humanSide });
+      const turnMatch = normalizeTurnMatch(body.turnMatch, { humanSide });
       const botParameters = {
         left: config.fairComparison
           ? fairComparisonBotParameters(left, body.leftParameters)
@@ -203,19 +205,24 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       const startState = (botId) => structuredClone(
         handicapStart !== null && botId === humanSide ? handicapStart.state : initial,
       );
+      const turnOptions = turnMatchControllerOptions(turnMatch, humanSide);
       const match = createBotMatch({
         bots: [
           { id: "left", gameId: 1, state: startState("left") },
           { id: "right", gameId: 2, state: startState("right") },
         ],
-        mode: "paced",
-        ppsByBotId: {
-          left: left === "human" ? null : staticPacedRate(left, botParameters.left, config.fairComparison, humanSide !== null),
-          right: right === "human" ? null : staticPacedRate(right, botParameters.right, config.fairComparison, humanSide !== null),
-        },
+        // A turn match has no rate for either side: the controller's own
+        // alternating/simultaneous schedule owns every lock frame.
+        ...(turnOptions ?? {
+          mode: "paced",
+          ppsByBotId: {
+            left: left === "human" ? null : staticPacedRate(left, botParameters.left, config.fairComparison, humanSide !== null),
+            right: right === "human" ? null : staticPacedRate(right, botParameters.right, config.fairComparison, humanSide !== null),
+          },
+        }),
       });
       session = {
-        types: { left, right }, humanSide, botParameters, config, ttrmCompatible, queueModel, invalidated: false,
+        types: { left, right }, humanSide, botParameters, config, ttrmCompatible, queueModel, invalidated: false, turnMatch,
         handicap: handicapStart?.record ?? { id: HANDICAP_GARBAGE_ID, enabled: false },
         mutations: createLiveMatchMutationQueue(), inFlightStep: null,
         queueSeeds: { left: scenario.bagSeed, right: scenario.bagSeed }, match, recording: createMatchRecording({
@@ -224,7 +231,8 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
             gamemode: "s2-bot-match", ts: new Date().toISOString(), version: 1, parseMs: 0,
             match: { seed: config.seed, fairComparison: config.fairComparison,
               maxTurns: config.maxTurns, firstTo: 1, ttrmCompatible, queueModel,
-              declaredPpsByBotId: structuredClone(match.pace.ppsByBotId),
+              declaredPpsByBotId: match.pace === null ? null : structuredClone(match.pace.ppsByBotId),
+              turnMatch: { id: turnMatch.id, enabled: turnMatch.enabled, order: turnMatch.order },
               // Series-level meta keeps only what every game shares. The
               // per-game seed and terrain live in each round record.
               handicap: { id: HANDICAP_GARBAGE_ID, enabled: handicap.enabled },
@@ -235,18 +243,22 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     } catch (error) { return fail(400, { error: messageOf(error) }); }
   }
 
-  async function stepMatch(body = {}) {
+  async function stepMatch(body = {}, turnPlacement = null) {
     if (session === null) return fail(409, { error: "match-not-started" });
-    if (session.inFlightStep !== null) return session.inFlightStep;
+    // A simultaneous turn is carried by the 1P lock. Joining an in-flight turn
+    // would drop that placement silently, so the second one is refused instead.
+    if (session.inFlightStep !== null) {
+      return turnPlacement === null ? session.inFlightStep : fail(409, { error: "turn-in-progress" });
+    }
     const activeSession = session;
-    const work = runStepMatch(activeSession, body).finally(() => {
+    const work = runStepMatch(activeSession, body, turnPlacement).finally(() => {
       if (activeSession.inFlightStep === work) activeSession.inFlightStep = null;
     });
     activeSession.inFlightStep = work;
     return work;
   }
 
-  async function runStepMatch(activeSession, body) {
+  async function runStepMatch(activeSession, body, turnPlacement = null) {
     const prepared = await activeSession.mutations.run(() => {
       if (session !== activeSession || activeSession.invalidated) return null;
       const view = matchView(activeSession);
@@ -261,11 +273,16 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     });
     if (prepared === null) return fail(409, { error: "match-replaced" });
     if (prepared.complete !== undefined) return fail(409, { error: "match-complete", outcome: prepared.complete });
-    if (prepared.bots.every((bot) => activeSession.types[bot.id] === "human")) {
+    // In a paced round a 1P side is externally paced and is never due here. A
+    // turn match schedules both sides, so the person's own half of the turn
+    // arrives as `turnPlacement` and its absence is what stops the turn.
+    if (prepared.bots.some((bot) => activeSession.types[bot.id] === "human") && turnPlacement === null) {
       return fail(409, { error: "human-lock-required" });
     }
 
-    const requestedWallFrame = activeSession.humanSide === null
+    // A turn match has no wall clock to be late against: every lock frame comes
+    // from the controller's own turn schedule.
+    const requestedWallFrame = activeSession.humanSide === null || activeSession.turnMatch.enabled
       ? null
       : validWallFrame(body?.lockFrame, activeSession.match.clock.logicalFrame);
     const startedAt = now();
@@ -327,7 +344,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     try {
       let optimisticMatch = null;
       let optimisticSubmissions = null;
-      if (activeSession.humanSide !== null) {
+      if (activeSession.humanSide !== null && !activeSession.turnMatch.enabled) {
         const captured = await activeSession.mutations.run(() => {
           if (session !== activeSession || activeSession.invalidated) {
             return { response: fail(409, { error: "match-replaced" }) };
@@ -363,6 +380,10 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
           submissions = await Promise.all(proposals.map((proposal) =>
             resolveStaticProposal(activeSession, before, proposal, { forceLocal })));
         }
+        // The person's half of a simultaneous turn is evaluated against the
+        // same snapshot the bot searched from, inside the boundary that
+        // commits both, so neither side saw the other's placement.
+        if (turnPlacement !== null) submissions = [...submissions, humanTurnSubmission(activeSession, before, turnPlacement)];
         if (session !== activeSession || activeSession.invalidated) return fail(409, { error: "match-replaced" });
         const resolvedView = matchView(activeSession);
         if (resolvedView.outcome.complete) return fail(409, { error: "match-complete", outcome: resolvedView.outcome });
@@ -395,6 +416,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     if (session === null) return fail(409, { error: "match-not-started" });
     const activeSession = session;
     if (activeSession.humanSide === null) return fail(409, { error: "no-human-player" });
+    if (activeSession.turnMatch.enabled) return turnMatchHumanLock(activeSession, body);
     if (!Number.isSafeInteger(body.lockFrame) || body.lockFrame < 0) return fail(400, { error: "lockFrame must be a non-negative safe integer" });
     try {
       return await activeSession.mutations.run(() => {
@@ -427,6 +449,49 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     } catch (error) {
       return fail(422, { error: messageOf(error) });
     }
+  }
+
+  /**
+   * The 1P half of one turn. A turn match ignores the browser's wall frame: the
+   * controller's own turn schedule owns every lock frame, and a placement
+   * offered outside the person's turn is refused rather than reordered.
+   *
+   * A simultaneous turn cannot be committed alone, so it is carried through the
+   * ordinary step pipeline, which searches the opponent from the same snapshot
+   * and commits both halves inside one mutation boundary.
+   */
+  async function turnMatchHumanLock(activeSession, body) {
+    const dueBotIds = botMatchNextStep(activeSession.match).botIds;
+    if (!dueBotIds.includes(activeSession.humanSide)) return fail(409, { error: "not-your-turn" });
+    if (dueBotIds.length > 1) return stepMatch({}, body.placement);
+    try {
+      return await activeSession.mutations.run(() => {
+        if (session !== activeSession || activeSession.invalidated) return fail(409, { error: "match-replaced" });
+        const currentView = matchView(activeSession);
+        if (currentView.outcome.complete) return fail(409, { error: "match-complete", outcome: currentView.outcome });
+        refillQueues(activeSession);
+        const before = activeSession.match;
+        const submission = humanTurnSubmission(activeSession, before, body.placement);
+        const after = advanceBotMatch(before, [submission]);
+        appendMatchLocks(activeSession.recording, before, after, [submission]);
+        activeSession.match = after;
+        activeSession.lastSubmissions = [submission];
+        finalize(activeSession);
+        const view = matchView(activeSession);
+        if (view.outcome.complete) cc2Runtime?.closeSessions({ sessionKeys: ["left", "right"] });
+        return ok(view);
+      });
+    } catch (error) {
+      return fail(422, { error: messageOf(error) });
+    }
+  }
+
+  /** The person's placement, re-evaluated by the referee against `match`. */
+  function humanTurnSubmission(activeSession, match, placement) {
+    const bot = match.bots.find((candidate) => candidate.id === activeSession.humanSide);
+    const result = applyHumanFinalPlacementUnderObservedS2(bot.state, placement);
+    if (result.transition === null) throw new Error(result.reasons.join(", "));
+    return submissionFor(match, bot, result.comparison.witness.placement, result.transition, result.comparison.score);
   }
 
   async function humanPenaltyTopOut(body) {
@@ -612,12 +677,17 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     });
     const outcome = activeSession.forcedOutcome ??
       matchOutcome(bots, activeSession.match.turnNumber, activeSession.config.maxTurns);
+    const nextStep = outcome.complete ? null : botMatchNextStep(activeSession.match);
     return { status: outcome.complete ? "complete" : "active", turnNumber: activeSession.match.turnNumber, humanSide: activeSession.humanSide,
       mode: activeSession.match.mode, clock: activeSession.match.clock, config: activeSession.config, botParameters: activeSession.botParameters, outcome,
-      handicap: structuredClone(activeSession.handicap),
-      pacing: { authority: activeSession.humanSide === null ? "synthetic" : "realtime-1p", declaredPpsByBotId: structuredClone(activeSession.match.pace.ppsByBotId) },
+      handicap: structuredClone(activeSession.handicap), turnMatch: structuredClone(activeSession.turnMatch),
+      pacing: { authority: activeSession.humanSide === null ? "synthetic" : activeSession.turnMatch.enabled ? "turn" : "realtime-1p",
+        declaredPpsByBotId: activeSession.match.pace === null ? null : structuredClone(activeSession.match.pace.ppsByBotId) },
       deliveries: activeSession.match.lastStep?.deliveries ?? [], metricElapsedMs: activeSession.match.clock.logicalFrame * 1000 / 60,
-      nextStepFrames: outcome.complete ? null : botMatchNextStep(activeSession.match).frames, bots, replayMeta: activeSession.recording?.meta ?? null };
+      // Which side owes the next placement. A turn match is driven from it: the
+      // browser steps the opponent only while the person is not the due side.
+      dueBotIds: nextStep === null ? [] : [...nextStep.botIds],
+      nextStepFrames: nextStep?.frames ?? null, bots, replayMeta: activeSession.recording?.meta ?? null };
   }
 
   function finalize(activeSession) {

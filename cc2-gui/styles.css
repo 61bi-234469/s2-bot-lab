@@ -66,7 +66,7 @@ h1::before { content: "> "; color: var(--green); }
 .panel h2 { padding: 6px 9px; border-bottom: 1px solid var(--line); color: var(--muted); }
 .panel h2::before { content: "── "; color: var(--line); }
 .piece-preview { height: 90px; display: grid; place-items: center; }
-/* B2B / REN / latest clear, under the HOLD box as in the fumen-mobile-fork
+/* B2B / COMBO / latest clear, under the HOLD box as in the fumen-mobile-fork
    replay screen. The clear name keeps its line height while empty, so a clear
    appearing and expiring does not shift the box above it. */
 .clear-info { display: grid; gap: 2px; padding: 0 9px 8px; color: var(--muted); font-size: 10px; letter-spacing: .04em; }
@@ -151,6 +151,9 @@ h1::before { content: "> "; color: var(--green); }
 .comparison-grid strong { color: var(--cyan); font-size: 14px; font-weight: 700; }
 .comparison-grid small { color: #5f665f; font-size: 10px; }
 .buttons { display: grid; grid-template-columns: repeat(2, minmax(110px, 1fr)); gap: 6px; }
+.buttons button { display: grid; gap: 2px; justify-items: start; text-align: left; }
+.buttons button .button-label { font-size: 11px; }
+.buttons button small { color: #565c56; font-size: 9px; font-weight: 400; letter-spacing: 0; }
 button { padding: 7px 11px; border: 1px solid var(--line); background: #161816; color: var(--text); font-size: 11px; font-weight: 700; letter-spacing: .06em; cursor: pointer; }
 button:hover:not(:disabled) { border-color: var(--text); background: #1f221f; }
 button:disabled { color: #4a504a; border-color: var(--line-dim); cursor: not-allowed; }
@@ -229,10 +232,14 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
 .match-setting-group-body > label, .match-setting-group-body > .match-setting { flex: 1 1 102px; min-width: 0; }
 .match-setting-group[data-scope="execution"] { border-left-color: var(--accent); }
 .match-setting-group[data-scope="execution"] > .group-name { color: var(--accent); }
-.match-setting-group[data-inactive="true"] { opacity: .5; }
+.match-setting-dependent { display: contents; }
+.match-setting-dependent[data-inactive="true"] > * { opacity: .5; }
+.match-setting-group-body > .match-setting-dependent > label, .match-setting-group-body > .match-setting-dependent > .match-setting { flex: 1 1 102px; min-width: 0; }
+.match-setting-group-body > .match-setting-dependent > .match-scope-note { flex-basis: 100%; }
+.match-setting-group-body > .match-setting-dependent > .dependent-name { flex-basis: 100%; color: var(--muted); font-size: 9px; letter-spacing: .08em; }
 .match-scope-note { flex-basis: 100%; color: var(--muted); font-size: 9px; line-height: 1.4; }
-.fair-comparison-setting span:last-child, .pre-lock-preview-setting span:last-child, .ttrm-compatible-setting span:last-child, .stall-lock-setting span:last-child, .handicap-setting span:last-child { display: flex; align-items: center; gap: 6px; min-height: 30px; color: var(--text); }
-.fair-comparison-setting input, .pre-lock-preview-setting input, .ttrm-compatible-setting input, .stall-lock-setting input, .handicap-setting input { accent-color: var(--accent); }
+.fair-comparison-setting span:last-child, .pre-lock-preview-setting span:last-child, .ttrm-compatible-setting span:last-child, .time-progression-setting span:last-child, .stall-lock-setting span:last-child, .handicap-setting span:last-child { display: flex; align-items: center; gap: 6px; min-height: 30px; color: var(--text); }
+.fair-comparison-setting input, .pre-lock-preview-setting input, .time-progression-setting input, .ttrm-compatible-setting input, .stall-lock-setting input, .handicap-setting input { accent-color: var(--accent); }
 .bot-picker { display: grid; gap: 4px; min-width: 0; }
 .bot-picker-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; }
 .bot-settings-button { padding-inline: 9px; font-size: 9px; }
@@ -251,8 +258,11 @@ input[type="number"]:disabled { border-color: var(--line-dim); color: #4a504a; c
 /* Saving only means anything once a round has produced something to save, so the
    two export buttons sit with the result line rather than with START/STEP/RESET,
    which are the controls that produce it. */
-.match-outcome { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; align-items: stretch; margin-top: 8px; }
-.match-outcome .match-summary { margin-top: 0; }
+.match-outcome { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; align-items: stretch; margin-top: 14px; }
+.match-outcome-copy { display: grid; gap: 4px; min-width: 0; }
+.match-outcome-label { margin: 0; color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .12em; }
+.match-outcome .match-summary { margin-top: 0; border-left-color: var(--line-dim); color: var(--text); }
+.match-outcome .match-summary[data-state="result"] { border-left-color: var(--cyan); color: var(--cyan); }
 .match-exports { display: flex; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid var(--line-dim); }
 .export-label { color: var(--muted); font-size: 9px; letter-spacing: .08em; }
 .match-exports button { padding: 5px 9px; font-size: 10px; }
@@ -353,6 +363,17 @@ input[type="number"]:disabled { border-color: var(--line-dim); color: #4a504a; c
 .dialog-close { width: 28px; height: 28px; padding: 0; border-color: var(--line-dim); color: var(--muted); font-size: 15px; line-height: 1; }
 .bot-settings-description { margin: 0; padding: 11px 15px 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
 .bot-settings-fields { display: grid; gap: 6px; padding: 11px 15px 15px; }
+/* The dialog shows one panel at a time by toggling `hidden`; the grid rule above would otherwise win over it. */
+.bot-settings-fields[hidden] { display: none; }
+.bot-settings-section { display: grid; gap: 6px; }
+.bot-settings-section + .bot-settings-section { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--line-dim); }
+.bot-settings-section-heading { margin: 0; color: var(--cyan); font-size: 9px; font-weight: normal; letter-spacing: .08em; }
+.bot-settings-section-note { color: var(--muted); font-size: 9px; line-height: 1.4; }
+#human-handling-fields { display: grid; gap: 6px; }
+.human-settings-fields .match-setting-group { padding-left: 8px; border-left: 2px solid var(--line); }
+.human-settings-fields .match-setting-group > .group-name { margin: 0 0 6px; color: var(--cyan); font-size: 9px; font-weight: normal; letter-spacing: .08em; }
+.human-settings-fields .match-setting-group-body { display: flex; flex-wrap: wrap; gap: 7px; align-items: flex-end; }
+.human-settings-fields .match-setting-group-body > label, .human-settings-fields .match-setting-group-body > .match-setting { flex: 1 1 102px; min-width: 0; }
 .bot-parameter { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, .7fr); align-items: center; gap: 14px; padding: 8px 10px; border: 1px solid var(--line-dim); background: transparent; }
 .bot-parameter label { color: var(--muted); font-size: 10px; letter-spacing: .06em; }
 .bot-parameter-control { display: flex; align-items: center; gap: 6px; }
