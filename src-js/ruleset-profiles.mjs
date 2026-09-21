@@ -32,6 +32,23 @@ function identityFor(definition) {
 // the difference instead of a whole rule set keeps a fixture result
 // attributable to the mechanism the profile names: a fixture that changes
 // because of an unrelated rule would have to change the override list first.
+// The observed S2 override set, named so its static-time variant below stays in
+// lockstep with it instead of repeating values that could drift apart.
+const S2_OBSERVED_OVERRIDES = Object.freeze({
+  perfectClearGarbage: 5,
+  spinBonuses: "all-mini+",
+  comboTable: "multiplier",
+  b2bChaining: false,
+  b2bCharging: { at: 4, base: 3 },
+  openerPhase: 14,
+  garbageMultiplier: { base: 1, increase: 0.008, marginFrames: 10800 },
+  garbageCap: { base: 8, increase: 0, marginFrames: 0 },
+  garbageMessiness: { change: 1, within: 0, nosame: false, timeout: 0, center: false },
+  garbageHole: { size: 1, speed: 20 },
+  kickTable: "SRS+",
+  movementAssumption: "engine-frame-with-hidden-spawn-buffer",
+});
+
 const PROFILE_DEFINITIONS = Object.freeze([
   { key: "foundation", label: "foundation", overrides: {} },
   {
@@ -40,19 +57,21 @@ const PROFILE_DEFINITIONS = Object.freeze([
     // have not yet been admitted as interpreted or operation-irrelevant.
     key: "s2Observed",
     id: S2_OBSERVED_MANIFEST.id,
+    overrides: S2_OBSERVED_OVERRIDES,
+  },
+  {
+    // The observed S2 rules with their one elapsed-time escalation removed, for
+    // a local match played at fixed rules. It is a separate identity because it
+    // is a different rule set: the canonical S2 profile above is unchanged, and
+    // a result produced under this one is not S2 evidence.
+    key: "s2ObservedStaticTime",
+    label: "s2-observed-static-time",
     overrides: {
-      perfectClearGarbage: 5,
-      spinBonuses: "all-mini+",
-      comboTable: "multiplier",
-      b2bChaining: false,
-      b2bCharging: { at: 4, base: 3 },
-      openerPhase: 14,
-      garbageMultiplier: { base: 1, increase: 0.008, marginFrames: 10800 },
-      garbageCap: { base: 8, increase: 0, marginFrames: 0 },
-      garbageMessiness: { change: 1, within: 0, nosame: false, timeout: 0, center: false },
-      garbageHole: { size: 1, speed: 20 },
-      kickTable: "SRS+",
-      movementAssumption: "engine-frame-with-hidden-spawn-buffer",
+      ...S2_OBSERVED_OVERRIDES,
+      // Only the increase is removed. The margin keeps its observed value: with
+      // no increase it is inert, and keeping it lets the referee compare an
+      // Engine and a Simulator that hold the identical multiplier spec.
+      garbageMultiplier: { ...S2_OBSERVED_OVERRIDES.garbageMultiplier, increase: 0 },
     },
   },
   {
@@ -149,6 +168,12 @@ export const RULESET_IDS = Object.freeze(
     ]),
   ),
 );
+
+/* A round played at fixed rules is a different rule set, so it is refereed and
+   compared under its own identity rather than under the canonical S2 one. */
+export function timeProgressionRulesetId(timeProgression) {
+  return timeProgression ? RULESET_IDS.s2Observed : RULESET_IDS.s2ObservedStaticTime;
+}
 
 export function resolvePlacementRules(rulesetId) {
   return resolveProfile(rulesetId).rules;

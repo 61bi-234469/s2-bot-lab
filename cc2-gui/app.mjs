@@ -1856,6 +1856,7 @@ function createMatchSeries({ excludedRandomSeed = null } = {}) {
         : readBoundedInteger("match-max-turns", 1, 10_000),
       firstTo: readBoundedInteger("match-count", 1, 100),
       preLockPreview: elements["match-pre-lock-preview"].checked,
+      timeProgression: timeProgressionSetting(),
       stallLock: stallLockSettings(),
       handicap: handicapSettings(),
     },
@@ -1892,6 +1893,7 @@ async function startSeriesGame() {
       rightParameters: config.rightParameters,
       fairComparison: config.fairComparison,
       ...(inputMode ? { ttrmCompatible: true, humanControls: structuredClone(humanControls),
+        timeProgression: config.timeProgression !== false,
         stallLock: structuredClone(config.stallLock ?? { enabled: false, pps: null, penalty: null }) } : {}),
       handicap: structuredClone(config.handicap ?? { enabled: false }),
       seed,
@@ -2872,7 +2874,7 @@ function matchSeriesWinner() {
 function setMatchSettingsDisabled(disabled) {
   for (const id of [
     "left-bot", "right-bot", "left-bot-settings", "right-bot-settings",
-    "match-fair-comparison", "match-pre-lock-preview", "match-ttrm-compatible", "match-seed", "match-max-turns", "match-unlimited-turns", "match-count",
+    "match-fair-comparison", "match-pre-lock-preview", "match-ttrm-compatible", "match-time-progression", "match-seed", "match-max-turns", "match-unlimited-turns", "match-count",
     "match-stall-lock", "match-handicap-garbage",
   ]) elements[id].disabled = disabled;
   elements["match-max-turns"].disabled = disabled || elements["match-unlimited-turns"].checked;
@@ -2893,6 +2895,13 @@ function syncHumanMatchControls(matchSettingsDisabled = false) {
   elements["match-fair-comparison"].disabled = matchSettingsDisabled || playing || inputMode;
   elements["match-pre-lock-preview"].disabled = matchSettingsDisabled || inputMode;
   elements["match-pre-lock-preview"].title = inputMode ? "TTRM INPUTでは実ミノとゴーストを表示するため、PRE-LOCK PREVIEWは使いません" : "";
+  /* The escalating rules are applied by the input path's referee Engine; the
+     legacy final-placement path runs neither natural gravity nor that Engine,
+     so the switch has nothing to act on there. */
+  elements["match-time-progression"].disabled = matchSettingsDisabled || !inputMode;
+  elements["match-time-progression"].title = inputMode
+    ? "観測S2ルールでは、120秒経過後に落下速度が、180秒経過後に火力（ガベージ倍率）が上がり続けます。OFFにするとどちらも開始時の値のままで対局します。"
+    : "従来モードはこのEngineを使わないため、この設定は適用されません";
   elements["match-step"].title = inputMode
     ? "TTRM INPUT は固定の実入力プロファイルで1フレームずつ進みます"
     : playing
@@ -2939,6 +2948,14 @@ function renderExecutionScopeNotes() {
         ? "TTRM INPUT：1Pハンデの初期地形は入力ログから再現できないため、この対局は .ttrm 保存対象外です。"
         : "TTRM INPUT：実入力を60Hzで消費し、EXPORT は .ttrm を保存します。"
     : "従来モード：最終配置で進行し、EXPORT は .json を保存します。";
+  /* The switch states the rule it removes and, because the export is what this
+     group is about, that removing it still leaves an exportable round: the
+     value travels in the file's own options. */
+  elements["match-time-progression-note"].textContent = inputMode
+    ? elements["match-time-progression"].checked
+      ? "TIME PROGRESSION ON：観測S2ルール通り、120秒経過後は落下速度が、180秒経過後は火力（ガベージ倍率）が上がり続けます。"
+      : "TIME PROGRESSION OFF：落下速度も火力も開始時の値のまま対局します。この設定は .ttrm のオプションに記録され、保存は通常どおり行えます。観測S2ルールの対局ではないため、強度の根拠には使えません。"
+    : "TIME PROGRESSION は TTRM INPUT の対局にだけ適用します。従来モードでは使いません。";
   elements["match-legacy-settings"].dataset.inactive = String(inputMode);
   elements["match-legacy-note"].textContent = inputMode
     ? "TTRM INPUT 中は使いません（実ミノとゴーストを表示し、FAIR COMPARISON も適用しません）。"
@@ -2983,7 +3000,8 @@ function matchSettingsStateText(inputMode) {
   // "—" says it is not applicable rather than claiming it was turned off.
   const handicap = !elements["match-handicap-garbage"].checked ? "OFF"
     : selectedHumanSide() === null ? "—" : "ON";
-  if (inputMode) return [...parts, `HANDI ${handicap}`, `STALL ${stall}`].join(" · ");
+  if (inputMode) return [...parts, `TIME ${onOff(elements["match-time-progression"])}`,
+    `HANDI ${handicap}`, `STALL ${stall}`].join(" · ");
   return [...parts, `FAIR ${onOff(elements["match-fair-comparison"])}`,
     `GHOST ${onOff(elements["match-pre-lock-preview"])}`, `HANDI ${handicap}`,
     `STALL ${stall}`].join(" · ");
@@ -3019,6 +3037,13 @@ function stallLockSettings() {
       : null,
     penalty: enabled ? penalty : null,
   };
+}
+
+/* Read once, when a series starts, like the other match settings. Only the
+   input path runs the referee Engine, so the legacy path reports the canonical
+   rules rather than a switch it never applied. */
+function timeProgressionSetting() {
+  return !inputModeSelected() || elements["match-time-progression"].checked;
 }
 
 /* Read once, when a series starts, like the other match settings. A person who

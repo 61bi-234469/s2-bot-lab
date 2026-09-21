@@ -57,6 +57,11 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           const humanSide = types.left === 'human' ? 'left' : null;
           const stallPenalty = normalizeStallPenalty(body.stallLock, humanSide);
           const handicap = normalizeHandicapGarbage(body.handicap, { humanSide });
+          // Off keeps the observed S2 gravity and garbage multiplier at their
+          // starting values for the whole round; it changes no other rule and
+          // stays inside the exportable profile.
+          const timeProgression = body.timeProgression ?? true;
+          if (typeof timeProgression !== 'boolean') throw new Error('invalid TIME PROGRESSION setting');
           if (IDS.some(id => types[id] !== 'human' && parameters[id].queueDepth > 15)) throw new Error('TTRM INPUT supports QUEUE DEPTH up to 15 (current + 14 NEXT)');
           if (body.maxTurns != null && (!Number.isSafeInteger(body.maxTurns) || body.maxTurns < 1 || body.maxTurns > 10000)) throw new Error('invalid MAX TURNS');
           if (current) current.closed = true;
@@ -71,7 +76,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           // each restart arrives here with its own seed.
           const handicapTerrain = handicap.enabled ? handicapColumnHeights(body.seed) : null;
           current = { sessionId, keys: IDS.map(id => `${sessionId}/${id}`), types, parameters,
-            round: createInputExecutionRound({ seed: body.seed,
+            round: createInputExecutionRound({ seed: body.seed, timeProgression,
               stallPenaltyForgivenessId: stallPenalty.enabled && stallPenalty.penalty === 'penalty-line' ? 'left' : null,
               initialGarbageById: handicapTerrain === null ? {} : { [humanSide]: handicapGarbageCells(handicapTerrain) },
               handlingById: types.left === 'human' ? { left: humanEngineHandling(body.humanControls) } : {} }), closed: false, failure: null,
@@ -87,7 +92,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
             handicap: handicapTerrain === null
               ? { id: HANDICAP_GARBAGE_ID, enabled: false }
               : handicapRecord({ seed: body.seed, columnHeights: handicapTerrain, appliedTo: humanSide }),
-            config: { seed: body.seed, firstTo: body.firstTo ?? 1, fairComparison: false,
+            config: { seed: body.seed, firstTo: body.firstTo ?? 1, fairComparison: false, timeProgression,
               maxTurns: body.maxTurns ?? null, stallLock: stallPenalty,
               handicap: { id: HANDICAP_GARBAGE_ID, enabled: handicap.enabled } } };
           return ok(view(current));
@@ -337,7 +342,8 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
         moves: structuredClone(proposed.moves) };
       const startFrame = Math.max(session.round.frame + (session.leadFrames[id] ?? 2), dueFrame);
       const resolveStarted = now();
-      const resolved = await runtime.resolveInput({ request, movement: latest.movement, startFrame });
+      const resolved = await runtime.resolveInput({ request, movement: latest.movement, startFrame,
+        timeProgression: session.round.timeProgression });
       if (!live(session)) return;
       const diagnostics = session.diagnostics[id];
       // Count completed resolution decisions, including plans discarded later.

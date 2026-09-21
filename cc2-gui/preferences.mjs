@@ -30,6 +30,7 @@ export const TOGGLE_PREFERENCE_IDS = Object.freeze([
   "match-fair-comparison",
   "match-pre-lock-preview",
   "match-ttrm-compatible",
+  "match-time-progression",
   "match-unlimited-turns",
   "match-random-seed",
   "match-stall-lock",

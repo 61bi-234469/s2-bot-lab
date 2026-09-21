@@ -42,9 +42,29 @@ export function validateReplayOptions(options) {
     .map(([key, expected]) => ({ key, expected, actual: options[key] }));
 }
 
+/* The observed S2 ruleset escalates two rule values as a game goes on: gravity
+   past `gmargin`, and the garbage (damage) multiplier past `garbagemargin`. The
+   cap, messiness timeout and every other option are already static, and the
+   opener phase counts pieces rather than elapsed time, so those two keys are
+   the whole of this ruleset's time progression. A local round may switch it
+   off; `g`, `gmargin`, `garbagemultiplier` and `garbagemargin` keep their
+   observed values, so the two admissible rounds differ in exactly these keys
+   and an arbitrary custom rule still cannot enter the canonical profile. */
+const TIME_PROGRESSION_KEYS = Object.freeze(['gincrease', 'garbageincrease']);
+
+/* The ruleset identity a round is refereed under lives in `ruleset-profiles`
+   (`timeProgressionRulesetId`). It stays out of this module because the public
+   bot decision path depends on it and must not pull in the profile registry. */
+
+export function inputExecutionTimeProgression(options) {
+  return TIME_PROGRESSION_KEYS.some(key => (options?.[key] ?? 0) !== 0);
+}
+
 /** Fixed opt-in initialization contract; it does not qualify a match for export. */
-export function inputExecutionOptions({ seed, profileId = INPUT_EXECUTION_PROFILE.id, handling = INPUT_EXECUTION_HANDLING } = {}) {
+export function inputExecutionOptions({ seed, profileId = INPUT_EXECUTION_PROFILE.id, handling = INPUT_EXECUTION_HANDLING,
+  timeProgression = true } = {}) {
   if (profileId !== INPUT_EXECUTION_PROFILE.id) throw new Error(`unsupported input execution profile ${profileId}`);
+  if (typeof timeProgression !== 'boolean') throw new Error('input execution time progression must be boolean');
   if (!Number.isSafeInteger(seed) || seed < 0 || seed > 0xffff_ffff) {
     throw new Error("input execution seed must be an unsigned 32-bit integer");
   }
@@ -58,6 +78,7 @@ export function inputExecutionOptions({ seed, profileId = INPUT_EXECUTION_PROFIL
   }
   return {
     ...S2_MANIFEST.normalizedOptions,
+    ...(timeProgression ? {} : Object.fromEntries(TIME_PROGRESSION_KEYS.map(key => [key, 0]))),
     seed,
     allowharddrop: S2_MANIFEST.normalizedOptions.allow_harddrop,
     handling: resolvedHandling,

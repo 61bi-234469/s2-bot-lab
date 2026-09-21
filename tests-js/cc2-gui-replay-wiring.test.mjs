@@ -312,7 +312,7 @@ test("the settings row opens and closes as one, and its bar keeps the values", (
 
   const notes = app.slice(app.indexOf("function renderExecutionScopeNotes"), app.indexOf("function onOff"));
   assert.match(notes, /elements\["match-settings-state"\]\.textContent = matchSettingsStateText\(inputMode\)/);
-  assert.match(notes, /if \(inputMode\) return \[\.\.\.parts, `HANDI \$\{handicap\}`, `STALL \$\{stall\}`\]\.join/);
+  assert.match(notes, /if \(inputMode\) return \[\.\.\.parts, `TIME \$\{onOff\(elements\["match-time-progression"\]\)\}`,[\s\S]*?`HANDI \$\{handicap\}`, `STALL \$\{stall\}`\]\.join/);
   // A closed row must not take its state with it, so every control refreshes it.
   assert.match(app, /elements\["match-settings"\]\.addEventListener\("input", \(\) => renderExecutionScopeNotes\(\)\)/);
 });

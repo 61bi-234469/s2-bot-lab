@@ -222,7 +222,11 @@
                 <label class="ttrm-compatible-setting" title="実入力の .ttrm 対局を有効にします。Raw CC2、chouhy、CC2 S2 F14、current champion同士、または左側のYou (1P)との対戦に対応します。">TTRM INPUT
                   <span><input id="match-ttrm-compatible" type="checkbox" checked> .ttrm対応 / 実入力実行</span>
                 </label>
+                <label class="time-progression-setting" title="観測S2ルールでは、120秒経過後に落下速度が、180秒経過後に火力（ガベージ倍率）が上がり続けます。OFFにするとどちらも開始時の値のままで対局します。">TIME PROGRESSION
+                  <span><input id="match-time-progression" type="checkbox" checked> 時間経過で落下速度・火力を上げる</span>
+                </label>
                 <small class="match-scope-note" id="match-execution-note"></small>
+                <small class="match-scope-note" id="match-time-progression-note"></small>
               </div>
             </section>
             <section class="match-setting-group" id="match-legacy-settings" data-scope="legacy">

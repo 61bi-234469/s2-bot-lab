@@ -38,10 +38,10 @@ test('enabling TTRM INPUT caps all admitted bot queues on both sides', () => {
 });
 test('TTRM INPUT greys the bot names it cannot run without hiding an unavailable build', () => {
   const admitted = ['cc2-raw', 'cc2-chouhy', 'cc2-s2-f14', 'cc2-s2-champion'];
-  const names = [...admitted, 'cc2-s2-gen017', 's2-simple', 'cc2-s2-missing', 'human'];
+  const names = [...admitted, 'cc2-s2-gen017', 's2-simple', 'fusion', 'human'];
   const makeSelect = (values) => ({ options: values.map((value) => ({
-    value, disabled: false, title: '', dataset: value === 'cc2-s2-missing'
-      ? { unavailable: 'true', reason: 'native build is not installed' } : {},
+    value, disabled: false, title: '', dataset: value === 'fusion'
+      ? { unavailable: 'true', reason: 'external bot is not installed' } : {},
   })) });
   const elements = {
     'left-bot': makeSelect(names),
@@ -61,18 +61,18 @@ test('TTRM INPUT greys the bot names it cannot run without hiding an unavailable
   app.enabled = true;
   app.syncInputBotOptions();
   assert.deepEqual(state('left-bot'), { 'cc2-raw': false, 'cc2-chouhy': false, 'cc2-s2-f14': false,
-    'cc2-s2-champion': false, 'cc2-s2-gen017': true, 's2-simple': true, 'cc2-s2-missing': true, human: false });
+    'cc2-s2-champion': false, 'cc2-s2-gen017': true, 's2-simple': true, fusion: true, human: false });
   // The person can only hold the left side, so You is not admitted on the right.
   assert.equal(state('right-bot').human, undefined);
   assert.match(elements['left-bot'].options.find((option) => option.value === 's2-simple').title,
     /TTRM INPUT/);
-  assert.equal(elements['left-bot'].options.find((option) => option.value === 'cc2-s2-missing').title,
-    'native build is not installed');
+  assert.equal(elements['left-bot'].options.find((option) => option.value === 'fusion').title,
+    'external bot is not installed');
 
   app.enabled = false;
   app.syncInputBotOptions();
   assert.deepEqual(state('left-bot'), { 'cc2-raw': false, 'cc2-chouhy': false, 'cc2-s2-f14': false,
-    'cc2-s2-champion': false, 'cc2-s2-gen017': false, 's2-simple': false, 'cc2-s2-missing': true, human: false });
+    'cc2-s2-champion': false, 'cc2-s2-gen017': false, 's2-simple': false, fusion: true, human: false });
   assert.equal(elements['left-bot'].options.find((option) => option.value === 's2-simple').title, '');
 });
 test('FT3 automatically schedules game two after saving an Engine-completed input round', async () => {
@@ -551,7 +551,7 @@ test('GUI FT export retains both completed input rounds and replays their origin
 /* The 1P handicap's browser side, run as the shipped functions: what the closed
    settings bar claims, what the group says while nobody is playing, and which
    export the setting blocks. */
-function handicapDeck({ checked = true, human = true, inputMode = true, series = null } = {}) {
+function handicapDeck({ checked = true, human = true, inputMode = true, series = null, timeProgression = true } = {}) {
   const checkbox = (value) => ({ checked: value, value: String(value) });
   const elements = {
     'match-handicap-garbage': checkbox(checked),
@@ -565,6 +565,8 @@ function handicapDeck({ checked = true, human = true, inputMode = true, series =
     'match-legacy-settings': { dataset: {} },
     'match-legacy-note': { textContent: '' },
     'match-execution-note': { textContent: '' },
+    'match-time-progression': checkbox(timeProgression),
+    'match-time-progression-note': { textContent: '' },
     'match-settings-state': { textContent: '' },
     'match-fair-comparison': checkbox(false),
     'match-pre-lock-preview': checkbox(false),
@@ -591,7 +593,7 @@ function handicapDeck({ checked = true, human = true, inputMode = true, series =
     return source.slice(at, source.indexOf("\n}\n", at) + 3);
   };
   for (const name of ['renderExecutionScopeNotes', 'matchSettingsStateText', 'handicapSettings',
-    'selectedExportFormat', 'renderMatchSaveButton', 'setMatchExportButton']) {
+    'timeProgressionSetting', 'selectedExportFormat', 'renderMatchSaveButton', 'setMatchExportButton']) {
     vm.runInContext(declaration(name), app);
   }
   return app;
@@ -653,4 +655,36 @@ test('the 1P handicap blocks the .ttrm export and leaves the .json export alone'
   legacy.renderMatchSaveButton();
   assert.equal(legacy.elements['match-save-replay'].textContent, 'SAVE .json');
   assert.equal(legacy.elements['match-save-replay'].disabled, false);
+});
+
+/* The escalating rules are rules the round is played under, so the closed bar
+   has to carry them, and switching them off must not read as another
+   export-blocking setting: the values travel in the exported file's own
+   options. */
+test('the settings bar reports time progression and switching it off keeps the .ttrm export', () => {
+  const on = handicapDeck({ checked: false, human: true, inputMode: true });
+  on.renderExecutionScopeNotes();
+  assert.match(on.elements['match-settings-state'].textContent, /TIME ON/);
+  assert.match(on.elements['match-time-progression-note'].textContent, /落下速度が、180秒経過後は火力/);
+  assert.equal(on.timeProgressionSetting(), true);
+
+  const off = handicapDeck({ checked: false, human: true, inputMode: true, timeProgression: false });
+  off.renderExecutionScopeNotes();
+  assert.match(off.elements['match-settings-state'].textContent, /TIME OFF/);
+  assert.match(off.elements['match-time-progression-note'].textContent, /落下速度も火力も開始時の値のまま/);
+  assert.match(off.elements['match-time-progression-note'].textContent, /保存は通常どおり/);
+  assert.doesNotMatch(off.elements['match-execution-note'].textContent, /保存対象外/);
+  assert.equal(off.timeProgressionSetting(), false);
+  off.renderMatchSaveButton();
+  assert.equal(off.elements['match-save-replay'].textContent, 'SAVE .ttrm');
+  assert.doesNotMatch(off.elements['match-save-replay'].title, /保存できません/);
+
+  // The legacy path runs neither the referee Engine nor natural gravity, so it
+  // reports the canonical rules rather than a switch it never applied, and
+  // keeps the switch off its bar.
+  const legacy = handicapDeck({ checked: false, human: true, inputMode: false, timeProgression: false });
+  legacy.renderExecutionScopeNotes();
+  assert.doesNotMatch(legacy.elements['match-settings-state'].textContent, /TIME /);
+  assert.match(legacy.elements['match-time-progression-note'].textContent, /従来モードでは使いません/);
+  assert.equal(legacy.timeProgressionSetting(), true);
 });

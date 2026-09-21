@@ -16,8 +16,9 @@ const key = (frame, name, type = 'keydown') => ({ frame, type, data: { key: name
  */
 export function planInputTarget(request, movement, candidate, {
   maxNodes = 128, maxFrames = 60, maxTimeMs = 250, compactInputs = false,
-  allowEquivalentSpinWitness = false,
+  allowEquivalentSpinWitness = false, timeProgression = true,
 } = {}) {
+  if (typeof timeProgression !== 'boolean') throw new Error('invalid input target time progression option');
   assertInputDecisionRequest(request);
   if (typeof allowEquivalentSpinWitness !== 'boolean') throw new Error('invalid equivalent spin witness option');
   validateInputPublicMovement(movement);
@@ -65,7 +66,7 @@ export function planInputTarget(request, movement, candidate, {
   const attempt = (actions, compact = compactInputs) => {
     if (nodes >= maxNodes || performance.now() - startedAt >= maxTimeMs) return null;
     nodes++;
-    const engine = neutralEngine(decision, movement);
+    const engine = neutralEngine(decision, movement, timeProgression);
     const observer = createInputRotationObserver(engine);
     let usedHold = false;
     const hold = engine.hold.bind(engine);
@@ -249,7 +250,8 @@ export function planInputTarget(request, movement, candidate, {
 
 /** Predict only idle movement to a future input boundary. A natural lock stops
  * before merge; no private garbage or future queue result can enter this job. */
-export function forecastInputBoundary(request, movement, frame) {
+export function forecastInputBoundary(request, movement, frame, { timeProgression = true } = {}) {
+  if (typeof timeProgression !== 'boolean') throw new Error('invalid input forecast time progression option');
   assertInputDecisionRequest(request);
   validateInputPublicMovement(movement);
   if (!Number.isSafeInteger(movement.frame) || movement.frame < 0 || !Number.isSafeInteger(frame) ||
@@ -260,7 +262,7 @@ export function forecastInputBoundary(request, movement, frame) {
       !Array.isArray(pieces.known) || pieces.known.length > 14 || pieces.known.some(value => !/^[IJLOSTZ]$/.test(value)) ||
       pieces.current?.toLowerCase() !== movement.falling.symbol ||
       JSON.stringify(movement.handling) !== JSON.stringify(INPUT_EXECUTION_PROFILE.handling)) throw new Error('invalid input forecast profile');
-  const engine = neutralEngine(request.decision, movement);
+  const engine = neutralEngine(request.decision, movement, timeProgression);
   engine.board.add = () => { throw new Error('input forecast crosses a natural lock'); };
   while (engine.frame < frame) engine.tick([]);
   const decision = structuredClone(request.decision);
@@ -268,8 +270,11 @@ export function forecastInputBoundary(request, movement, frame) {
   return { request: { ...request, decision }, movement: projectInputPublicMovement(engine) };
 }
 
-function neutralEngine(decision, movement) {
-  const options = inputExecutionOptions({ seed: 0 });
+/* The round's own gravity rule enters here: a neutral Engine that kept the
+   observed rise while the round had switched time progression off would search
+   routes under a different descent speed than the one the referee executes. */
+function neutralEngine(decision, movement, timeProgression = true) {
+  const options = inputExecutionOptions({ seed: 0, timeProgression });
   const engine = new Engine(buildEngineConfig(options, []));
   // This snapshot originates here with constant seeds and an empty queue of
   // garbage. It is never a referee snapshot or a public cache identity.

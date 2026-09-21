@@ -2,13 +2,13 @@ import { forecastInputBoundary } from './triangle/input-target-planner.mjs';
 import { resolveQualifiedInputSubmission } from './s2-input-public-resolver.mjs';
 
 /** Worker entry accepts only the amount-only policy request and public movement. */
-export function resolveInputJob({ request, movement, startFrame }) {
+export function resolveInputJob({ request, movement, startFrame, timeProgression = true }) {
   let future;
-  try { future = forecastInputBoundary(request, movement, startFrame); }
+  try { future = forecastInputBoundary(request, movement, startFrame, { timeProgression }); }
   catch (error) {
     if (error.message === 'input forecast crosses a natural lock') return { status: 'stale', reason: 'natural-lock' };
     throw error;
   }
-  const result = resolveQualifiedInputSubmission(future.request, future.movement, { compactInputs: true });
+  const result = resolveQualifiedInputSubmission(future.request, future.movement, { compactInputs: true, timeProgression });
   return { ...result, boundary: { decision: future.request.decision, movement: future.movement } };
 }
