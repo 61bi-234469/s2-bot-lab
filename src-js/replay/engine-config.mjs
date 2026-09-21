@@ -52,6 +52,18 @@ export function validateReplayOptions(options) {
    and an arbitrary custom rule still cannot enter the canonical profile. */
 const TIME_PROGRESSION_KEYS = Object.freeze(['gincrease', 'garbageincrease']);
 
+/* Natural gravity is the second thing a local round may switch off, and the
+   only rule a turn match needs removed: with `g` at zero the pinned Engine
+   never lowers a piece and never starts a landed piece's lock timer, so the
+   piece waits where the player leaves it and only a hard drop locks it. That is
+   the same movement contract the legacy final-placement route already has.
+   `gmargin`, `locktime` and `lockresets` keep their observed values, so a
+   gravity-off round differs from the canonical profile in exactly these keys.
+   `gincrease` is shared with time progression: a rise from zero is still zero,
+   so switching gravity off also fixes that key, and `garbageincrease` alone
+   then reports whether time progression is on. */
+const NATURAL_GRAVITY_KEYS = Object.freeze(['g', 'gincrease']);
+
 /* The ruleset identity a round is refereed under lives in `ruleset-profiles`
    (`timeProgressionRulesetId`). It stays out of this module because the public
    bot decision path depends on it and must not pull in the profile registry. */
@@ -60,11 +72,16 @@ export function inputExecutionTimeProgression(options) {
   return TIME_PROGRESSION_KEYS.some(key => (options?.[key] ?? 0) !== 0);
 }
 
+export function inputExecutionNaturalGravity(options) {
+  return (options?.g ?? 0) !== 0;
+}
+
 /** Fixed opt-in initialization contract; it does not qualify a match for export. */
 export function inputExecutionOptions({ seed, profileId = INPUT_EXECUTION_PROFILE.id, handling = INPUT_EXECUTION_HANDLING,
-  timeProgression = true } = {}) {
+  timeProgression = true, naturalGravity = true } = {}) {
   if (profileId !== INPUT_EXECUTION_PROFILE.id) throw new Error(`unsupported input execution profile ${profileId}`);
   if (typeof timeProgression !== 'boolean') throw new Error('input execution time progression must be boolean');
+  if (typeof naturalGravity !== 'boolean') throw new Error('input execution natural gravity must be boolean');
   if (!Number.isSafeInteger(seed) || seed < 0 || seed > 0xffff_ffff) {
     throw new Error("input execution seed must be an unsigned 32-bit integer");
   }
@@ -79,6 +96,7 @@ export function inputExecutionOptions({ seed, profileId = INPUT_EXECUTION_PROFIL
   return {
     ...S2_MANIFEST.normalizedOptions,
     ...(timeProgression ? {} : Object.fromEntries(TIME_PROGRESSION_KEYS.map(key => [key, 0]))),
+    ...(naturalGravity ? {} : Object.fromEntries(NATURAL_GRAVITY_KEYS.map(key => [key, 0]))),
     seed,
     allowharddrop: S2_MANIFEST.normalizedOptions.allow_harddrop,
     handling: resolvedHandling,

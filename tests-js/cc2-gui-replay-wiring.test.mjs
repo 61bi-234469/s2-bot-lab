@@ -275,8 +275,9 @@ test("the deck exports through one button whose format follows the execution pat
 test("each match setting group names the execution path it belongs to", () => {
   const settings = markup.slice(markup.indexOf('class="match-settings"'), markup.indexOf('class="match-outcome"'));
   assert.deepEqual([...settings.matchAll(/data-scope="([a-z]+)"/g)].map((match) => match[1]),
-    ["execution", "legacy", "both", "both"]);
+    ["execution", "legacy", "both", "both", "both"]);
   for (const id of ["match-execution-note", "match-legacy-note", "match-legacy-settings",
+    "match-turn-settings", "match-turn-match", "match-turn-order", "match-turn-note",
     "match-handicap-settings", "match-handicap-note", "match-stall-lock-note",
     "match-handicap-scope-note"]) assert.ok(ids.has(id), id);
   // The two 1P settings share one group, in the order they take effect: the
@@ -312,7 +313,7 @@ test("the settings row opens and closes as one, and its bar keeps the values", (
 
   const notes = app.slice(app.indexOf("function renderExecutionScopeNotes"), app.indexOf("function onOff"));
   assert.match(notes, /elements\["match-settings-state"\]\.textContent = matchSettingsStateText\(inputMode\)/);
-  assert.match(notes, /if \(inputMode\) return \[\.\.\.parts, `TIME \$\{onOff\(elements\["match-time-progression"\]\)\}`,[\s\S]*?`HANDI \$\{handicap\}`, `STALL \$\{stall\}`\]\.join/);
+  assert.match(notes, /if \(inputMode\) return \[\.\.\.parts, `TURN \$\{turn\}`, `TIME \$\{onOff\(elements\["match-time-progression"\]\)\}`,[\s\S]*?`HANDI \$\{handicap\}`, `STALL \$\{stall\}`\]\.join/);
   // A closed row must not take its state with it, so every control refreshes it.
   assert.match(app, /elements\["match-settings"\]\.addEventListener\("input", \(\) => renderExecutionScopeNotes\(\)\)/);
 });

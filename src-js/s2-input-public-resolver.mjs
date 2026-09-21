@@ -12,6 +12,7 @@ import { sha256Hex } from './sha256.mjs';
  */
 export function resolveQualifiedInputSubmission(request, movement, {
   maxNodes = 128, maxFrames = 60, maxTimeMs = 250, compactInputs = false, timeProgression = true,
+  naturalGravity = true,
 } = {}) {
   const decisionFingerprint = inputDecisionFingerprint(request);
   validateInputPublicMovement(movement);
@@ -54,7 +55,7 @@ export function resolveQualifiedInputSubmission(request, movement, {
         Math.max(1, Math.floor(remainingNodes / (candidates.length - adoptionRank))));
     const candidateTime = Math.min(remainingTime, candidates.length > 1 && adoptionRank === 0 ? maxTimeMs * 3 / 4 : remainingTime);
     const plan = planInputTarget(request, movement, candidate, { maxNodes: candidateNodes, maxFrames, maxTimeMs: candidateTime,
-      compactInputs, allowEquivalentSpinWitness: true, timeProgression });
+      compactInputs, allowEquivalentSpinWitness: true, timeProgression, naturalGravity });
     nodes += plan.nodes;
     attempts.push({ cc2Rank: candidate.cc2Rank, adoptionRank, status: plan.status,
       reason: plan.reason ?? null, nodes: plan.nodes });

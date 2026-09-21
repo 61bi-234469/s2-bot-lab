@@ -269,12 +269,25 @@ elements["match-handicap-garbage"].addEventListener("change", () => {
   renderExecutionScopeNotes();
   renderMatchSaveButton();
 });
+/* A turn match runs on either execution path, so the switch only has to keep
+   the controls it does rule out — the pace budget and the `.ttrm` export — in
+   step with itself. */
+elements["match-turn-match"].addEventListener("change", () => {
+  syncTurnMatchControl();
+  syncStallLockControl();
+  syncHumanMatchControls();
+  renderMatchSaveButton();
+  if (lastMatchView === null) renderEmptyMatchFields();
+  savePreferences();
+});
 /* One delegated listener rather than one per control: every setting in this row
    shows up on the disclosure's closed bar, so each of them has to refresh it. */
 elements["match-settings"].addEventListener("input", () => renderExecutionScopeNotes());
 elements["match-fair-comparison"].addEventListener("change", syncFairComparisonControls);
 elements["match-ttrm-compatible"].addEventListener("change", () => {
   clampInputQueueDepths();
+  syncTurnMatchControl();
+  syncStallLockControl();
   syncHumanMatchControls();
   syncFairComparisonControls();
   renderMatchSaveButton();
@@ -309,6 +322,7 @@ document.addEventListener("visibilitychange", () => {
 });
 syncMaxTurnsControl();
 syncRandomSeedControl();
+syncTurnMatchControl();
 syncStallLockControl();
 syncHumanMatchControls();
 syncFairComparisonControls();
@@ -1464,7 +1478,7 @@ function spawnHumanPiece() {
 
 function humanCanAct() {
   return human !== null && human.active !== null && !human.pending && matchRunning &&
-    matchAutoplay && !matchCountingDown();
+    matchAutoplay && !matchCountingDown() && humanTurnDue();
 }
 
 function humanMoveBy(dx) {
@@ -1615,7 +1629,9 @@ function applyStallLock() {
 
 async function humanHardDrop() {
   if (inputHumanActive()) {
-    enqueueInputTap("hardDrop");
+    // The referee withholds an out-of-turn hard drop anyway; not sending it
+    // keeps the consumed input log free of presses that were never played.
+    if (humanTurnDue()) enqueueInputTap("hardDrop");
     return;
   }
   if (!humanCanAct()) return;
@@ -1648,6 +1664,9 @@ async function submitHumanLock(landed, { penaltyLock = false } = {}) {
     const penaltyTopOut = adoptHumanView(body, { penaltyLock });
     if (body.outcome.complete) finishSeriesGame(body);
     else if (penaltyTopOut) await submitHumanPenaltyTopOut();
+    // A turn match has no standing opponent schedule: the turn this lock just
+    // handed over is what asks the opponent to play.
+    else if (turnMatchActive()) scheduleHumanMatchBotStep(body);
   } catch (error) {
     if (generation === matchGeneration) handleMatchError(error);
   }
@@ -1859,6 +1878,7 @@ function createMatchSeries({ excludedRandomSeed = null } = {}) {
       timeProgression: timeProgressionSetting(),
       stallLock: stallLockSettings(),
       handicap: handicapSettings(),
+      turnMatch: turnMatchSettings(),
     },
     completed: 0,
     leftWins: 0,
@@ -1895,6 +1915,7 @@ async function startSeriesGame() {
       ...(inputMode ? { ttrmCompatible: true, humanControls: structuredClone(humanControls),
         timeProgression: config.timeProgression !== false,
         stallLock: structuredClone(config.stallLock ?? { enabled: false, pps: null, penalty: null }) } : {}),
+      turnMatch: structuredClone(config.turnMatch ?? { enabled: false }),
       handicap: structuredClone(config.handicap ?? { enabled: false }),
       seed,
       maxTurns: config.maxTurns,
@@ -1917,7 +1938,10 @@ async function startSeriesGame() {
   matchRunning = true;
   // A round a person is on opens behind a countdown, which is the one stretch of
   // a started round where nothing may advance yet.
-  const opensWithCountdown = body.humanSide !== null && matchAutoplay;
+  // The countdown exists so a real-time round starts on GO rather than on the
+  // moment the server answered. A turn match has no clock to start, and its
+  // first turn waits for whoever owns it.
+  const opensWithCountdown = body.humanSide !== null && matchAutoplay && !turnMatchActive();
   if (inputMode) {
     inputMatchState = {
       sessionId: body.sessionId,
@@ -2041,6 +2065,13 @@ function renderStartCountdown(label) {
 function scheduleHumanMatchBotStep(view) {
   cancelHumanMatchBotStep();
   if (human === null || !matchRunning || !matchAutoplay) return;
+  /* A turn match steps the opponent only while the person is not the due side.
+     Their own turn is advanced by their hard drop, never by a timer. */
+  if (turnMatchActive()) {
+    if (view.dueBotIds.includes(human.side)) return;
+    humanBotStepTimer = setTimeout(stepMatch, 0);
+    return;
+  }
   if (!Number.isFinite(view.nextStepFrames)) return;
   // Start thinking immediately. The handler holds an early answer until its
   // scheduled frame and records a late answer at its actual completion frame.
@@ -2244,7 +2275,9 @@ async function stepMatch() {
   const previousMetricElapsedMs = matchPlaybackElapsedMs;
   try {
     const nowMs = performance.now();
-    const lockFrame = human === null ? null : Math.floor(readMatchClock(matchClock, nowMs) * 60 / 1000);
+    const lockFrame = human === null || turnMatchActive()
+      ? null
+      : Math.floor(readMatchClock(matchClock, nowMs) * 60 / 1000);
     const response = await fetch("/api/match/step", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -2697,6 +2730,9 @@ function renderMatchSaveButton() {
   if (format === "ttrm") {
     const started = matchSeries !== null && inputModeActive();
     const stallReplayDisabled = started && matchSeries.config.stallLock.enabled === true;
+    const turnReplayDisabled = started
+      ? matchSeries.config.turnMatch?.enabled === true
+      : turnMatchSelected() && selectedHumanSide() !== null;
     // Before a series starts the toggles are the only claim there is; a started
     // series answers for the rounds it was actually started with.
     const handicapReplayDisabled = started
@@ -2705,6 +2741,7 @@ function renderMatchSaveButton() {
     const ready = (matchSeries?.rounds ?? []).some((round) => round.executedTtrm?.text);
     setMatchExportButton(button,
       busy !== "" ? busy
+        : turnReplayDisabled ? "ターン勝負のINPUT対局は重力をOFFにして実行するため .ttrm に保存できません"
         : stallReplayDisabled ? "STALL PENALTYを使用したINPUT対局は .ttrm に保存できません"
         : handicapReplayDisabled ? "1Pハンデを使用したINPUT対局は .ttrm に保存できません"
         : !ready ? "保存できる完了ラウンドがまだありません。TTRM INPUT はround終了後に保存できます"
@@ -2875,11 +2912,12 @@ function setMatchSettingsDisabled(disabled) {
   for (const id of [
     "left-bot", "right-bot", "left-bot-settings", "right-bot-settings",
     "match-fair-comparison", "match-pre-lock-preview", "match-ttrm-compatible", "match-time-progression", "match-seed", "match-max-turns", "match-unlimited-turns", "match-count",
-    "match-stall-lock", "match-handicap-garbage",
+    "match-stall-lock", "match-handicap-garbage", "match-turn-match", "match-turn-order",
   ]) elements[id].disabled = disabled;
   elements["match-max-turns"].disabled = disabled || elements["match-unlimited-turns"].checked;
   syncRandomSeedControl(disabled);
   syncStallLockControl(disabled);
+  syncTurnMatchControl(disabled);
   syncHumanMatchControls(disabled);
 }
 
@@ -2908,6 +2946,7 @@ function syncHumanMatchControls(matchSettingsDisabled = false) {
       ? "1P対戦では自分のハードドロップが手番を進めます"
       : "";
   syncInputBotOptions();
+  syncTurnMatchControl(matchSettingsDisabled);
   renderExecutionScopeNotes();
 }
 
@@ -2942,7 +2981,9 @@ function renderExecutionScopeNotes() {
   const playing = selectedHumanSide() !== null;
   const handicapActive = elements["match-handicap-garbage"].checked && playing;
   elements["match-execution-note"].textContent = inputMode
-    ? elements["match-stall-lock"].checked
+    ? elements["match-turn-match"].checked && playing
+      ? "TTRM INPUT：ターン勝負はEngineの重力をOFFにして実行するため、この対局は .ttrm 保存対象外です。"
+      : elements["match-stall-lock"].checked
       ? "TTRM INPUT：STALL PENALTYを適用します。この設定の対局は .ttrm 保存対象外です。"
       : handicapActive
         ? "TTRM INPUT：1Pハンデの初期地形は入力ログから再現できないため、この対局は .ttrm 保存対象外です。"
@@ -2980,7 +3021,34 @@ function renderExecutionScopeNotes() {
   elements["match-handicap-scope-note"].textContent = playing
     ? "どちらも 1P（You）側にだけ適用します。Bot側の盤面と手番は変わりません。"
     : "LEFT BOT に You (1P) を選んだときだけ使います。この対局には適用しません。";
+  renderTurnMatchNote(inputMode, playing);
   elements["match-settings-state"].textContent = matchSettingsStateText(inputMode);
+}
+
+/* The turn match note states what the switch removes, so the rule is readable
+   without starting a round: the real-time schedule, the STALL PENALTY budget
+   that measured it, the natural gravity that TTRM INPUT's referee Engine
+   otherwise runs, and on that path the `.ttrm` export the round then loses. */
+function renderTurnMatchNote(inputMode, playing) {
+  const order = elements["match-turn-order"].value;
+  const orderNote = order === "human-first"
+    ? "1Pが先に1手置き、その盤面を見てBotが置きます。"
+    : order === "bot-first"
+      ? "Botが先に1手置き、その盤面を見て 1P が置きます。"
+      : inputMode
+        ? "互いに1手ずつ置き、手数差が1を超えないよう進行します（同一瞬間の確定ではありません）。"
+        : "同じターン開始局面から互いに1手ずつ選び、両方を同時に確定します。";
+  /* A turn removes natural gravity on whichever path runs it, so each path
+     states what that costs it rather than leaving one of them silent. */
+  const routeNote = inputMode
+    ? "TTRM INPUT ではEngineの重力をOFFにして実行し、この対局は .ttrm 保存対象外です。"
+    : "従来モードはもともと重力落下がない経路で、EXPORT は通常どおり .json を保存できます。";
+  elements["match-turn-settings"].dataset.inactive = String(!playing);
+  elements["match-turn-note"].textContent = !playing
+    ? "LEFT BOT に You (1P) を選んだときだけ使います。この対局には適用しません。"
+    : elements["match-turn-match"].checked
+      ? `ONの間、${orderNote}持ち時間はなく、ミノの重力落下もありません。STALL PENALTY は使いません。${routeNote}`
+      : "OFFの間、互いが自分のペースで同時に進行する実時間対局です。";
 }
 
 /* The execution path leads because it decides what the export writes. The two
@@ -2995,14 +3063,18 @@ function matchSettingsStateText(inputMode) {
     `FT${elements["match-count"].value}`,
   ];
   const penalty = elements["match-stall-lock-penalty"].value === "penalty-line" ? "LINE" : "LOCK";
-  const stall = elements["match-stall-lock"].checked ? `${elements["match-stall-lock-pps"].value} PPS ${penalty}` : "OFF";
+  const stall = elements["match-turn-match"].checked ? "—"
+    : elements["match-stall-lock"].checked ? `${elements["match-stall-lock-pps"].value} PPS ${penalty}` : "OFF";
   // A setting kept ON with nobody playing is neither on nor off for this match:
   // "—" says it is not applicable rather than claiming it was turned off.
   const handicap = !elements["match-handicap-garbage"].checked ? "OFF"
     : selectedHumanSide() === null ? "—" : "ON";
-  if (inputMode) return [...parts, `TIME ${onOff(elements["match-time-progression"])}`,
+  const turn = !elements["match-turn-match"].checked ? "OFF"
+    : selectedHumanSide() === null ? "—"
+      : ({ simultaneous: "同時", "human-first": "1P先行", "bot-first": "bot先行" })[elements["match-turn-order"].value];
+  if (inputMode) return [...parts, `TURN ${turn}`, `TIME ${onOff(elements["match-time-progression"])}`,
     `HANDI ${handicap}`, `STALL ${stall}`].join(" · ");
-  return [...parts, `FAIR ${onOff(elements["match-fair-comparison"])}`,
+  return [...parts, `TURN ${turn}`, `FAIR ${onOff(elements["match-fair-comparison"])}`,
     `GHOST ${onOff(elements["match-pre-lock-preview"])}`, `HANDI ${handicap}`,
     `STALL ${stall}`].join(" · ");
 }
@@ -3018,16 +3090,24 @@ function syncMaxTurnsControl() {
 /* The pace field is meaningless while the switch above it is off, so it follows
    that switch the way MAX TURNS follows its own infinity toggle. */
 function syncStallLockControl(matchSettingsDisabled = false) {
-  elements["match-stall-lock-pps"].disabled =
-    matchSettingsDisabled || !elements["match-stall-lock"].checked;
-  elements["match-stall-lock-penalty"].disabled =
-    matchSettingsDisabled || !elements["match-stall-lock"].checked;
+  const inert = matchSettingsDisabled || !elements["match-stall-lock"].checked || turnMatchSelected();
+  elements["match-stall-lock-pps"].disabled = inert;
+  elements["match-stall-lock-penalty"].disabled = inert;
+  elements["match-stall-lock"].disabled = matchSettingsDisabled || turnMatchSelected();
+}
+
+/* The order field is meaningless while the switch above it is off. */
+function syncTurnMatchControl(matchSettingsDisabled = false) {
+  elements["match-turn-match"].disabled = matchSettingsDisabled;
+  elements["match-turn-order"].disabled = matchSettingsDisabled || !elements["match-turn-match"].checked;
 }
 
 /* Read once, when a series starts: a pace changed mid-round would not be the
-   threshold the pieces already on that board were played under. */
+   threshold the pieces already on that board were played under. A turn match
+   has no clock for a pace to be measured against, so the budget is not part of
+   one rather than being measured against a clock that never runs. */
 function stallLockSettings() {
-  const enabled = elements["match-stall-lock"].checked;
+  const enabled = elements["match-stall-lock"].checked && !turnMatchSelected();
   const penalty = elements["match-stall-lock-penalty"].value;
   if (enabled && !STALL_LOCK_PENALTIES.has(penalty)) throw new Error("unsupported STALL PENALTY option");
   return {
@@ -3051,6 +3131,39 @@ function timeProgressionSetting() {
    applicable rather than refused, and the server normalizes it the same way. */
 function handicapSettings() {
   return { enabled: elements["match-handicap-garbage"].checked && selectedHumanSide() !== null };
+}
+
+/* Whether the settings row currently asks for a turn match. It is a 1P rule on
+   both execution paths: the legacy route has no natural gravity to begin with,
+   and TTRM INPUT switches the referee Engine's own gravity off for the round,
+   which is what lets a piece wait for its turn there too. */
+function turnMatchSelected() {
+  return elements["match-turn-match"].checked;
+}
+
+/* Read once, when a series starts, like the other match settings. */
+function turnMatchSettings() {
+  return {
+    enabled: turnMatchSelected() && selectedHumanSide() !== null,
+    order: elements["match-turn-order"].value,
+  };
+}
+
+/* Whether the round being played is a turn match. The started series answers,
+   never the settings row, so changing the switch mid-series cannot change how
+   the pieces already on the board were played. */
+function turnMatchActive() {
+  return matchSeries?.config?.turnMatch?.enabled === true;
+}
+
+/* A turn match hands the board back and forth: the piece on screen can only be
+   dropped on the person's own turn. Every other round is theirs continuously. */
+function humanTurnDue() {
+  if (!turnMatchActive()) return true;
+  // TTRM INPUT keeps the piece in the referee Engine and has no local player
+  // record, so the side comes from the view on that path.
+  const side = human?.side ?? lastMatchView?.humanSide ?? null;
+  return side !== null && lastMatchView?.dueBotIds?.includes(side) === true;
 }
 
 function syncRandomSeedControl(matchSettingsDisabled = false) {
@@ -3118,7 +3231,10 @@ function acceptMatchView(view) {
      started: that clock is what their own lock frames are read from, so it must
      not be pulled back to the last confirmed lock or held at the opponent's
      next one. Bot-only matches stay on the step-by-step projection. */
-  if (!(inputModeActive() || human !== null) && Number.isFinite(view.metricElapsedMs)) {
+  /* A turn match has no free-running clock either: its shared frame advances
+     one turn at a time, so it reads like a bot-only round rather than like the
+     real-time 1P round whose lock frames come from wall time. */
+  if (!(inputModeActive() || (human !== null && !turnMatchActive())) && Number.isFinite(view.metricElapsedMs)) {
     const nextElapsedMs = Number.isFinite(view.nextStepFrames) && view.nextStepFrames > 0
       ? view.metricElapsedMs + view.nextStepFrames * 1000 / 60
       : view.metricElapsedMs;

@@ -264,6 +264,22 @@
                 <small class="match-scope-note">両方の実行方式で使います。同じSEEDでもミノ列・ガベージRNG・終局条件は方式ごとに異なります。</small>
               </div>
             </section>
+            <section class="match-setting-group" id="match-turn-settings" data-scope="both">
+              <h3 class="group-name">TURN MATCH / ターン勝負</h3>
+              <div class="match-setting-group-body">
+                <label class="turn-match-setting" title="1P（You）とBotが1手ずつ番で置きます。時間制限とミノの重力落下はありません。">TURN MATCH
+                  <span><input id="match-turn-match" type="checkbox"> 1手ずつのターン勝負にする</span>
+                </label>
+                <label class="match-setting" for="match-turn-order">ORDER
+                  <select id="match-turn-order" disabled>
+                    <option value="simultaneous">同時（互いの手を見ずに1手）</option>
+                    <option value="human-first">1P先行</option>
+                    <option value="bot-first">bot先行</option>
+                  </select>
+                </label>
+                <small class="match-scope-note" id="match-turn-note"></small>
+              </div>
+            </section>
             <section class="match-setting-group" id="match-handicap-settings" data-scope="both">
               <h3 class="group-name">HANDICAP / ハンデ</h3>
               <div class="match-setting-group-body">

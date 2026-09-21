@@ -36,7 +36,8 @@ function harness({ pps = 2, enabled = true, penalty = 'penalty-line', inputMode 
     // The start countdown holds a turn the same way a pause does, so its own
     // state is real here rather than stubbed out.
     startCountdown: null,
-    matchSeries: { config: { stallLock: { enabled, pps, penalty } } },
+    matchSeries: { config: { stallLock: { enabled, pps, penalty }, turnMatch: { enabled: false } } },
+    lastMatchView: null,
     matchClock: { running: true },
     inputMatchState: inputMode ? {} : null,
     inputHumanActive: () => inputMode,
@@ -81,7 +82,8 @@ function harness({ pps = 2, enabled = true, penalty = 'penalty-line', inputMode 
       nonPenaltyLocks: 0,
     },
   });
-  extract(context, 'matchCountingDown', 'humanCanAct', 'stallLockFrames', 'stallLockDueAtMs',
+  extract(context, 'matchCountingDown', 'turnMatchActive', 'humanTurnDue', 'humanCanAct',
+    'stallLockFrames', 'stallLockDueAtMs',
     'cancelStallLock', 'armStallLock', 'applyStallLock', 'spawnHumanPiece', 'humanHold',
     'adoptHumanView');
   return context;

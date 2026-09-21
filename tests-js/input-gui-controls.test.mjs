@@ -562,6 +562,10 @@ function handicapDeck({ checked = true, human = true, inputMode = true, series =
     'match-stall-lock-pps': { value: '2' },
     'match-stall-lock-note': { textContent: '' },
     'match-handicap-scope-note': { textContent: '' },
+    'match-turn-match': checkbox(false),
+    'match-turn-order': { value: 'simultaneous' },
+    'match-turn-settings': { dataset: {} },
+    'match-turn-note': { textContent: '' },
     'match-legacy-settings': { dataset: {} },
     'match-legacy-note': { textContent: '' },
     'match-execution-note': { textContent: '' },
@@ -592,7 +596,8 @@ function handicapDeck({ checked = true, human = true, inputMode = true, series =
     assert.ok(at >= 0, `${name} not found in app.mjs`);
     return source.slice(at, source.indexOf("\n}\n", at) + 3);
   };
-  for (const name of ['renderExecutionScopeNotes', 'matchSettingsStateText', 'handicapSettings',
+  for (const name of ['renderExecutionScopeNotes', 'renderTurnMatchNote', 'matchSettingsStateText',
+    'handicapSettings', 'turnMatchSelected', 'turnMatchSettings',
     'timeProgressionSetting', 'selectedExportFormat', 'renderMatchSaveButton', 'setMatchExportButton']) {
     vm.runInContext(declaration(name), app);
   }

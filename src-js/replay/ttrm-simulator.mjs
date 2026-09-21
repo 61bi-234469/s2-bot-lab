@@ -15,8 +15,8 @@
 import { Engine, Mino } from "@haelp/teto/engine";
 
 import { convertEngineBoard } from "./board-converter.mjs";
-import { buildEngineConfig, inputExecutionTimeProgression, inputExecutionOptions,
-  INPUT_EXECUTION_PROFILE } from "./engine-config.mjs";
+import { buildEngineConfig, inputExecutionNaturalGravity, inputExecutionTimeProgression,
+  inputExecutionOptions, INPUT_EXECUTION_PROFILE } from "./engine-config.mjs";
 import { timeProgressionRulesetId } from "../ruleset-profiles.mjs";
 import { createInputLockConformance } from "../triangle/input-lock-conformance.mjs";
 import { projectInputPublicMovement } from "../triangle/input-public-movement.mjs";
@@ -265,11 +265,12 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
     }
   }
   if (canonicalProfile !== null) {
-    // Time progression is the one thing a local round may switch off. Reading it
-    // back from the replay keeps every other key, and the disabled values
-    // themselves, compared against the canonical profile.
+    // Time progression and natural gravity are the two things a local round may
+    // switch off. Reading them back from the replay keeps every other key, and
+    // the disabled values themselves, compared against the canonical profile.
     const expected = inputExecutionOptions({ seed: options.seed, profileId: canonicalProfile, handling: options.handling,
-      timeProgression: inputExecutionTimeProgression(options) });
+      timeProgression: inputExecutionTimeProgression(options),
+      naturalGravity: inputExecutionNaturalGravity(options) });
     for (const key of Object.keys(expected)) {
       if (JSON.stringify(options[key]) !== JSON.stringify(expected[key])) {
         throw new TtrmError("profile", `canonical input profile option mismatch: ${key}`);
