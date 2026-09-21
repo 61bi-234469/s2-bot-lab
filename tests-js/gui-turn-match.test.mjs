@@ -175,9 +175,10 @@ function deck({ checked = true, order = "simultaneous", human = true, inputMode 
   series = null, dueBotIds = ["left", "right"], stallLock = true } = {}) {
   const checkbox = (value) => ({ checked: value, value: String(value), disabled: false });
   const elements = {
+    "left-bot": { value: "human" },
+    "left-bot-settings-summary": { textContent: "" },
     "match-turn-match": checkbox(checked),
     "match-turn-order": { value: order },
-    "match-turn-settings": { dataset: {} },
     "match-turn-note": { textContent: "" },
     "match-stall-lock": checkbox(stallLock),
     "match-stall-lock-penalty": { value: "penalty-line", disabled: false },
@@ -209,6 +210,12 @@ function deck({ checked = true, order = "simultaneous", human = true, inputMode 
     setTimeout(callback) { callback(); return 1; },
     clearTimeout() {},
     selectedHumanSide: () => (human ? "left" : null),
+    humanControls: {},
+    botCapabilities: new Map(),
+    BOT_PARAMETER_DEFINITIONS: { human: { parameters: [] } },
+    botParameters: { left: { human: {} } },
+    describeHumanControls: () => "DAS 10F",
+    fairComparisonEnabled: () => false,
     inputModeSelected: () => inputMode,
     inputModeActive: () => inputMode,
     onOff: (control) => (control.checked ? "ON" : "OFF"),
@@ -223,7 +230,8 @@ function deck({ checked = true, order = "simultaneous", human = true, inputMode 
   };
   for (const name of ["turnMatchSelected", "turnMatchSettings", "turnMatchActive", "humanTurnDue",
     "matchCountingDown", "humanCanAct", "stallLockSettings", "renderTurnMatchNote",
-    "matchSettingsStateText", "cancelHumanMatchBotStep", "scheduleHumanMatchBotStep"]) {
+    "matchSettingsStateText", "renderBotSettingsSummary", "humanTurnMatchSummary",
+    "humanHandicapSummary", "humanStallSummary", "cancelHumanMatchBotStep", "scheduleHumanMatchBotStep"]) {
     vm.runInContext(declaration(name), context);
   }
   return context;
@@ -238,45 +246,61 @@ test("the turn match setting applies to a 1P round on either execution path", ()
   assert.equal(deck({ checked: false }).turnMatchSettings().enabled, false);
 });
 
+test("the left human picker summary carries its 1P rules", () => {
+  const app = deck({ order: "human-first", stallLock: true });
+  app.elements["match-handicap-garbage"].checked = true;
+  app.renderBotSettingsSummary("left");
+  assert.equal(app.elements["left-bot-settings-summary"].textContent,
+    "DAS 10F · TURN 1P先行 · HANDI ON · STALL —");
+
+  app.elements["match-turn-match"].checked = false;
+  app.renderBotSettingsSummary("left");
+  assert.equal(app.elements["left-bot-settings-summary"].textContent,
+    "DAS 10F · TURN OFF · HANDI ON · STALL 2 PPS LINE");
+
+  app.elements["match-handicap-garbage"].checked = false;
+  app.elements["match-stall-lock"].checked = false;
+  app.renderBotSettingsSummary("left");
+  assert.equal(app.elements["left-bot-settings-summary"].textContent,
+    "DAS 10F · TURN OFF · HANDI OFF · STALL OFF");
+});
+
 test("a turn match has no pace for the STALL PENALTY budget to measure", () => {
   assert.equal(deck({ checked: true, stallLock: true }).stallLockSettings().enabled, false);
   assert.equal(deck({ checked: false, stallLock: true }).stallLockSettings().enabled, true);
 });
 
-test("the settings bar names the turn order, and says not applicable without a 1P side", () => {
+test("the settings bar leaves 1P rules to the human picker summary", () => {
   const playing = deck({ order: "bot-first" });
-  playing.renderTurnMatchNote(false, true);
-  assert.match(playing.matchSettingsStateText(false), /TURN bot先行/);
-  assert.match(playing.matchSettingsStateText(false), /STALL —/, "the budget is not claimed either way");
-  assert.equal(playing.elements["match-turn-settings"].dataset.inactive, "false");
+  playing.renderTurnMatchNote(false);
+  assert.doesNotMatch(playing.matchSettingsStateText(false), /TURN|HANDI|STALL/);
+  assert.match(playing.matchSettingsStateText(false), /FAIR OFF · GHOST OFF/);
   assert.match(playing.elements["match-turn-note"].textContent, /重力落下もありません/);
   assert.match(playing.elements["match-turn-note"].textContent, /\.json/, "the legacy route keeps its export");
 
   const botsOnly = deck({ human: false });
-  botsOnly.renderTurnMatchNote(false, false);
-  assert.match(botsOnly.matchSettingsStateText(false), /TURN —/);
-  assert.equal(botsOnly.elements["match-turn-settings"].dataset.inactive, "true");
+  botsOnly.renderTurnMatchNote(false);
+  assert.doesNotMatch(botsOnly.matchSettingsStateText(false), /TURN|HANDI|STALL/);
 
   const off = deck({ checked: false });
-  off.renderTurnMatchNote(false, true);
-  assert.match(off.matchSettingsStateText(false), /TURN OFF/);
-  assert.match(off.matchSettingsStateText(false), /STALL 2 PPS LINE/);
+  off.renderTurnMatchNote(false);
+  assert.doesNotMatch(off.matchSettingsStateText(false), /TURN|HANDI|STALL/);
 
   // The input path carries the same rule and says what it costs that path.
   const inputMode = deck({ inputMode: true, order: "human-first" });
-  inputMode.renderTurnMatchNote(true, true);
-  assert.match(inputMode.matchSettingsStateText(true), /TURN 1P先行/);
-  assert.match(inputMode.matchSettingsStateText(true), /STALL —/);
+  inputMode.renderTurnMatchNote(true);
+  assert.doesNotMatch(inputMode.matchSettingsStateText(true), /TURN|HANDI|STALL/);
+  assert.match(inputMode.matchSettingsStateText(true), /TIME ON/);
   assert.match(inputMode.elements["match-turn-note"].textContent, /\.ttrm 保存対象外/);
   assert.match(inputMode.elements["match-turn-note"].textContent, /Engineの重力をOFF/);
 
   const inputSimultaneous = deck({ inputMode: true, order: "simultaneous" });
-  inputSimultaneous.renderTurnMatchNote(true, true);
+  inputSimultaneous.renderTurnMatchNote(true);
   assert.match(inputSimultaneous.elements["match-turn-note"].textContent, /手数差が1を超えない/);
   assert.match(inputSimultaneous.elements["match-turn-note"].textContent, /同一瞬間の確定ではありません/);
 
   const legacySimultaneous = deck({ order: "simultaneous" });
-  legacySimultaneous.renderTurnMatchNote(false, true);
+  legacySimultaneous.renderTurnMatchNote(false);
   assert.match(legacySimultaneous.elements["match-turn-note"].textContent, /両方を同時に確定/);
 });
 

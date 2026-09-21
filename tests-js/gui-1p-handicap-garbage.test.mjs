@@ -157,5 +157,11 @@ test("the match deck exposes the handicap control and persists it", () => {
     assert.match(markup, new RegExp(`id="${id}"`), id);
   }
   assert.match(markup, /HANDICAP \/ ハンデ/);
+  const humanSettings = markup.slice(markup.indexOf('id="human-settings-fields"'), markup.indexOf('id="bot-settings-validation"'));
+  assert.match(humanSettings, /MATCH RULES \/ 対局ルール/);
+  assert.ok(humanSettings.indexOf('id="match-handicap-settings"') > 0);
+  assert.doesNotMatch(markup.slice(markup.indexOf('id="match-settings"'), markup.indexOf('class="match-outcome"')),
+    /id="match-handicap-settings"/);
+  assert.doesNotMatch(markup, /match-handicap-scope-note/);
   assert.ok(TOGGLE_PREFERENCE_IDS.includes("match-handicap-garbage"));
 });

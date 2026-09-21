@@ -548,23 +548,20 @@ test('GUI FT export retains both completed input rounds and replays their origin
   assert.ok(buildReplayIR(parseTtrm(JSON.stringify(file))).rounds.every(round => round.status === 'ok'));
 });
 
-/* The 1P handicap's browser side, run as the shipped functions: what the closed
-   settings bar claims, what the group says while nobody is playing, and which
-   export the setting blocks. */
+/* The 1P handicap's browser side, run as the shipped functions: its note and
+   export behavior remain in the settings dialog while the closed bar stays
+   focused on execution-path settings. */
 function handicapDeck({ checked = true, human = true, inputMode = true, series = null, timeProgression = true } = {}) {
   const checkbox = (value) => ({ checked: value, value: String(value) });
   const elements = {
     'match-handicap-garbage': checkbox(checked),
-    'match-handicap-settings': { dataset: {} },
     'match-handicap-note': { textContent: '' },
     'match-stall-lock': checkbox(false),
     'match-stall-lock-penalty': { value: 'penalty-line' },
     'match-stall-lock-pps': { value: '2' },
     'match-stall-lock-note': { textContent: '' },
-    'match-handicap-scope-note': { textContent: '' },
     'match-turn-match': checkbox(false),
     'match-turn-order': { value: 'simultaneous' },
-    'match-turn-settings': { dataset: {} },
     'match-turn-note': { textContent: '' },
     'match-legacy-settings': { dataset: {} },
     'match-legacy-note': { textContent: '' },
@@ -604,31 +601,29 @@ function handicapDeck({ checked = true, human = true, inputMode = true, series =
   return app;
 }
 
-test('the settings bar reports the 1P handicap, and says "not applicable" without a 1P side', () => {
+test('the settings bar leaves the 1P handicap in the human dialog', () => {
   const playing = handicapDeck({ checked: true, human: true });
   playing.renderExecutionScopeNotes();
-  assert.match(playing.elements['match-settings-state'].textContent, /HANDI ON/);
-  assert.equal(playing.elements['match-handicap-settings'].dataset.inactive, 'false');
+  assert.doesNotMatch(playing.elements['match-settings-state'].textContent, /TURN|HANDI|STALL/);
+  assert.match(playing.elements['match-settings-state'].textContent, /TIME ON/);
   assert.match(playing.elements['match-handicap-note'].textContent, /28マス/);
-  assert.match(playing.elements['match-handicap-scope-note'].textContent, /1P（You）側にだけ適用/);
   // Each control keeps its own note inside the shared group.
   assert.match(playing.elements['match-stall-lock-note'].textContent, /消去不能ライン/);
   assert.match(playing.elements['match-execution-note'].textContent, /\.ttrm 保存対象外/);
   assert.equal(playing.handicapSettings().enabled, true);
 
-  // A saved ON setting with two bots is not applicable rather than turned off.
+  // The setting is still normalized away from a bot-only match, but the dialog
+  // is no longer dimmed or exposed through the shared settings bar.
   const botsOnly = handicapDeck({ checked: true, human: false });
   botsOnly.renderExecutionScopeNotes();
-  assert.match(botsOnly.elements['match-settings-state'].textContent, /HANDI —/);
-  assert.equal(botsOnly.elements['match-handicap-settings'].dataset.inactive, 'true');
-  assert.match(botsOnly.elements['match-handicap-scope-note'].textContent, /You \(1P\)/);
+  assert.doesNotMatch(botsOnly.elements['match-settings-state'].textContent, /TURN|HANDI|STALL/);
   assert.match(botsOnly.elements['match-handicap-note'].textContent, /28マス/,
-    "a dimmed control still says what it would do");
+    "the note remains available when the dialog is opened for 1P");
   assert.equal(botsOnly.handicapSettings().enabled, false, 'no 1P side is nothing to handicap');
 
   const off = handicapDeck({ checked: false, human: true });
   off.renderExecutionScopeNotes();
-  assert.match(off.elements['match-settings-state'].textContent, /HANDI OFF/);
+  assert.doesNotMatch(off.elements['match-settings-state'].textContent, /HANDI/);
   assert.doesNotMatch(off.elements['match-execution-note'].textContent, /保存対象外/);
 });
 

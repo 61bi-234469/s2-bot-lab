@@ -109,11 +109,14 @@ test('a turn starts the stall penalty budget and HOLD does not extend it', () =>
 test('the displayed defaults are the penalty line and 2 PPS', () => {
   assert.match(markup, /id="match-stall-lock-pps"[^>]*value="2"/);
   assert.doesNotMatch(markup, /match-stall-lock-frames/);
-  assert.match(markup, /STALL PENALTY」はどちらの実行方式でも使え/);
   assert.doesNotMatch(markup, /TTRM INPUT では使いません/);
   /* Two penalties share the group, so the select lands on whichever option is
      listed first. The shipped default is the penalty line, which keeps the
      piece with the player instead of taking the turn away. */
+  const humanSettings = markup.slice(markup.indexOf('id="human-settings-fields"'), markup.indexOf('id="bot-settings-validation"'));
+  assert.match(humanSettings, /MATCH RULES \/ 対局ルール/);
+  assert.match(humanSettings, /STALL PENALTY/);
+  assert.ok(humanSettings.indexOf('id="match-stall-lock"') > 0);
   const select = markup.slice(markup.indexOf('<select id="match-stall-lock-penalty"'));
   const body = select.slice(0, select.indexOf('</select>'));
   assert.deepEqual([...body.matchAll(/<option value="([a-z-]+)"/g)].map((match) => match[1]),
