@@ -26,9 +26,12 @@ function spawnMove(state) {
     rotationEvidence: { lastInputWasRotation: false, kickIndex: null, kickId: null, kickOffset: null } });
 }
 
-function planningHandlers() {
+function planningHandlers(onPropose = () => {}) {
   return createGuiInputMatchHandlers({ now: () => 0, runtime: {
-    propose: async ({ state }) => ({ moves: [spawnMove(state)] }),
+    propose: async (request) => {
+      onPropose(request);
+      return { moves: [spawnMove(request.state)] };
+    },
     resolveInput: async payload => resolveInputJob(payload),
     closeSessions: async () => {},
   } });
@@ -92,6 +95,21 @@ test('an input round can switch natural gravity off and then only a hard drop lo
   }
   assert.ok(gravity.refereeView().players[0].stats.pieces > 0, 'the observed round still locks naturally');
 });
+
+for (const order of ['simultaneous', 'bot-first', 'human-first']) {
+  test(`turn match with PPS and THINK TIME enabled remains playable: ${order}`, async () => {
+    const budgets = [];
+    const handlers = planningHandlers(request => budgets.push(request.thinkMs));
+    const start = await startTurnRound(handlers, order, {
+      rightParameters: { ppsEnabled: true, pps: 20, thinkTimeEnabled: true, thinkMs: 250 },
+    });
+    const played = await run(handlers, start.sessionId, 1, 160, { 80: tap(80, 'hardDrop') });
+    assert.equal(turns(played).left, 1, 'the player can lock');
+    assert.ok(turns(played).right >= 1, 'the opponent can answer');
+    assert.ok(budgets.length > 0, 'the real proposal boundary was reached');
+    assert.ok(budgets.every(value => value === 250), 'turn matches retain the configured think time without a PPS deadline');
+  });
+}
 
 test('bot first: the opponent opens the round and then waits for the player', async () => {
   const handlers = planningHandlers();

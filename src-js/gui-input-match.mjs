@@ -367,7 +367,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
         let response;
         try { response = await runtime.propose({ sessionKey, engine: type, state,
           selectionLimit: parameters.selectionEnabled ? parameters.selectionLimit : null,
-          thinkMs: !parameters.thinkTimeEnabled ? null : parameters.ppsEnabled === false ? parameters.thinkMs :
+          thinkMs: !parameters.thinkTimeEnabled ? null : session.turnMatch.enabled || parameters.ppsEnabled === false ? parameters.thinkMs :
             realtimeCc2ThinkMs({ thinkMs: parameters.thinkMs, stepFrames: interval }) });
         } catch (error) {
           const info = error.moveInfo;
