@@ -6,8 +6,8 @@ use serde_json::{json, Value};
 
 use crate::bot::{Bot, Statistics};
 use crate::f14_compat::{
-    driver::F14Driver,
-    transport::Profile,
+    driver::{F14Driver, F14RerankState},
+    transport::{self as f14, Profile},
 };
 
 struct Driver {
@@ -19,6 +19,7 @@ struct Driver {
 thread_local! {
     static DRIVER: RefCell<Option<Driver>> = const { RefCell::new(None) };
     static F14_DRIVER: RefCell<Option<F14Driver>> = const { RefCell::new(None) };
+    static RETAINED_F14: RefCell<Option<F14RerankState>> = const { RefCell::new(None) };
 }
 
 #[derive(Deserialize)]
@@ -34,6 +35,9 @@ enum Request {
     },
     F14Start {
         profile: Profile,
+        request: Value,
+    },
+    F14Rerank {
         request: Value,
     },
     Work {
@@ -79,6 +83,7 @@ pub unsafe extern "C" fn cc2_dealloc(pointer: *mut u8, length: usize) {
 fn handle_request(request: Request) -> Result<Value, &'static str> {
     match request {
         Request::Start { config, search_selection_limit, search_seed, state } => {
+            RETAINED_F14.with(|slot| *slot.borrow_mut() = None);
             let limit = match search_selection_limit {
                 Some(value) => {
                     let value = value.parse::<u64>().map_err(|_| "selection-limit")?;
@@ -101,6 +106,7 @@ fn handle_request(request: Request) -> Result<Value, &'static str> {
             Ok(Value::Null)
         }
         Request::F14Start { profile, request } => {
+            RETAINED_F14.with(|slot| *slot.borrow_mut() = None);
             let driver = match F14Driver::start(profile, request) {
                 Ok(driver) => driver,
                 Err(response) => {
@@ -156,15 +162,32 @@ fn handle_request(request: Request) -> Result<Value, &'static str> {
         }),
         Request::F14Finish => F14_DRIVER.with(|slot| {
             let driver = slot.borrow_mut().take().ok_or("no-active-bot")?;
-            Ok(driver.finish())
+            let (response, retained) = driver.finish_with_retained();
+            RETAINED_F14.with(|slot| *slot.borrow_mut() = retained);
+            Ok(response)
         }),
         Request::F14FinishEarly => F14_DRIVER.with(|slot| {
             let driver = slot.borrow_mut().take().ok_or("no-active-bot")?;
-            Ok(driver.finish_early())
+            let (response, retained) = driver.finish_early_with_retained();
+            RETAINED_F14.with(|slot| *slot.borrow_mut() = retained);
+            Ok(response)
         }),
+        Request::F14Rerank { request } => {
+            let retained = RETAINED_F14.with(|slot| slot.borrow().clone());
+            match retained {
+                Some(retained) => Ok(f14::rerank_retained(
+                    request,
+                    &retained.request,
+                    &retained.profile,
+                    &retained.outcome,
+                )),
+                None => Ok(f14::rerank_without_retained(request)),
+            }
+        }
         Request::Stop => {
             DRIVER.with(|slot| *slot.borrow_mut() = None);
             F14_DRIVER.with(|slot| *slot.borrow_mut() = None);
+            RETAINED_F14.with(|slot| *slot.borrow_mut() = None);
             Ok(Value::Null)
         }
     }

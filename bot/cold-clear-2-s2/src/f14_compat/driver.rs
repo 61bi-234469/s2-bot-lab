@@ -6,6 +6,7 @@ use crate::bot::{BotConfig, Statistics};
 use crate::tbp::MoveInfo;
 
 use super::inproc::{self, FinishEnd, Prepared};
+use super::select::FinishedRootOutcome;
 use super::transport::{self as f14, Profile};
 use super::CompatError;
 use crate::time::Instant;
@@ -16,6 +17,13 @@ pub(crate) struct WorkProgress {
     pub(crate) nodes: u64,
     pub(crate) selections: u64,
     pub(crate) complete: bool,
+}
+
+#[derive(Clone)]
+pub(crate) struct F14RerankState {
+    pub(crate) request: Json,
+    pub(crate) profile: Profile,
+    pub(crate) outcome: FinishedRootOutcome,
 }
 
 /// Sync-free F14 lifecycle shared by the native-shaped WASM adapter and tests.
@@ -106,9 +114,16 @@ impl F14Driver {
 
     /// Time budget only: the host's deadline passed before the selection cap.
     /// Rank what the search has now, exactly as a budget end would.
-    pub(crate) fn finish_early(mut self) -> Json {
+    pub(crate) fn finish_early(self) -> Json {
+        self.finish_early_with_retained().0
+    }
+
+    pub(crate) fn finish_early_with_retained(mut self) -> (Json, Option<F14RerankState>) {
         if !self.prepared.profile.is_time_budget() {
-            return f14::error(&self.prepared.request, "error", "invalid-input");
+            return (
+                f14::error(&self.prepared.request, "error", "invalid-input"),
+                None,
+            );
         }
         // Even a very short think time decides from at least one selection.
         if self.ended.is_none() && self.stats.selections == 0 {
@@ -123,10 +138,14 @@ impl F14Driver {
             }
             self.limit = self.stats.selections;
         }
-        self.finish()
+        self.finish_with_retained()
     }
 
-    pub(crate) fn finish(mut self) -> Json {
+    pub(crate) fn finish(self) -> Json {
+        self.finish_with_retained().0
+    }
+
+    pub(crate) fn finish_with_retained(mut self) -> (Json, Option<F14RerankState>) {
         // Complete the budget if the caller did not drive `work` to the end;
         // a bot that stops making progress ends the loop like the old adapter.
         while self.ended.is_none() && self.stats.selections < self.limit {
@@ -154,12 +173,41 @@ impl F14Driver {
             nps: 0.0,
             extra: "selection budget complete".to_owned(),
         };
-        inproc::finish(
+        let retained_outcome = if self.prepared.profile.profile_id == f14::PUBLIC_PROFILE {
+            self.prepared
+                .root_session
+                .as_ref()
+                .and_then(|session| session.published_outcome())
+        } else {
+            None
+        };
+        let retained_request = self.prepared.request.clone();
+        let retained_profile = self.prepared.profile.clone();
+        let response = inproc::finish(
             self.prepared,
             &moves,
             info,
             self.ended.take().unwrap_or(FinishEnd::Budget),
-        )
+        );
+        let retained = match (
+            response["status"].as_str(),
+            response["reason"].as_str(),
+            retained_outcome,
+        ) {
+            (Some("move"), _, Some(outcome @ FinishedRootOutcome::Decided(_)))
+            | (Some("root-no-move"), _, Some(outcome @ FinishedRootOutcome::NoCandidates { .. }))
+            | (
+                Some("error"),
+                Some("empty-candidates"),
+                Some(outcome @ FinishedRootOutcome::NoCandidates { .. }),
+            ) => Some(F14RerankState {
+                request: retained_request,
+                profile: retained_profile,
+                outcome,
+            }),
+            _ => None,
+        };
+        (response, retained)
     }
 }
 

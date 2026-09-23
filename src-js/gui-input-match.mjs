@@ -31,6 +31,17 @@ const nativeInputState = (decision, parameters, type) => ({
   ...(['cc2-raw', 'cc2-chouhy'].includes(type) ? { input_candidates: true } : {}),
   ...(F14_CORE_TYPES.has(type) ? { incoming: structuredClone(decision.incoming) } : {}),
 });
+const nativeInputStateWithoutIncoming = state => {
+  if (!state || typeof state !== 'object') return state;
+  const { incoming: _incoming, ...native } = state;
+  return native;
+};
+const RERANK_FALLBACK_REASONS = new Set(['rerank-mismatch', 'rerank-unavailable', 'f14-rerank-unsupported']);
+function isRerankFallback(value) {
+  if (RERANK_FALLBACK_REASONS.has(value?.reason)) return true;
+  const message = typeof value === 'string' ? value : value?.message;
+  return typeof message === 'string' && /rerank[- ](?:mismatch|unavailable|unsupported)|rerank.*(?:unavailable|not available|not initialized)/i.test(message);
+}
 const normalizeStallPenalty = (value, humanSide) => {
   const enabled = value?.enabled === true;
   if (!enabled) return { enabled: false, pps: null, penalty: null };
@@ -129,7 +140,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
               forcedLockPending: false, dueFrame: stallPenalty.enabled ? 60 / stallPenalty.pps : null },
             diagnostics: Object.fromEntries(IDS.map(id => [id,
               { plannedLocks: 0, fallbackLocks: 0, naturalLocks: 0, lastFallback: null,
-                publicStateMismatches: 0, lateResponses: 0, replans: 0, noInputResponses: 0,
+                publicStateMismatches: 0, lateResponses: 0, replans: 0, noInputResponses: 0, championReranks: 0,
                 pathBudgetWaits: 0, lastPathBudgetWait: null,
                 resolutionOutcomes: { preferred: 0, fallback: 0, notFound: 0, stale: 0 },
                 fallbackReasons: {}, pacedLocks: 0, deadlineExceededLocks: 0 }])),
@@ -381,9 +392,12 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
     const identity = pieceIdentity(initial);
     const work = (async () => {
       // Reuse only the current piece's proposals for exactly the same native
-      // input. Incoming amounts are deliberately absent from that input; the
-      // public selector and movement planner below always receive fresh state.
+      // input. Incoming row counts remain in the key; when only they change,
+      // the champion can reuse its completed search and rerank its result.
       let proposed = session.proposals[id];
+      const canRerank = F14_CORE_TYPES.has(type) && proposed?.coreDecision === true &&
+        equal(proposed.identity, identity) &&
+        equal(nativeInputStateWithoutIncoming(proposed.state), nativeInputStateWithoutIncoming(state));
       if (proposed && equal(proposed.identity, identity) && equal(proposed.state, state)) {
         if (proposed.status === 'no-input') return;
         session.diagnostics[id].replans++;
@@ -397,16 +411,32 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           const profile = createChampionProfile({ ...parameters, thinkMs: !parameters.thinkTimeEnabled ? parameters.thinkMs
             : session.turnMatch.enabled || parameters.ppsEnabled === false ? parameters.thinkMs
               : realtimeCc2ThinkMs({ thinkMs: parameters.thinkMs, stepFrames: interval }) });
-          const decided = await runtime.decideF14({ sessionKey, type, engine: { botType: type, engineId: type },
+          const payload = { sessionKey, type, engine: { botType: type, engineId: type },
             request: createChampionInputRequest(championVisibleState(initial.decision, parameters.queueDepth),
               { requestId: `f14-input-${++session.f14Requests}`, profile, queueDepth: parameters.queueDepth }),
-            profile });
+            profile };
+          let decided;
+          let usedRerank = false;
+          if (canRerank && typeof runtime.rerankF14 === 'function') {
+            try {
+              const reranked = await runtime.rerankF14(payload);
+              if (!isRerankFallback(reranked)) {
+                decided = reranked;
+                usedRerank = true;
+              }
+            } catch (error) {
+              if (!isRerankFallback(error)) throw error;
+            }
+          }
+          if (usedRerank) session.diagnostics[id].championReranks++;
+          else decided = await runtime.decideF14(payload);
           // No legal placement is no controller input, as for CC2. The core
           // reports it as root-no-move before search or empty-candidates after
           // it; the champion screen runner counts both as terminal.
           proposed = decided.status === 'root-no-move' || (decided.status === 'error' && decided.reason === 'empty-candidates')
-            ? { identity, state: savedState, status: 'no-input', evidence: { status: decided.status, reason: decided.reason } }
-            : { identity, state: savedState, moves: championInputMoves(decided, initial.decision.pieces) };
+            ? { identity, state: savedState, status: 'no-input', coreDecision: true,
+              evidence: { status: decided.status, reason: decided.reason } }
+            : { identity, state: savedState, coreDecision: true, moves: championInputMoves(decided, initial.decision.pieces) };
         } else try { response = await runtime.propose({ sessionKey, engine: type, state,
           selectionLimit: parameters.selectionEnabled ? parameters.selectionLimit : null,
           thinkMs: !parameters.thinkTimeEnabled ? null : session.turnMatch.enabled || parameters.ppsEnabled === false ? parameters.thinkMs :
@@ -427,8 +457,17 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
       }
       if (!live(session)) return;
       const latest = session.round.publicState(id);
-      if (!equal(identity, pieceIdentity(latest)) || !equal(proposed.state,
-        nativeInputState(latest.decision, parameters, type))) return;
+      if (!equal(identity, pieceIdentity(latest))) return;
+      const latestState = nativeInputState(latest.decision, parameters, type);
+      if (!equal(proposed.state, latestState)) {
+        if (F14_CORE_TYPES.has(type) && proposed.coreDecision === true &&
+            equal(nativeInputStateWithoutIncoming(proposed.state), nativeInputStateWithoutIncoming(latestState))) {
+          // Keep the finished search as a rerank basis. Its incoming rows are
+          // stale, so this result must not be sent to the planner.
+          session.proposals[id] = proposed;
+        }
+        return;
+      }
       session.proposals[id] = proposed;
       if (proposed.status === 'no-input') {
         session.diagnostics[id].noInputResponses++;

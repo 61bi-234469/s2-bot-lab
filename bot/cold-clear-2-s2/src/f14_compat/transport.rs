@@ -2,14 +2,16 @@
 #[cfg(test)]
 use super::select::{
     apply_residual_rescue, select_f14_amount_only_limited, select_f14_public_limited,
-    CoreRankedSnapshot, PublicRootLockContext,
+    CoreRankedSnapshot,
 };
 use super::select::{
-    public_context_digest, public_state_from_json, snapshot_binding, F14PublicState,
-    F14RuntimeLimits, F14SelectOptions, F14Selection, FinishedRootDecision, RootDecisionStage,
-    PostStageCountersSnapshot, SnapshotBinding, EFFECTIVE_WEIGHTS,
+    public_context_digest, public_state_from_json, snapshot_binding, AllocationMode,
+    F14PublicState, F14RuntimeLimits, F14SelectOptions, F14Selection, FinishedRootDecision,
+    FinishedRootOutcome, PostStageCountersSnapshot, PublicRootLockContext, RootDecisionStage,
+    RootObjectiveSession, SnapshotBinding, EFFECTIVE_WEIGHTS,
 };
 use super::{CompatError, FinalOrderPolicy, PostSpinPolicy, F14_RULESET_ID, QUEUE_LIMIT};
+use crate::bot::Statistics;
 use crate::data::Placement;
 use crate::time::Instant;
 use serde::{Deserialize, Serialize};
@@ -623,6 +625,206 @@ pub(crate) fn decide_limited_with_core(
         audit,
     );
     response
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn rerank_without_retained(raw: Json) -> Json {
+    let profile: Profile = match serde_json::from_value(raw.get("execution").cloned().unwrap_or(Json::Null)) {
+        Ok(profile) => profile,
+        Err(_) => return error(&raw, "error", "invalid-input"),
+    };
+    if let Err(response) = admit(&raw, &profile) {
+        return response;
+    }
+    if profile.profile_id != PUBLIC_PROFILE {
+        return error(&raw, "unsupported", "f14-rerank-unsupported");
+    }
+    error(&raw, "unavailable", "rerank-unavailable")
+}
+
+pub(crate) fn rerank_retained(
+    raw: Json,
+    original_request: &Json,
+    profile: &Profile,
+    retained: &FinishedRootOutcome,
+) -> Json {
+    if let Err(response) = admit(&raw, profile) {
+        return response;
+    }
+    if profile.profile_id != PUBLIC_PROFILE {
+        return error(&raw, "unsupported", "f14-rerank-unsupported");
+    }
+    if !rerank_request_compatible(original_request, &raw) {
+        return error(&raw, "error", "rerank-mismatch");
+    }
+
+    match retained {
+        FinishedRootOutcome::NoCandidates {
+            nodes,
+            completed_selections,
+        } => {
+            let token = raw_generation(&raw);
+            decide_limited_with_core(
+                raw,
+                profile,
+                &[],
+                SearchStats {
+                    nodes: *nodes,
+                    selections: *completed_selections,
+                },
+                None,
+                None,
+                token,
+                None,
+            )
+        }
+        FinishedRootOutcome::Failed(_) => error(&raw, "unavailable", "rerank-unavailable"),
+        FinishedRootOutcome::Decided(original) => {
+            if original.native_moves.len() != original.native_values.len() {
+                return compat_error_response(&raw, CompatError::RootOutcomeStatsMismatch);
+            }
+            // The native candidate roots are retained, but the ranking context
+            // is rebuilt from the target request just as in a fresh decision.
+            // In particular, target time resolves the multiplier and target
+            // incoming carries the host's cap-aware pressure projection.
+            let state = match composed_public_state(&raw) {
+                Ok(state) => state,
+                Err(compat_error) => return compat_error_response(&raw, compat_error),
+            };
+            // Match a fresh F14 start's post-search ranking deadline. Host-clocked
+            // time budgets keep their recorded N completed selections and still
+            // format as time-budget responses after this ranking-only pass.
+            let hard_millis = if profile.is_time_budget() {
+                profile.budget.max_millis.saturating_add(30_000)
+            } else {
+                profile.budget.max_millis
+            };
+            let limits = F14RuntimeLimits {
+                deadline: Instant::now() + Duration::from_millis(hard_millis),
+                cancel: std::sync::Arc::new(AtomicBool::new(false)),
+            };
+            let context = match PublicRootLockContext::for_profile(&state, &limits, true) {
+                Ok(context) => context,
+                Err(compat_error) => return compat_error_response(&raw, compat_error),
+            };
+            let token = raw_generation(&raw);
+            let digest = match public_context_digest_for_request(&raw, profile) {
+                Ok(digest) => digest,
+                Err(compat_error) => return compat_error_response(&raw, compat_error),
+            };
+            let session = RootObjectiveSession::new_with_allocation_mode(
+                context,
+                profile.decision_stage(),
+                profile.budget.selections,
+                token,
+                digest,
+                AllocationMode::Off,
+            );
+            let stats = Statistics {
+                nodes: original.nodes,
+                selections: original.completed_selections,
+                ..Default::default()
+            };
+            let native = original
+                .native_moves
+                .iter()
+                .copied()
+                .zip(original.native_values.iter().copied())
+                .collect::<Vec<_>>();
+            let completion = if original.completed_selections >= profile.budget.selections {
+                session.complete_work(&stats, || native)
+            } else {
+                // Host-clocked time budgets retain N completed selections below
+                // the selection cap. Publish that retained prefix through the
+                // same early-finish path, while preserving the time-budget wire.
+                if let Err(compat_error) = session.complete_work(&stats, Vec::new) {
+                    return compat_error_response(&raw, compat_error);
+                }
+                session.complete_early(|| native)
+            };
+            if let Err(compat_error) = completion {
+                return compat_error_response(&raw, compat_error);
+            }
+            let decision = match session.take_outcome() {
+                Ok(Some(FinishedRootOutcome::Decided(decision))) => decision,
+                Ok(Some(FinishedRootOutcome::NoCandidates { .. })) => {
+                    return decide_limited_with_core(
+                        raw,
+                        profile,
+                        &[],
+                        SearchStats {
+                            nodes: original.nodes,
+                            selections: original.completed_selections,
+                        },
+                        None,
+                        None,
+                        token,
+                        None,
+                    );
+                }
+                Ok(Some(FinishedRootOutcome::Failed(compat_error))) => {
+                    return compat_error_response(&raw, compat_error);
+                }
+                Ok(None) => return compat_error_response(&raw, CompatError::RootOutcomeNotReady),
+                Err(compat_error) => return compat_error_response(&raw, compat_error),
+            };
+            let moves = decision.native_moves.clone();
+            decide_limited_with_core(
+                raw,
+                profile,
+                &moves,
+                SearchStats {
+                    nodes: decision.nodes,
+                    selections: decision.completed_selections,
+                },
+                Some(&limits),
+                None,
+                token,
+                Some(decision),
+            )
+        }
+    }
+}
+
+fn raw_generation(raw: &Json) -> u64 {
+    raw.get("generation").and_then(Json::as_u64).unwrap_or(0)
+}
+
+fn rerank_request_compatible(original: &Json, rerank: &Json) -> bool {
+    let Some(original_selector) = original.get("selector").and_then(Json::as_object) else {
+        return false;
+    };
+    let Some(original_incoming) = original_selector.get("incoming") else {
+        return false;
+    };
+    let Some(original_time) = original_selector.get("time") else {
+        return false;
+    };
+    let Some(rerank_selector) = rerank.get("selector").and_then(Json::as_object) else {
+        return false;
+    };
+    if !rerank_selector.contains_key("incoming") || !rerank_selector.contains_key("time") {
+        return false;
+    }
+    let mut expected = original.clone();
+    let mut actual = rerank.clone();
+    for key in ["requestId", "positionId", "generation"] {
+        if let Some(object) = expected.as_object_mut() {
+            object.remove(key);
+        }
+        if let Some(object) = actual.as_object_mut() {
+            object.remove(key);
+        }
+    }
+    let Some(actual_selector) = actual
+        .get_mut("selector")
+        .and_then(Json::as_object_mut)
+    else {
+        return false;
+    };
+    actual_selector.insert("incoming".to_owned(), original_incoming.clone());
+    actual_selector.insert("time".to_owned(), original_time.clone());
+    actual == expected
 }
 
 fn attach_diagnostics(
@@ -1285,13 +1487,20 @@ mod tests {
         response
     }
 
-    fn run_f14_driver(profile: &Profile, request: Json) -> Json {
+    fn run_f14_driver_with_retained(
+        profile: &Profile,
+        request: Json,
+    ) -> (Json, Option<crate::f14_compat::driver::F14RerankState>) {
         let mut driver = F14Driver::start(profile.clone(), request).expect("F14 driver start");
         loop {
             if driver.work(8).complete {
-                return driver.finish();
+                return driver.finish_with_retained();
             }
         }
+    }
+
+    fn run_f14_driver(profile: &Profile, request: Json) -> Json {
+        run_f14_driver_with_retained(profile, request).0
     }
 
     fn without_timing_fields(value: &mut Json) {
@@ -2490,6 +2699,151 @@ mod tests {
             sorted_response_bytes(&response),
             sorted_response_bytes(&legacy)
         );
+    }
+
+    #[test]
+    fn public_b_rerank_matches_fresh_search_for_time_and_incoming_variants() {
+        let source: Json = serde_json::from_str(include_str!(
+            "../../../../fixtures/diagnostics/f14-public-search-rescue-request.json"
+        ))
+        .expect("public B search rescue fixture");
+        let profile: Profile = serde_json::from_value(source["execution"].clone()).unwrap();
+        let cases = [
+            ("time-at-margin", 10_799, 10_800, (0, 0), (0, 0)),
+            ("time-above-margin", 10_799, 10_801, (0, 0), (0, 0)),
+            ("time-accumulator", 10_799, 12_300, (0, 0), (0, 0)),
+            ("large-time", 10_799, 36_000, (0, 0), (0, 0)),
+            ("incoming-only", 10_799, 10_799, (0, 0), (19, 0)),
+            ("incoming-reverse", 10_799, 10_799, (19, 0), (0, 0)),
+            ("due-incoming-only", 10_799, 10_799, (4, 0), (4, 4)),
+            ("time-and-incoming", 10_799, 36_000, (0, 0), (19, 0)),
+        ];
+        let mut rescue_flipped = false;
+        let mut result_changed_from_a = false;
+        for (name, frame_a, frame_b, incoming_a, incoming_b) in cases {
+            let mut original = source.clone();
+            original["requestId"] = json!(format!("rerank-a-{name}"));
+            original["positionId"] = json!(format!("rerank-position-a-{name}"));
+            original["generation"] = json!(2);
+            original["selector"]["time"]["logicalFrame"] = json!(frame_a);
+            original["selector"]["incoming"] = json!({
+                "pendingRows": incoming_a.0,
+                "dueThisLockRows": incoming_a.1,
+            });
+            let (baseline, retained) = run_f14_driver_with_retained(&profile, original.clone());
+            assert_eq!(
+                baseline["status"], "move",
+                "baseline case {name}: {baseline}"
+            );
+            let retained = retained.expect("public Profile B decision retained its root result");
+
+            let mut target = original.clone();
+            target["requestId"] = json!(format!("rerank-b-{name}"));
+            target["positionId"] = json!(format!("rerank-position-b-{name}"));
+            target["generation"] = json!(3);
+            target["selector"]["time"]["logicalFrame"] = json!(frame_b);
+            target["selector"]["incoming"] = json!({
+                "pendingRows": incoming_b.0,
+                "dueThisLockRows": incoming_b.1,
+            });
+            let reranked = rerank_retained(
+                target.clone(),
+                &retained.request,
+                &retained.profile,
+                &retained.outcome,
+            );
+            let fresh = run_f14_driver(&profile, target.clone());
+            let mut actual = reranked.clone();
+            let mut expected = fresh.clone();
+            without_timing_fields(&mut actual);
+            without_timing_fields(&mut expected);
+            assert_eq!(actual, expected, "rerank case {name}");
+            if baseline["ranking"]["rescueApplied"] != reranked["ranking"]["rescueApplied"] {
+                rescue_flipped = true;
+            }
+            if baseline["selectedIdentity"] != reranked["selectedIdentity"] {
+                result_changed_from_a = true;
+            }
+        }
+        assert!(
+            rescue_flipped,
+            "the saved rescue request must cover an incoming-sensitive rescue flip"
+        );
+        assert!(
+            result_changed_from_a,
+            "at least one time/incoming rerank must differ from request A's selected identity"
+        );
+    }
+
+    #[test]
+    fn public_b_rerank_rejects_changed_board_after_normal_admission() {
+        let mut request: Json = serde_json::from_str(include_str!(
+            "../../../../fixtures/diagnostics/f14-public-search-rescue-request.json"
+        ))
+        .expect("public B search rescue fixture");
+        let profile: Profile = serde_json::from_value(request["execution"].clone()).unwrap();
+        request["selector"]["incoming"] = json!({ "pendingRows": 0, "dueThisLockRows": 0 });
+        let (_, retained) = run_f14_driver_with_retained(&profile, request.clone());
+        let retained = retained.expect("public Profile B decision retained its root result");
+        let mut changed = request;
+        changed["requestId"] = json!("rerank-board-mismatch");
+        changed["positionId"] = json!("rerank-board-mismatch-position");
+        changed["generation"] = json!(4);
+        changed["selector"]["incoming"] = json!({ "pendingRows": 4, "dueThisLockRows": 0 });
+        changed["selector"]["board"]["visibleHeight"] = json!(21);
+        changed["selector"]["board"]["bufferHeight"] = json!(19);
+        let response = rerank_retained(
+            changed,
+            &retained.request,
+            &retained.profile,
+            &retained.outcome,
+        );
+        assert_eq!(response["status"], "error");
+        assert_eq!(response["reason"], "rerank-mismatch");
+    }
+
+    #[test]
+    fn public_b_time_budget_rerank_keeps_the_completed_selection_count() {
+        let profile = timed_public_profile(512);
+        let (mut original, _) = rescue_fixture_request(&profile);
+        original["requestId"] = json!("timed-rerank-a");
+        original["positionId"] = json!("timed-rerank-position-a");
+        original["generation"] = json!(2);
+        original["selector"]["incoming"] = json!({
+            "pendingRows": 0,
+            "dueThisLockRows": 0,
+        });
+        let mut first = F14Driver::start(profile.clone(), original.clone()).unwrap();
+        first.work(16);
+        let (baseline, retained) = first.finish_early_with_retained();
+        let retained = retained.expect("timed public decision retained its root result");
+        let completed = baseline["search"]["actualSelections"].as_u64().unwrap();
+        assert!(completed > 0 && completed < profile.budget.selections);
+
+        let mut target = original.clone();
+        target["requestId"] = json!("timed-rerank-b");
+        target["positionId"] = json!("timed-rerank-position-b");
+        target["generation"] = json!(3);
+        target["selector"]["incoming"] = json!({
+            "pendingRows": 19,
+            "dueThisLockRows": 0,
+        });
+        let reranked = rerank_retained(
+            target.clone(),
+            &retained.request,
+            &retained.profile,
+            &retained.outcome,
+        );
+        let mut fresh_driver = F14Driver::start(profile.clone(), target.clone()).unwrap();
+        fresh_driver.work(16);
+        let fresh = fresh_driver.finish_early();
+        let mut actual = reranked.clone();
+        let mut expected = fresh.clone();
+        without_timing_fields(&mut actual);
+        without_timing_fields(&mut expected);
+        assert_eq!(actual, expected);
+        assert_eq!(reranked["reason"], "time-budget");
+        assert_eq!(reranked["search"]["actualSelections"], completed);
     }
 
     #[test]

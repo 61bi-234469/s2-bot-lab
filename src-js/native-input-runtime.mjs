@@ -59,6 +59,16 @@ export function createNativeInputRuntime({ engineFor, f14SessionFor = null }) {
       const session = await entry.initializing;
       return session.decideF14({ request, profile });
     },
+    async rerankF14({ sessionKey, type, engine, request, profile }) {
+      if (f14SessionFor === null) throw new Error('F14 INPUT rerank is unavailable');
+      if (engine?.botType !== type || engine?.engineId !== type) throw new Error(`CC2 F14 engine identity mismatch for ${type}`);
+      const entry = sessions.get(sessionKey);
+      if (!entry || entry.closed) throw new Error('F14 INPUT rerank is unavailable: session not initialized');
+      if (entry.engine !== type || !entry.f14) throw new Error('input session engine or selection budget mismatch');
+      const session = await entry.initializing;
+      if (sessions.get(sessionKey) !== entry || entry.closed) throw new Error('input session replaced');
+      return session.rerankF14({ request, profile });
+    },
     resolveInput(payload) {
       const entry = sessions.get(payload.request.sessionKey);
       if (!entry || entry.closed) return Promise.reject(new Error('input session replaced'));

@@ -95,14 +95,22 @@ export async function createCc2WasmSession({ wasmBytes, config = null, selection
         while (!progress.complete) progress = invoke({ op: "work", selections: 8 });
       }
       const response = invoke({ op: progress.complete ? "f14_finish" : "f14_finish_early" });
-      if (response?.type !== "f14_decision") throw new Error("CC2 WASM returned malformed F14 decision");
-      return response;
+      return validateF14Response(response);
+    },
+    async rerankF14({ request, profile: _profile }) {
+      const response = invoke({ op: "f14_rerank", request });
+      return validateF14Response(response);
     },
     async close() {
       if (!closed) invoke({ op: "stop" });
       closed = true;
     },
   });
+}
+
+function validateF14Response(response) {
+  if (response?.type !== "f14_decision") throw new Error("CC2 WASM returned malformed F14 decision");
+  return response;
 }
 
 function normalizeSelectionLimit(value) {

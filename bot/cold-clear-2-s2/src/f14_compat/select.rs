@@ -1194,6 +1194,13 @@ impl RootObjectiveSession {
         }
     }
 
+    pub(crate) fn published_outcome(&self) -> Option<FinishedRootOutcome> {
+        match &*self.outcome.lock() {
+            OutcomeCell::Published(outcome) => Some(outcome.clone()),
+            OutcomeCell::Pending | OutcomeCell::Taken => None,
+        }
+    }
+
     pub(crate) fn counters_snapshot(&self) -> CoreDecisionCountersSnapshot {
         self.counters.snapshot()
     }

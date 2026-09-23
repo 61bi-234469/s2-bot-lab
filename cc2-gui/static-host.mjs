@@ -109,6 +109,30 @@ export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTim
       }
     },
 
+    async rerankF14(payload) {
+      const { sessionKey, type, engine } = payload ?? {};
+      if (typeof sessionKey !== "string" || sessionKey.length === 0) throw new Error("CC2 sessionKey is required");
+      if (engine?.botType !== type || engine?.engineId !== type) {
+        throw new Error(`CC2 F14 engine identity mismatch for ${type}`);
+      }
+      const entry = sessions.get(sessionKey);
+      if (entry === undefined) throw new Error("CC2 F14 rerank is unavailable: session not initialized");
+      if (entry.engine !== type || entry.inputCandidates || entry.selectionLimit !== null) {
+        throw new Error(`CC2 F14 engine identity mismatch for ${type}`);
+      }
+      clearIdleClose(entry);
+      try {
+        if (entry.workerSession === null) await entry.initializing;
+        const result = await entry.workerSession.rerankF14(payload);
+        if (sessions.get(sessionKey) !== entry) throw new Error("CC2 worker session was replaced");
+        scheduleIdleClose(sessionKey, entry);
+        return result;
+      } catch (error) {
+        await closeEntry(sessionKey, entry);
+        throw error;
+      }
+    },
+
     async resolveInput(payload) {
       const entry = sessions.get(payload.request.sessionKey);
       if (!entry || entry.engine !== payload.request.type) throw new Error('input worker session mismatch');
@@ -223,6 +247,7 @@ async function createWorkerSession({ WorkerType, engine, selectionLimit }) {
     suggest: ({ state, thinkMs }) => request("suggest", { state, thinkMs }),
     resolve: (payload) => request("resolve", payload),
     decideF14: (payload) => request("decideF14", payload),
+    rerankF14: (payload) => request("rerankF14", payload),
     resolveInput: (payload) => request('resolveInput', payload),
     async close() {
       if (closed) return;

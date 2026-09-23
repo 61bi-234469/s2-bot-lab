@@ -70,6 +70,76 @@ test('champion INPUT asks the F14 profile-B core and locks its selected move', a
   assert.deepEqual(pose(resolved.placement), pose(core.selectedPlacement));
 });
 
+for (const rerankMismatch of [false, true])
+test(`champion INPUT ${rerankMismatch ? 'falls back on rerank mismatch' : 'reranks incoming-only changes'}`, async t => {
+  const tick = Engine.prototype.tick;
+  let receiver;
+  t.mock.method(Engine.prototype, 'tick', function(events) {
+    if (events.some(event => event.type === 'ige' && event.data.type === 'target' && event.data.data.targets[0] === 1)) receiver = this;
+    const extra = [];
+    if (this === receiver && this.frame === 0) extra.push({ frame: 0, type: 'ige', data: {
+      type: 'interaction', data: { type: 'garbage', amt: 4, size: 1, iid: 1, gameid: 1, ackiid: 0 },
+    } }, { frame: 0, type: 'ige', data: {
+      type: 'interaction', data: { type: 'garbage', amt: 2, size: 1, iid: 2, gameid: 1, ackiid: 0 },
+    } });
+    if (this === receiver && this.frame === 1) extra.push({ frame: 1, type: 'ige', data: {
+      type: 'interaction_confirm', data: { type: 'garbage', iid: 1, gameid: 1, frame: 0 },
+    } });
+    return tick.call(this, [...events, ...extra]);
+  });
+  const decisions = [];
+  const reranks = [];
+  const resolutions = [];
+  const handlers = createGuiInputMatchHandlers({ now: () => 0, runtime: {
+    propose: () => assert.fail('the champion never asks a CC2 proposal process'),
+    decideF14: async payload => {
+      const result = fakeCoreDecision(payload.request, decisions.length === 0 ? 0 : 1);
+      decisions.push({ payload, result });
+      return result;
+    },
+    rerankF14: async payload => {
+      reranks.push(payload);
+      if (rerankMismatch) throw new Error('rerank-mismatch');
+      return fakeCoreDecision(payload.request, 2);
+    },
+    resolveInput: async payload => {
+      resolutions.push(structuredClone(payload));
+      // Hold the piece until the queued garbage becomes due, so the incoming
+      // rows change while the same piece is still being planned.
+      if (payload.request.decision.incoming.dueThisLockRows === 0) return { status: 'stale', reason: 'incoming-changed', attempts: [] };
+      return resolveInputJob(payload);
+    },
+    closeSessions: async () => {},
+  } });
+  const { body: started } = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
+    left: 'human', right: 'cc2-s2-champion', seed: 42, maxTurns: null,
+  } });
+  let view = started;
+  const planned = () => resolutions.some(payload => payload.request.decision.incoming.dueThisLockRows > 0);
+  for (let frame = 1; frame <= 400 && !planned(); frame++) {
+    const result = await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: { sessionId: started.sessionId, frame } });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    view = result.body;
+    await flush();
+  }
+  const diagnosticStep = await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: {
+    sessionId: started.sessionId, frame: view.clock.logicalFrame + 1,
+  } });
+  assert.equal(diagnosticStep.status, 200, JSON.stringify(diagnosticStep.body));
+  view = diagnosticStep.body;
+  assert.equal(decisions.length, rerankMismatch ? 2 : 1);
+  assert.equal(reranks.length, 1);
+  assert.ok(reranks[0].request.selector.incoming.dueThisLockRows > 0);
+  const expected = rerankMismatch ? decisions[1].result : fakeCoreDecision(reranks[0].request, 2);
+  const lastPlan = resolveInputJob(resolutions.at(-1));
+  assert.equal(lastPlan.status, 'planned', JSON.stringify(lastPlan));
+  assert.equal(lastPlan.selection.adoptionRank, 0);
+  const pose = placement => [placement.piece, placement.rotation, placement.x, placement.y, placement.usedHold];
+  assert.deepEqual(pose(lastPlan.placement), pose(expected.selectedPlacement));
+  assert.equal(view.bots[1].inputExecution.championReranks, rerankMismatch ? 0 : 1);
+  await handlers.handle({ method: 'POST', path: '/api/input-match/close', body: { sessionId: started.sessionId } });
+});
+
 test('champion INPUT treats a core with no legal placement as no controller input', async () => {
   for (const empty of [{ status: 'root-no-move', reason: 'no-legal-placement' }, { status: 'error', reason: 'empty-candidates' }]) {
     const handlers = createGuiInputMatchHandlers({ runtime: {
@@ -447,9 +517,11 @@ test(`incoming maturity discards a stale ${firstNotFound ? 'not-found' : 'plan'}
     return tick.call(this, [...events, ...extra]);
   });
   const proposals = [];
+  let rerankCalls = 0;
   const resolutions = [];
   const handlers = createGuiInputMatchHandlers({ now: () => 0, runtime: {
     propose: async payload => { proposals.push(payload); return { moves: [spawnMove(payload.state)] }; },
+    rerankF14: async () => { rerankCalls++; throw new Error('unexpected non-champion rerank'); },
     resolveInput: async payload => {
       resolutions.push({ payload: structuredClone(payload), proposalCount: proposals.length });
       const result = resolveInputJob(payload);
@@ -473,6 +545,7 @@ test(`incoming maturity discards a stale ${firstNotFound ? 'not-found' : 'plan'}
   assert.equal(resolutions[0].payload.request.decision.incoming.dueThisLockRows, 0);
   assert.equal(resolutions[1].payload.request.decision.incoming.dueThisLockRows, 4);
   assert.equal(resolutions[1].proposalCount, 1);
+  assert.equal(rerankCalls, 0);
   assert.equal(proposals[0].thinkMs, 250);
   assert.deepEqual(resolutions[0].payload.request.moves, resolutions[1].payload.request.moves);
   const stats = result.body.bots[1].inputExecution;

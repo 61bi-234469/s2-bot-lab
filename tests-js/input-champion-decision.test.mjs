@@ -106,6 +106,147 @@ test("champion INPUT with SELECTION off and a 10 ms THINK TIME keeps playing", {
   } finally { await runtime.closeSessions(); }
 });
 
+function stripF14Timing(value) {
+  if (Array.isArray(value)) return value.map(stripF14Timing);
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !['nps', 'elapsed', 'elapsedMs', 'elapsedMillis', 'durationMs'].includes(key))
+    .map(([key, child]) => [key, stripF14Timing(child)]));
+}
+
+test("F14 rerank matches fresh decisions on constructed positions and rejects a changed board", {
+  skip: !existsSync(wasmPath),
+  timeout: 180_000,
+}, async () => {
+  const wasmBytes = readFileSync(wasmPath);
+  const session = await createCc2WasmSession({ wasmBytes });
+  let compared = 0;
+  try {
+    const states = [];
+    for (const seed of [31, 47]) {
+      let state = guiStateToCanonical(toS2GuiState(createGame(seed)));
+      states.push(state, withPendingGarbage(state, seed));
+      const moves = analyzeSimpleS2FinalPlacements(state, { topN: 2 }).moves;
+      if (moves[0]?.transition?.nextState) states.push(moves[0].transition.nextState);
+    }
+    for (const [index, state] of states.entries()) {
+      const profile = createPublicCompatProfile();
+      const base = createPublicCompatRequest(state, { requestId: `constructed-${index}`, profile });
+      const pairs = [
+        [{ pendingRows: 0, dueThisLockRows: 0 }, { pendingRows: 3, dueThisLockRows: 0 }],
+        [{ pendingRows: 4, dueThisLockRows: 0 }, { pendingRows: 4, dueThisLockRows: 4 }],
+      ];
+      for (const [incomingA, incomingB] of pairs) {
+        const original = structuredClone(base);
+        original.requestId = `constructed-a-${compared}`;
+        original.positionId = `constructed-position-a-${compared}`;
+        original.selector.incoming = incomingA;
+        const baseline = await session.decideF14({ request: original, profile });
+        assert.equal(baseline.status, 'move', `constructed position ${index}: ${baseline.reason}`);
+
+        const target = structuredClone(original);
+        target.requestId = `constructed-b-${compared}`;
+        target.positionId = `constructed-position-b-${compared}`;
+        target.generation = (original.generation ?? 0) + 1;
+        target.selector.incoming = incomingB;
+        const reranked = await session.rerankF14({ request: target, profile });
+        const fresh = await session.decideF14({ request: target, profile });
+        assert.deepEqual(stripF14Timing(reranked), stripF14Timing(fresh), `constructed position ${index}`);
+        compared++;
+      }
+    }
+
+    const source = createPublicCompatRequest(guiStateToCanonical(toS2GuiState(createGame(59))), { requestId: 'board-base' });
+    const profile = source.execution;
+    await session.decideF14({ request: source, profile });
+    const changedBoard = structuredClone(source);
+    changedBoard.requestId = 'board-rerank-mismatch';
+    changedBoard.positionId = 'board-rerank-mismatch-position';
+    changedBoard.generation += 1;
+    changedBoard.selector.board.visibleHeight += 1;
+    changedBoard.selector.board.bufferHeight = changedBoard.selector.board.height - changedBoard.selector.board.visibleHeight;
+    const mismatch = await session.rerankF14({ request: changedBoard, profile });
+    assert.equal(mismatch.status, 'error');
+    assert.equal(mismatch.reason, 'rerank-mismatch');
+  } finally { await session.close(); }
+  assert.ok(compared > 0);
+});
+
+test("F14 rerank accepts changed selector time and rebuilds the ranking context", {
+  skip: !existsSync(wasmPath),
+  timeout: 180_000,
+}, async () => {
+  const wasmBytes = readFileSync(wasmPath);
+  const session = await createCc2WasmSession({ wasmBytes });
+  const source = JSON.parse(readFileSync(resolve("fixtures/diagnostics/f14-public-search-rescue-request.json"), "utf8"));
+  const profile = source.execution;
+  const cases = [
+    ["time-at-margin", 10_799, 10_800, { pendingRows: 0, dueThisLockRows: 0 }, { pendingRows: 0, dueThisLockRows: 0 }],
+    ["time-above-margin", 10_799, 10_801, { pendingRows: 0, dueThisLockRows: 0 }, { pendingRows: 0, dueThisLockRows: 0 }],
+    ["time-accumulator", 10_799, 12_300, { pendingRows: 0, dueThisLockRows: 0 }, { pendingRows: 0, dueThisLockRows: 0 }],
+    ["large-time", 10_799, 36_000, { pendingRows: 0, dueThisLockRows: 0 }, { pendingRows: 0, dueThisLockRows: 0 }],
+    ["incoming-only", 10_799, 10_799, { pendingRows: 0, dueThisLockRows: 0 }, { pendingRows: 19, dueThisLockRows: 0 }],
+    ["time-and-incoming", 10_799, 36_000, { pendingRows: 0, dueThisLockRows: 0 }, { pendingRows: 19, dueThisLockRows: 0 }],
+  ];
+  let changedFromA = false;
+  try {
+    for (const [index, [name, frameA, frameB, incomingA, incomingB]] of cases.entries()) {
+      const original = structuredClone(source);
+      original.requestId = `time-rerank-a-${index}`;
+      original.positionId = `time-rerank-position-a-${index}`;
+      original.generation = 2;
+      original.selector.time.logicalFrame = frameA;
+      original.selector.incoming = incomingA;
+      const baseline = await session.decideF14({ request: original, profile });
+      assert.equal(baseline.status, "move", `${name} request A: ${baseline.reason}`);
+
+      const target = structuredClone(original);
+      target.requestId = `time-rerank-b-${index}`;
+      target.positionId = `time-rerank-position-b-${index}`;
+      target.generation = 3;
+      target.selector.time.logicalFrame = frameB;
+      target.selector.incoming = incomingB;
+      const reranked = await session.rerankF14({ request: target, profile });
+      const fresh = await session.decideF14({ request: target, profile });
+      assert.deepEqual(stripF14Timing(reranked), stripF14Timing(fresh), name);
+      if (baseline.selectedIdentity !== fresh.selectedIdentity ||
+          baseline.ranking.rescueApplied !== fresh.ranking.rescueApplied) changedFromA = true;
+    }
+  } finally { await session.close(); }
+  assert.ok(changedFromA, "the changed time/incoming cases include a decision different from request A");
+});
+
+test("local INPUT runtime reranks only through an existing matching F14 session", {
+  skip: !existsSync(wasmPath),
+  timeout: 120_000,
+}, async () => {
+  const wasmBytes = readFileSync(wasmPath);
+  const runtime = createNativeInputRuntime({
+    engineFor: () => assert.fail('F14 INPUT never starts a CC2 proposal process'),
+    f14SessionFor: () => createCc2WasmSession({ wasmBytes }),
+  });
+  try {
+    const profile = createPublicCompatProfile();
+    const state = withPendingGarbage(guiStateToCanonical(toS2GuiState(createGame(67))), 4);
+    const request = createPublicCompatRequest(state, { requestId: 'local-rerank', profile });
+    const payload = { sessionKey: 'input-rerank-test/right', type: 'cc2-s2-champion',
+      engine: { botType: 'cc2-s2-champion', engineId: 'cc2-s2-champion' }, profile, request };
+    await assert.rejects(runtime.rerankF14(payload), /rerank is unavailable/i);
+
+    const zeroed = structuredClone(request);
+    zeroed.selector.incoming = { pendingRows: 0, dueThisLockRows: 0 };
+    const baseline = await runtime.decideF14({ ...payload, request: zeroed });
+    assert.equal(baseline.status, 'move');
+    const target = structuredClone(request);
+    target.requestId = 'local-rerank-target';
+    target.positionId = 'local-rerank-target-position';
+    target.generation += 1;
+    const reranked = await runtime.rerankF14({ ...payload, request: target });
+    const fresh = await runtime.decideF14({ ...payload, request: target });
+    assert.deepEqual(stripF14Timing(reranked), stripF14Timing(fresh));
+  } finally { await runtime.closeSessions(); }
+});
+
 test("champion INPUT match locks the WASM F14 core selection, also under incoming garbage", { skip: !existsSync(wasmPath) || !existsSync(rawBinary), timeout: 300_000 }, async (t) => {
   const wasmBytes = readFileSync(wasmPath);
   // Raw CC2 is the opponent so that garbage actually arrives; a mirror match cancels it all.
@@ -117,6 +258,8 @@ test("champion INPUT match locks the WASM F14 core selection, also under incomin
   const handlers = createGuiInputMatchHandlers({ runtime: {
     ...runtime,
     decideF14: async (payload) => { const response = await runtime.decideF14(payload); decisions.push({ payload, response }); return response; },
+    // An incoming-only change re-ranks the retained search; it is a core decision too.
+    rerankF14: async (payload) => { const response = await runtime.rerankF14(payload); decisions.push({ payload, response }); return response; },
     resolveInput: async (payload) => { const result = await runtime.resolveInput(payload); plans.push({ payload, result }); return result; },
   } });
   try {
