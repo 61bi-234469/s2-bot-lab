@@ -13,6 +13,7 @@ import { createGuiInputMatchHandlers } from "../src-js/gui-input-match.mjs";
 import { createNativeInputRuntime } from "../src-js/native-input-runtime.mjs";
 import { createCc2WasmSession } from "../src-js/cc2-wasm-engine.mjs";
 import { canonicalize } from "../scripts/cs1.mjs";
+import { firstResponseMismatch } from "../scripts/f14-response-comparator.mjs";
 import { applyTransition } from "../src-js/transition.mjs";
 import { defaultBotParameters, normalizeBotParameters } from "../src-js/bot-parameters.mjs";
 import { fullStateKey } from "../src-js/state-keys.mjs";
@@ -258,8 +259,14 @@ test("champion INPUT match locks the WASM F14 core selection, also under incomin
   const handlers = createGuiInputMatchHandlers({ runtime: {
     ...runtime,
     decideF14: async (payload) => { const response = await runtime.decideF14(payload); decisions.push({ payload, response }); return response; },
-    // An incoming-only change re-ranks the retained search; it is a core decision too.
-    rerankF14: async (payload) => { const response = await runtime.rerankF14(payload); decisions.push({ payload, response }); return response; },
+    // An incoming-only change, or the next piece whose `start` a speculative
+    // search predicted, re-ranks the retained search; it is a core decision
+    // too. A refused rerank falls back to decideF14.
+    rerankF14: async (payload) => {
+      const response = await runtime.rerankF14(payload);
+      if (response.status === "move") decisions.push({ payload, response, reranked: true });
+      return response;
+    },
     resolveInput: async (payload) => { const result = await runtime.resolveInput(payload); plans.push({ payload, result }); return result; },
   } });
   try {
@@ -286,12 +293,16 @@ test("champion INPUT match locks the WASM F14 core selection, also under incomin
     const preferred = planned.filter(({ result }) => result.selection.adoptionRank === 0).length;
     assert.ok(preferred / planned.length >= 0.9, `${preferred}/${planned.length} plans locked the core selection`);
     t.diagnostic(`${decisions.length} core decisions, ${decisions.filter(({ payload }) => payload.request.selector.incoming.pendingRows > 0).length} with incoming rows; ${preferred}/${planned.length} plans on the core selection`);
-    // A fresh core session answers the same request identically.
+    // Most pieces reuse the search run while the previous piece was moved.
+    const champion = view.bots.find((bot) => bot.type === "cc2-s2-champion").inputExecution;
+    assert.ok(champion.championSpeculationHits > champion.championSpeculations / 2, JSON.stringify(champion));
+    // A fresh core session answers the same request identically, also for
+    // the re-ranked (speculative or incoming-only) decisions.
     const fresh = await createCc2WasmSession({ wasmBytes });
     try {
-      for (const { payload, response } of decisions.slice(0, 5)) {
+      for (const { payload, response } of [...decisions.slice(0, 5), ...decisions.filter((decision) => decision.reranked).slice(0, 20)]) {
         const again = await fresh.decideF14({ request: payload.request, profile: payload.profile });
-        assert.equal(again.selectedIdentity, response.selectedIdentity);
+        assert.equal(firstResponseMismatch(again, response), null);
       }
     } finally { await fresh.close(); }
   } finally {

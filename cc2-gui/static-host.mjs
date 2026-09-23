@@ -109,6 +109,21 @@ export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTim
       }
     },
 
+    // A predicted next request searched on the live worker; its result stays
+    // retained there for rerankF14. A failure only loses the head start.
+    async speculateF14(payload) {
+      const { sessionKey, type, engine } = payload ?? {};
+      if (engine?.botType !== type || engine?.engineId !== type) {
+        throw new Error(`CC2 F14 engine identity mismatch for ${type}`);
+      }
+      const entry = sessions.get(sessionKey);
+      if (entry === undefined || entry.engine !== type || entry.inputCandidates || entry.selectionLimit !== null) {
+        throw new Error("CC2 F14 speculation is unavailable");
+      }
+      if (entry.workerSession === null) await entry.initializing;
+      return entry.workerSession.decideF14(payload);
+    },
+
     async rerankF14(payload) {
       const { sessionKey, type, engine } = payload ?? {};
       if (typeof sessionKey !== "string" || sessionKey.length === 0) throw new Error("CC2 sessionKey is required");

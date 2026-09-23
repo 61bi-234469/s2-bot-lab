@@ -24,6 +24,10 @@ const entryPoints = [
   // Started by native-input-runtime.mjs through `new Worker(new URL(...))`,
   // which the import scan does not follow.
   "src-js/input-resolution-worker.mjs",
+  // Started by cc2-wasm-worker-session.mjs the same way.
+  "src-js/cc2-wasm-session-worker.mjs",
+  // Timing-free F14 response comparison shared by the champion WASM tests.
+  "scripts/f14-response-comparator.mjs",
   "scripts/cs1.mjs",
   "scripts/wasm-engine.mjs",
   "scripts/build-pages.mjs",

@@ -7,7 +7,7 @@ import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 
 import { createCc2Session, requestCc2Suggestion } from "../src-js/cc2-bridge.mjs";
-import { createCc2WasmSession } from "../src-js/cc2-wasm-engine.mjs";
+import { createCc2WasmWorkerSession } from "../src-js/cc2-wasm-worker-session.mjs";
 import { createGuiInputMatchHandlers } from '../src-js/gui-input-match.mjs';
 import { applyQualifiedCc2Suggestion } from "../src-js/gui-request-handlers.mjs";
 import { assertChampionParameters, createChampionProfile, createChampionRequest, resolveChampionDecision } from "../src-js/champion-parameters.mjs";
@@ -166,7 +166,7 @@ const inputRuntime = createNativeInputRuntime({ engineFor: inputEngineFor, f14Se
 async function inputF14Session(type) {
   if (type !== "cc2-s2-champion") throw new Error(`unsupported F14 INPUT bot ${type}`);
   if (inputChampionWasm.wasmSha256 === null) throw new Error(`${inputChampionWasm.label} WASM artifact not found: ${inputChampionWasm.wasm}`);
-  return createCc2WasmSession({ wasmBytes: readWasmBytesMatchingHash(inputChampionWasm) });
+  return createCc2WasmWorkerSession({ wasmBytes: readWasmBytesMatchingHash(inputChampionWasm) });
 }
 function inputEngineFor(type) {
   if (type === "cc2-s2-f14") return {
@@ -1068,7 +1068,7 @@ async function createF14WasmSession(engine) {
   if (!engine.f14WasmCompat || engine.wasmSha256 === null) {
     throw new Error(`${engine.label} WASM artifact unavailable`);
   }
-  return createCc2WasmSession({ wasmBytes: readWasmBytesMatchingHash(engine) });
+  return createCc2WasmWorkerSession({ wasmBytes: readWasmBytesMatchingHash(engine) });
 }
 
 function readWasmBytesMatchingHash(engine) {

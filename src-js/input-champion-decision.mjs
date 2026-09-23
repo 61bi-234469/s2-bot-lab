@@ -1,6 +1,9 @@
 import { F14_COMPAT_QUEUE_LIMIT, createF14DecideRequest } from "./s2-f14-compat-browser.mjs";
 import { createPublicCompatProfile } from "./public-compat-request.mjs";
-import { extendChampionQueue } from "./champion-parameters.mjs";
+import { championVisibleState, extendChampionQueue } from "./champion-parameters.mjs";
+import { createS2AmountOnlyDecisionState, decisionStateToSyntheticGui } from "./s2-amount-only-decision-state.mjs";
+import { guiStateToCanonical } from "./gui-state.mjs";
+import { applyTransition } from "./transition.mjs";
 
 /**
  * The INPUT route only sees the amount-only decision state, never the referee's
@@ -53,4 +56,24 @@ export function championInputMoves(response, { current = null, holdAvailable = t
   const placeable = moves.filter((move) => move.location.type === current);
   if (placeable.length === 0) throw new Error("champion INPUT decision has no move without HOLD");
   return placeable;
+}
+
+/**
+ * The next piece's request if the core's selected placement locks as decided,
+ * for a speculative search while this piece is being moved. The core's search
+ * reads only `start`, and its rerank rebuilds the ranking from the real next
+ * request, so only `start` has to come true. Returns null when `start`
+ * cannot be known from this position: garbage lands at this lock, or the
+ * next queue needs a piece that is not visible yet.
+ */
+export function predictChampionNextRequest(decision, request, response, { profile, queueDepth }) {
+  if (response?.status !== "move" || response.selectedPlacement == null) return null;
+  if (decision.incoming.dueThisLockRows > 0) return null;
+  const state = { ...guiStateToCanonical(decisionStateToSyntheticGui(decision)), rulesetId: decision.rulesetId };
+  const transition = applyTransition(state, { kind: "placement", placement: response.selectedPlacement }, decision.rulesetId);
+  if (transition.legality?.legal !== true || transition.nextState?.pieces?.current == null) return null;
+  const next = createS2AmountOnlyDecisionState(transition.nextState);
+  const predicted = createChampionInputRequest(championVisibleState(next, queueDepth),
+    { requestId: `${request.requestId}-next`, profile, queueDepth });
+  return predicted.start.queue.length === request.start.queue.length ? predicted : null;
 }

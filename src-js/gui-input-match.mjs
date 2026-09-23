@@ -14,7 +14,7 @@ import { humanEngineHandling } from '../cc2-gui/human-controls.mjs';
 import { HANDICAP_GARBAGE_ID, handicapColumnHeights, handicapGarbageCells,
   handicapRecord, normalizeHandicapGarbage } from './gui-1p-handicap-garbage.mjs';
 import { normalizeTurnMatch } from './gui-turn-match.mjs';
-import { championInputMoves, createChampionInputRequest } from './input-champion-decision.mjs';
+import { championInputMoves, createChampionInputRequest, predictChampionNextRequest } from './input-champion-decision.mjs';
 import { assertChampionParameters, championVisibleState, createChampionProfile } from './champion-parameters.mjs';
 
 const IDS = ['left', 'right'];
@@ -135,12 +135,12 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
               stallPenaltyForgivenessId: stallPenalty.enabled && stallPenalty.penalty === 'penalty-line' ? 'left' : null,
               initialGarbageById: handicapTerrain === null ? {} : { [humanSide]: handicapGarbageCells(handicapTerrain) },
               handlingById: types.left === 'human' ? { left: humanEngineHandling(body.humanControls) } : {} }), closed: false, failure: null,
-            jobs: {}, ready: {}, plans: {}, proposals: {}, f14Requests: 0, pathWaits: {}, lastLock: {}, misses: {}, leadFrames: {}, paceDeadline: {}, saved: null, maxTurns: body.maxTurns ?? null,
+            jobs: {}, ready: {}, plans: {}, proposals: {}, speculations: {}, f14Requests: 0, pathWaits: {}, lastLock: {}, misses: {}, leadFrames: {}, paceDeadline: {}, saved: null, maxTurns: body.maxTurns ?? null,
             selections: {}, stallPenalty: { ...stallPenalty, rows: 0,
               forcedLockPending: false, dueFrame: stallPenalty.enabled ? 60 / stallPenalty.pps : null },
             diagnostics: Object.fromEntries(IDS.map(id => [id,
               { plannedLocks: 0, fallbackLocks: 0, naturalLocks: 0, lastFallback: null,
-                publicStateMismatches: 0, lateResponses: 0, replans: 0, noInputResponses: 0, championReranks: 0,
+                publicStateMismatches: 0, lateResponses: 0, replans: 0, noInputResponses: 0, championReranks: 0, championSpeculations: 0, championSpeculationHits: 0,
                 pathBudgetWaits: 0, lastPathBudgetWait: null,
                 resolutionOutcomes: { preferred: 0, fallback: 0, notFound: 0, stale: 0 },
                 fallbackReasons: {}, pacedLocks: 0, deadlineExceededLocks: 0 }])),
@@ -360,6 +360,28 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
     session.selections[id] = ready.selection;
     session.misses[id] = 0;
   }
+  // Selection budgets only: a THINK TIME search started early would get more
+  // time than the budget. Null when the next `start` cannot be known yet.
+  function speculationRequest(decision, payload, decided, parameters) {
+    if (typeof runtime.speculateF14 !== 'function' || payload.profile.budget.mode !== 'selection') return null;
+    try {
+      return predictChampionNextRequest(decision, payload.request, decided, { profile: payload.profile, queueDepth: parameters.queueDepth });
+    } catch {
+      return null;
+    }
+  }
+  // Runs once this piece is planned on the core's selection, so its own rerank
+  // basis is no longer needed. Failure only loses the head start.
+  function speculate(session, id, sessionKey, type, proposed) {
+    const request = proposed.next;
+    proposed.next = null;
+    const speculation = { start: request.start, execution: request.execution };
+    session.speculations[id] = speculation;
+    session.diagnostics[id].championSpeculations++;
+    runtime.speculateF14({ sessionKey, type, engine: { botType: type, engineId: type }, request, profile: request.execution })
+      .then(response => { if (response?.status !== 'move' && session.speculations[id] === speculation) delete session.speculations[id]; },
+        () => { if (session.speculations[id] === speculation) delete session.speculations[id]; });
+  }
   function schedule(session, id) {
     if (!live(session) || session.types[id] === 'human' || session.jobs[id] || session.plans[id] || session.ready[id]) return;
     // The bot is released by the opponent's lock, never by a timer, so a turn
@@ -417,7 +439,13 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
             profile };
           let decided;
           let usedRerank = false;
-          if (canRerank && typeof runtime.rerankF14 === 'function') {
+          // A search already run for this piece while the previous one was
+          // being moved serves it when `start` came true; the core checks
+          // that and reranks from this request, exactly as a fresh decision.
+          const speculated = session.speculations[id];
+          const speculationHit = speculated !== undefined && equal(speculated.start, payload.request.start) &&
+            equal(speculated.execution, payload.request.execution);
+          if ((canRerank || speculationHit) && typeof runtime.rerankF14 === 'function') {
             try {
               const reranked = await runtime.rerankF14(payload);
               if (!isRerankFallback(reranked)) {
@@ -428,15 +456,20 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
               if (!isRerankFallback(error)) throw error;
             }
           }
-          if (usedRerank) session.diagnostics[id].championReranks++;
-          else decided = await runtime.decideF14(payload);
+          if (usedRerank) session.diagnostics[id][speculationHit ? 'championSpeculationHits' : 'championReranks']++;
+          else {
+            // A fresh search replaces what the core retains.
+            delete session.speculations[id];
+            decided = await runtime.decideF14(payload);
+          }
           // No legal placement is no controller input, as for CC2. The core
           // reports it as root-no-move before search or empty-candidates after
           // it; the champion screen runner counts both as terminal.
           proposed = decided.status === 'root-no-move' || (decided.status === 'error' && decided.reason === 'empty-candidates')
             ? { identity, state: savedState, status: 'no-input', coreDecision: true,
               evidence: { status: decided.status, reason: decided.reason } }
-            : { identity, state: savedState, coreDecision: true, moves: championInputMoves(decided, initial.decision.pieces) };
+            : { identity, state: savedState, coreDecision: true, moves: championInputMoves(decided, initial.decision.pieces),
+              next: speculationRequest(initial.decision, payload, decided, parameters) };
         } else try { response = await runtime.propose({ sessionKey, engine: type, state,
           selectionLimit: parameters.selectionEnabled ? parameters.selectionLimit : null,
           thinkMs: !parameters.thinkTimeEnabled ? null : session.turnMatch.enabled || parameters.ppsEnabled === false ? parameters.thinkMs :
@@ -492,6 +525,9 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
         diagnostics.fallbackReasons[reason] = (diagnostics.fallbackReasons[reason] ?? 0) + 1;
       }
       session.leadFrames[id] = Math.min(120, Math.max(2, Math.ceil((now() - resolveStarted) * 60 / 1000) + 1));
+      // After the plan, so the search never delays it (Pages resolves in the
+      // same worker), and only when the planner took the core's selection.
+      if (proposed.next && outcome === 'preferred') speculate(session, id, sessionKey, type, proposed);
       if (resolved.status === 'stale' && resolved.reason === 'natural-lock') {
         // This is expected idle play, not a missed deadline. Bind the wait to
         // the position forecast, never to a new piece reached during the job.

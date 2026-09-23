@@ -790,8 +790,19 @@ fn raw_generation(raw: &Json) -> u64 {
     raw.get("generation").and_then(Json::as_u64).unwrap_or(0)
 }
 
+/// A retained search serves any request with the same `start` and execution:
+/// the allocation-off search reads only `start`, and the ranking is rebuilt
+/// from the rerank request. Besides incoming and time, the selector's known
+/// pieces may differ, so a search run for the next piece before its last NEXT
+/// piece is revealed (the queue already holds it) serves the real request.
 fn rerank_request_compatible(original: &Json, rerank: &Json) -> bool {
     let Some(original_selector) = original.get("selector").and_then(Json::as_object) else {
+        return false;
+    };
+    let Some(original_known) = original_selector
+        .get("pieces")
+        .and_then(|pieces| pieces.get("known"))
+    else {
         return false;
     };
     let Some(original_incoming) = original_selector.get("incoming") else {
@@ -824,6 +835,16 @@ fn rerank_request_compatible(original: &Json, rerank: &Json) -> bool {
     };
     actual_selector.insert("incoming".to_owned(), original_incoming.clone());
     actual_selector.insert("time".to_owned(), original_time.clone());
+    let Some(actual_pieces) = actual_selector
+        .get_mut("pieces")
+        .and_then(Json::as_object_mut)
+    else {
+        return false;
+    };
+    if !actual_pieces.contains_key("known") {
+        return false;
+    }
+    actual_pieces.insert("known".to_owned(), original_known.clone());
     actual == expected
 }
 
@@ -2773,6 +2794,45 @@ mod tests {
             result_changed_from_a,
             "at least one time/incoming rerank must differ from request A's selected identity"
         );
+    }
+
+    #[test]
+    fn public_b_rerank_matches_fresh_search_when_a_next_piece_is_revealed() {
+        let source: Json = serde_json::from_str(include_str!(
+            "../../../../fixtures/diagnostics/f14-public-search-rescue-request.json"
+        ))
+        .expect("public B search rescue fixture");
+        let profile: Profile = serde_json::from_value(source["execution"].clone()).unwrap();
+        let known = source["selector"]["pieces"]["known"].as_array().unwrap().clone();
+        // The speculative request knows only the 13 pieces its 14-piece queue
+        // needs; the real one has since seen more. `start` is the same.
+        let mut original = source.clone();
+        original["requestId"] = json!("rerank-next-a");
+        original["selector"]["pieces"]["known"] = json!(known[..13]);
+        original["selector"]["incoming"] = json!({ "pendingRows": 0, "dueThisLockRows": 0 });
+        let (baseline, retained) = run_f14_driver_with_retained(&profile, original.clone());
+        assert_eq!(baseline["status"], "move", "{baseline}");
+        let retained = retained.expect("public Profile B decision retained its root result");
+        for (name, revealed, incoming) in [("one-more", 14, (0, 0)), ("all", known.len(), (19, 0))] {
+            let mut target = source.clone();
+            target["requestId"] = json!(format!("rerank-next-b-{name}"));
+            target["generation"] = json!(3);
+            target["selector"]["pieces"]["known"] = json!(known[..revealed]);
+            target["selector"]["incoming"] = json!({ "pendingRows": incoming.0, "dueThisLockRows": incoming.1 });
+            let reranked = rerank_retained(target.clone(), &retained.request, &retained.profile, &retained.outcome);
+            let mut actual = reranked.clone();
+            let mut expected = run_f14_driver(&profile, target);
+            without_timing_fields(&mut actual);
+            without_timing_fields(&mut expected);
+            assert_eq!(actual, expected, "rerank case {name}");
+        }
+        // A different `start` is still refused.
+        let mut changed = source.clone();
+        changed["requestId"] = json!("rerank-next-start");
+        changed["start"]["hold"] = json!("T");
+        changed["selector"]["pieces"]["hold"] = json!("T");
+        let refused = rerank_retained(changed, &retained.request, &retained.profile, &retained.outcome);
+        assert_eq!(refused["reason"], "rerank-mismatch", "{refused}");
     }
 
     #[test]
