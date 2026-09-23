@@ -145,6 +145,32 @@ test('1P first: the player opens the round and the opponent may not pass them', 
   assert.deepEqual(turns(held), { left: 1, right: 1 });
 });
 
+test('a bot with no placement left hard-drops in place and tops out without gravity', async () => {
+  // A searched empty CC2 answer: in a gravity round the piece would then fall
+  // and lock where it stands, which is the lock a turn match must stand in for.
+  const handlers = createGuiInputMatchHandlers({ now: () => 0, runtime: {
+    propose: async () => {
+      throw Object.assign(new Error('CC2 returned no suggested move'), { suggestionReceived: true,
+        moveInfo: { selections: 1, nodes: 0, candidate_values: [], extra: '' } });
+    },
+    resolveInput: async payload => resolveInputJob(payload),
+    closeSessions: async () => {},
+  } });
+  const start = await startTurnRound(handlers, 'bot-first');
+  let view = await run(handlers, start.sessionId, 1, 20);
+  assert.deepEqual(turns(view), { left: 0, right: 1 }, 'the bot locks its piece without a plan');
+  assert.equal(view.bots.find(bot => bot.id === 'right').inputExecution.noInputResponses, 1);
+  // Both sides drop every piece at spawn; the bot opens each turn, so its stack
+  // reaches the ceiling first and the round must end instead of waiting on it.
+  let frame = 21;
+  for (let turn = 0; turn < 40 && !view.outcome.complete; turn += 1) {
+    view = await run(handlers, start.sessionId, frame, frame + 20, { [frame]: tap(frame, 'hardDrop') });
+    frame += 21;
+  }
+  assert.equal(view.outcome.complete, true, 'the round ends');
+  assert.equal(view.outcome.winnerBotId, 'left');
+});
+
 test('an out-of-turn hard drop is withheld rather than queued up', async () => {
   const handlers = planningHandlers();
   const start = await startTurnRound(handlers, 'bot-first');

@@ -159,6 +159,7 @@ const PUBLIC_MODULES = [
   "src-js/s2-amount-only-search-advance.mjs",
   "src-js/s2-conversion-qualified-ren-finisher-classification.mjs",
   "src-js/s2-input-public-resolver.mjs",
+  "src-js/s2-strategic-audit.mjs",
   "src-js/sha256.mjs",
   "src-js/triangle/chain-adapter.mjs",
   "src-js/triangle/input-public-movement.mjs",

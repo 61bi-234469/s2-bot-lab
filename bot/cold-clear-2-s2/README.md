@@ -12,9 +12,10 @@ Build from the repository root with:
 npm run build:bot:s2-cc2
 ```
 
-This crate alone is not the full S2 bot. The S2-specific decision policy lives
-in `src-js/cc2-s2-hybrid.mjs`, keeping upstream search provenance separate from
-the authoritative S2 rules implementation.
+This crate alone is not the full S2 bot. The canonical S2 rules stay in the
+parent project's JavaScript Simulator, which verifies every placement; the
+crate's own S2 additions (the F14 selector port and the opt-in native S2 route)
+are listed in `UPSTREAM.md`.
 
 Training and reproducibility runs may use
 `--search-selection-limit=<positive integer>` and `--search-seed=<u64>`. In

@@ -20,11 +20,9 @@ export const S2_SURGE_RELEASE_SPIKE_POLICY =
  * the pre-break count was the real value or the withheld `0`), so the
  * garbage-calc table's own B2B input is identical in both runs too: the only
  * thing that differs is `brokenB2bCount`, hence Surge, hence the difference
- * this evaluator measures. See
- * the internal design record 2026-08-20-cc2-s2-f3r-surge-release-spike-protocol.md for the
- * full causal-design argument, including why this same technique does not
- * extend to Surge *retention* (F3R measures release only; retention is out
- * of this family's scope, not merely unmeasured within it).
+ * this evaluator measures. The same technique does not extend to Surge
+ * *retention*: F3R measures release only; retention is out of this family's
+ * scope, not merely unmeasured within it.
  */
 export function evaluateS2SurgeReleaseSpike(state, record) {
   if (state?.chain?.fidelity !== "exact" || !Number.isSafeInteger(state.chain.b2b) || state.chain.b2b < 0) {
@@ -108,7 +106,7 @@ export function extractS2SurgeReleaseSpike(b2bBefore, actualTransition, counterf
     // Decomposition only: how much of releaseValue materialized as cancelling
     // incoming garbage vs. as surviving outgoing attack. These always sum to
     // releaseValue (cancellation only redistributes, never destroys, realised
-    // combat -- see the protocol doc's conservation argument) so neither
+    // combat) so neither
     // component is scored on its own; they are diagnostic telemetry.
     defensiveComponent: actualCancelled - counterfactualCancelled,
     offensiveComponent: actualOutgoingAfterCancel - counterfactualOutgoingAfterCancel,

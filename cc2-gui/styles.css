@@ -280,6 +280,12 @@ input[type="number"]:disabled { border-color: var(--line-dim); color: #4a504a; c
 .match-player header { border-bottom: 1px solid var(--line-dim); }
 .match-player footer { border-top: 1px solid var(--line-dim); }
 .match-player header strong { color: var(--text); }
+/* Turn match: the 1P side says whose turn it is, so a hard drop that does
+   nothing reads as waiting rather than as a frozen game. */
+.match-turn { padding: 0 8px; border: 1px solid var(--line); color: var(--muted); font-weight: 700; letter-spacing: .1em; white-space: nowrap; }
+.match-turn[data-state="human"] { border-color: var(--accent); background: var(--accent); color: #100b00; }
+/* A topped-out board goes dark at once, in every match. */
+.match-field[data-topped-out] { opacity: .45; filter: grayscale(.6); }
 .match-player footer time { color: var(--cyan); font-variant-numeric: tabular-nums; }
 /* Every part of a match player is sized from the field cell so the HOLD and
    NEXT boxes keep the proportions of the reference replay screen: a rail is

@@ -174,7 +174,7 @@ test("the local match server fingerprints CC2 S2 selector submissions", () => {
     server.indexOf("function resolveProposal"),
     server.indexOf("function commitHumanLock"),
   );
-  assert.match(server, /import \{[\s\S]*attachS2SubmissionFingerprint,[\s\S]*\} from "\.\.\/src-js\/s2-f12-amount-only-post-tank-solvency-rescue-selector\.mjs";/);
+  assert.match(server, /import \{ attachS2SubmissionFingerprint \} from "\.\.\/src-js\/s2-f12-amount-only-post-tank-solvency-rescue-selector\.mjs";/);
   assert.match(
     resolveProposal,
     /attachS2SubmissionFingerprint\(bot\.id, bot\.state, result\)/,

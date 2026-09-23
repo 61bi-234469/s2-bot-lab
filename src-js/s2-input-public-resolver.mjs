@@ -7,6 +7,32 @@ import { validateInputPublicMovement } from './triangle/input-public-movement.mj
 import { canonicalize } from '../scripts/cs1.mjs';
 import { sha256Hex } from './sha256.mjs';
 
+/** Pure placement-selection boundary for the qualified INPUT route. */
+export function orderQualifiedInputCandidates(request) {
+  const options = { ...QUALIFIED_STATIC_CC2_RESOLVER_POLICY, allowCompleteReturnedPrefix: true };
+  const ranked = rankS2AmountOnlyPublicCandidates(request.decision, request.moves, options);
+  // Match selectS2AmountOnlyPublicCandidate's rescue rule using this ranking.
+  // Keep the frozen selector source unchanged; parity is covered by fixtures.
+  const profile = inputBotProfile(request.type);
+  // `f14-core-order/1` moves arrive already in the F14 core's adoption order
+  // (its selected move first), so they are kept in request order like CC2's.
+  const coreOrder = profile.selector === 'f14-core-order/1';
+  const nativeOrder = profile.selector === 'cc2-order/1' || coreOrder;
+  const ordered = nativeOrder ? [...ranked.candidates].sort((a, b) => a.cc2Rank - b.cc2Rank) : ranked.candidates;
+  if (coreOrder && ordered[0]?.cc2Rank !== 0) throw new Error('F14 core selected move has no public projection');
+  const control = ordered[0];
+  const solvent = ranked.candidates.find(candidate => candidate.solvency.solvent);
+  const first = !nativeOrder && control.solvency.solvency < 0 && solvent !== undefined ? solvent : control;
+  if (!first) throw new Error('input resolver selected candidate is absent from ranked candidates');
+  const remaining = ordered.filter(candidate => candidate !== first);
+  // An unreachable rescue must not put the unsafe score leader back ahead of
+  // the other solvent choices. Keep the qualified first choice and preserve
+  // score order within each remaining group.
+  const candidates = nativeOrder ? ordered : [first, ...remaining.filter(candidate => candidate.solvency.solvent),
+    ...remaining.filter(candidate => !candidate.solvency.solvent)];
+  return { ranked, first, candidates, nativeOrder };
+}
+
 /** Opt-in product resolver: retain the qualified selector's first choice,
  * then try its other ranked candidates within one shared input-search budget.
  */
@@ -20,23 +46,7 @@ export function resolveQualifiedInputSubmission(request, movement, {
   if (!Number.isSafeInteger(maxNodes) || maxNodes < 1 || maxNodes > 1024 ||
       !Number.isSafeInteger(maxFrames) || maxFrames < 1 || maxFrames > 120 ||
       !Number.isFinite(maxTimeMs) || maxTimeMs <= 0 || maxTimeMs > 1000) throw new Error('invalid input resolver budget');
-  const options = { ...QUALIFIED_STATIC_CC2_RESOLVER_POLICY, allowCompleteReturnedPrefix: true };
-  const ranked = rankS2AmountOnlyPublicCandidates(request.decision, request.moves, options);
-  // Match selectS2AmountOnlyPublicCandidate's rescue rule using this ranking.
-  // Keep the frozen selector source unchanged; parity is covered by fixtures.
-  const profile = inputBotProfile(request.type);
-  const nativeOrder = profile.selector === 'cc2-order/1';
-  const ordered = nativeOrder ? [...ranked.candidates].sort((a, b) => a.cc2Rank - b.cc2Rank) : ranked.candidates;
-  const control = ordered[0];
-  const solvent = ranked.candidates.find(candidate => candidate.solvency.solvent);
-  const first = !nativeOrder && control.solvency.solvency < 0 && solvent !== undefined ? solvent : control;
-  if (!first) throw new Error('input resolver selected candidate is absent from ranked candidates');
-  const remaining = ordered.filter(candidate => candidate !== first);
-  // An unreachable rescue must not put the unsafe score leader back ahead of
-  // the other solvent choices. Keep the qualified first choice and preserve
-  // score order within each remaining group.
-  const candidates = nativeOrder ? ordered : [first, ...remaining.filter(candidate => candidate.solvency.solvent),
-    ...remaining.filter(candidate => !candidate.solvency.solvent)];
+  const { ranked, first, candidates } = orderQualifiedInputCandidates(request);
   // maxTimeMs bounds path search after ranking, not the whole synchronous
   // resolver call. Individual Engine ticks cannot be preempted.
   const startedAt = performance.now();

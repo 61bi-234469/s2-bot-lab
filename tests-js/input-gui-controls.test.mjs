@@ -38,9 +38,9 @@ test('enabling TTRM INPUT caps all admitted bot queues on both sides', () => {
 });
 test('TTRM INPUT greys the bot names it cannot run without hiding an unavailable build', () => {
   const admitted = ['cc2-raw', 'cc2-chouhy', 'cc2-s2-f14', 'cc2-s2-champion'];
-  const names = [...admitted, 'cc2-s2-gen017', 's2-simple', 'fusion', 'human'];
+  const names = [...admitted, 'cc2-s2-gen017', 's2-simple', 'offline-bot', 'human'];
   const makeSelect = (values) => ({ options: values.map((value) => ({
-    value, disabled: false, title: '', dataset: value === 'fusion'
+    value, disabled: false, title: '', dataset: value === 'offline-bot'
       ? { unavailable: 'true', reason: 'external bot is not installed' } : {},
   })) });
   const elements = {
@@ -61,18 +61,18 @@ test('TTRM INPUT greys the bot names it cannot run without hiding an unavailable
   app.enabled = true;
   app.syncInputBotOptions();
   assert.deepEqual(state('left-bot'), { 'cc2-raw': false, 'cc2-chouhy': false, 'cc2-s2-f14': false,
-    'cc2-s2-champion': false, 'cc2-s2-gen017': true, 's2-simple': true, fusion: true, human: false });
+    'cc2-s2-champion': false, 'cc2-s2-gen017': true, 's2-simple': true, 'offline-bot': true, human: false });
   // The person can only hold the left side, so You is not admitted on the right.
   assert.equal(state('right-bot').human, undefined);
   assert.match(elements['left-bot'].options.find((option) => option.value === 's2-simple').title,
     /TTRM INPUT/);
-  assert.equal(elements['left-bot'].options.find((option) => option.value === 'fusion').title,
+  assert.equal(elements['left-bot'].options.find((option) => option.value === 'offline-bot').title,
     'external bot is not installed');
 
   app.enabled = false;
   app.syncInputBotOptions();
   assert.deepEqual(state('left-bot'), { 'cc2-raw': false, 'cc2-chouhy': false, 'cc2-s2-f14': false,
-    'cc2-s2-champion': false, 'cc2-s2-gen017': false, 's2-simple': false, fusion: true, human: false });
+    'cc2-s2-champion': false, 'cc2-s2-gen017': false, 's2-simple': false, 'offline-bot': true, human: false });
   assert.equal(elements['left-bot'].options.find((option) => option.value === 's2-simple').title, '');
 });
 test('FT3 automatically schedules game two after saving an Engine-completed input round', async () => {
@@ -106,6 +106,8 @@ test('arena reset restores the pre-match field including spawn rows', () => {
   const app = vm.createContext({ BOT_SIDES: ['left', 'right'], elements,
     inputModeSelected: () => true, renderClearInfo() {}, renderGarbageGauge() {},
     renderMatchField(field, board, placed, overlay, { rows }) { field.rows = rows; },
+    EMPTY_MATCH_METRICS: { apm: 0 },
+    renderMatchMetrics(side, metrics, pieces) { elements[`match-${side}-metrics`].shown = { metrics, pieces }; },
   });
   for (const name of ['clearMatchArena', 'renderEmptyMatchFields']) {
     vm.runInContext(source.match(new RegExp(`function ${name}\\([\\s\\S]*?^}`, 'm'))[0], app);
@@ -113,6 +115,10 @@ test('arena reset restores the pre-match field including spawn rows', () => {
   app.clearMatchArena();
   assert.equal(elements['match-left-field'].rows, 23);
   assert.equal(elements['match-right-field'].rows, 23);
+  // The metrics grid is redrawn as an unstarted round, not left empty.
+  for (const side of ['left', 'right']) {
+    assert.deepEqual(elements[`match-${side}-metrics`].shown, { metrics: { apm: 0 }, pieces: 0 });
+  }
   app.inputModeSelected = () => false;
   app.clearMatchArena();
   assert.equal(elements['match-left-field'].rows, 20);

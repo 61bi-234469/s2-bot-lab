@@ -1,4 +1,5 @@
 import { Board, Mino, Tetromino, kickData, legal } from "@haelp/teto/engine";
+import {noteStrategicCall} from './s2-strategic-audit.mjs';
 
 import { canonicalize } from "../scripts/cs1.mjs";
 import { resolveDynamicValue } from "./dynamic-values.mjs";
@@ -35,6 +36,8 @@ const HARD_DROP = Object.freeze({ lastInputWasRotation: false, kickIndex: null, 
  * full-state evaluator, garbage adapter, or transition dependency.
  */
 export function selectS2AmountOnlyPublicCandidate(decision, moves, options = {}) {
+  noteStrategicCall('legacyF14SelectionCalls');
+  noteStrategicCall('legacyF14RescueCalls');
   const ranked = rankS2AmountOnlyPublicCandidates(decision, moves, options);
   const control = ranked.candidates[0];
   const solvent = ranked.candidates.find((candidate) => candidate.solvency.solvent);
@@ -207,6 +210,10 @@ function createPublicSpinWitnesses(state) {
     if (old === undefined || spinRank(locked.spin) > spinRank(old.spin)) witnesses.set(key, { ...candidate, spin: locked.spin });
   }
   return new Map([...witnesses].map(([key, candidate]) => [key, withoutSpin(candidate)]));
+}
+
+export function listS2AmountOnlyPublicReachablePlacements(state, rules = resolveS2AmountOnlyPublicRules(state.rulesetId)) {
+  return [...generatePublicReachablePlacements(state, rules)];
 }
 
 function* generatePublicReachablePlacements(state, rules) {

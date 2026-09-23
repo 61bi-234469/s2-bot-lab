@@ -20,8 +20,8 @@ build artifacts, and unreviewed history were not copied.
 4. Add non-T rotation spin retention and the all-spin weight preset based on
    `chouhy/cold-clear-2@b20a92b0ed3230dd910d0674f7a09c552a34dd46`.
 5. Keep the canonical S2 transition, cancellation, tanking and Surge logic out
-   of this crate. That authoritative policy is implemented in
-   `src-js/cc2-s2-hybrid.mjs` and the shared Simulator.
+   of this crate. The shared JavaScript Simulator remains authoritative; the
+   crate's S2 components below use it as their reference.
 6. Apply the repository's current `rustfmt` to the copied Rust files.
 7. Sort the underground-lock tail of `find_moves` into a canonical order.
    `AHashMap` iteration order depends on a per-process random hasher seed, and
@@ -33,6 +33,35 @@ build artifacts, and unreviewed history were not copied.
    without underground locks are unaffected, so the 512-selection development
    champion is unchanged (6/6 identical moves and cached values across the
    change). The deterministic ordering change is part of this public fork.
+8. Optional TBP Start field `s2_incoming` `{ pending_rows, due_this_lock_rows }`
+   behind config flag `enable_s2_amount_only_incoming`. This is an S2-lab
+   amount-only extension, not an upstream TBP feature. Packet metadata, RNG,
+   hole state and derived future-hole boards stay out of search state and the
+   transposition key. Omitted/false flag preserves the upstream Start
+   interpretation. Canonical S2 cancellation, tanking and garbage materialization
+   remain in the JavaScript Simulator; native `advance` uses an amount model
+   and does not insert unmaterialized garbage cells.
+9. Optional move-generation and evaluation switches behind config flags that
+   default to off: direct 180-degree rotation (`enable_direct_180`), entry from
+   the spawn buffer (`enable_spawn_buffer_entry`), spawn-occupancy evaluation,
+   real-board structural evaluation and non-mutating T-slot deduplication.
+10. `f14_compat/`: a Rust port of the S2 lab's F14 amount-only selector
+    (candidate ranking, conversion, solvency rescue, public reachability and
+    root allocation) behind `--f14-compat-profile`, with a request/response
+    envelope and an in-process driver used by the WASM entry points
+    (`f14_start`, `work`, `f14_finish`, `f14_finish_early`). Its public
+    profile also accepts a host-clocked time budget and a queue of up to 28
+    pieces. Decisions are checked against the JavaScript reference selector.
+11. `native_s2.rs`, `native_s2/`, `s2_core.rs`, `s2_eval.rs`, `s2_search.rs`,
+    `s2_transport.rs`, `s2_audit.rs`, `dag/domain.rs` and `dag/finite*.rs`: an
+    opt-in native S2 state/value route (`--native-profile`,
+    `--integrated-profile`) that searches known-only S2 states with the CC2 DAG
+    algorithms. It is development-only and not the default engine.
+12. `bot/evaluation_features.rs`: deterministic board-feature helpers shared by
+    the legacy and S2 paths; `src/bin/`: diagnostic binaries for move
+    generation and the root search.
+13. `wasm.rs`: import-free WebAssembly entry points for the browser build,
+    including the F14 operations above.
 
 ## Build
 

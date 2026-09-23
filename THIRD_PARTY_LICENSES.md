@@ -60,7 +60,8 @@ itself stays outside tracked paths; `npm run verify:replay-clock` and
 - Additional all-spin reference: https://github.com/chouhy/cold-clear-2 at `b20a92b0ed3230dd910d0674f7a09c552a34dd46`
 - License choice for this copy: MIT
 - Upstream copyright: Copyright (c) 2021 Mark Carlson
-- Use: CC2 search DAG and move generator used as the candidate-generation half of the S2 hybrid bot
+- Use: CC2 search DAG and move generator for the S2 bots (F14 selector port and development
+  champion); local changes are recorded in `bot/cold-clear-2-s2/UPSTREAM.md`
 
 The complete upstream MIT and Apache-2.0 texts are retained in
 `bot/cold-clear-2-s2/LICENSE-MIT` and `bot/cold-clear-2-s2/LICENSE-APACHE`.

@@ -1,12 +1,17 @@
+import { createPublicCompatProfile } from "../src-js/public-compat-request.mjs";
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
-import { extname, join, normalize, resolve } from "node:path";
+import { randomUUID, createHash } from "node:crypto";
+import { extname, normalize, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 
 import { createCc2Session, requestCc2Suggestion } from "../src-js/cc2-bridge.mjs";
+import { createCc2WasmSession } from "../src-js/cc2-wasm-engine.mjs";
 import { createGuiInputMatchHandlers } from '../src-js/gui-input-match.mjs';
+import { applyQualifiedCc2Suggestion } from "../src-js/gui-request-handlers.mjs";
+import { assertChampionParameters, createChampionProfile, createChampionRequest, resolveChampionDecision } from "../src-js/champion-parameters.mjs";
+import { isInputBotType } from '../src-js/input-bot-contract.mjs';
 import { createNativeInputRuntime } from '../src-js/native-input-runtime.mjs';
 import {
   suggestionFailureOutcome,
@@ -15,15 +20,7 @@ import {
   classifyProposalError,
   successfulProposal,
 } from "../src-js/proposal-outcome.mjs";
-import { applyCc2FinalPlacementUnderObservedS2 } from "../src-js/cc2-s2-adapter.mjs";
-import { selectCc2S2HybridPlacement } from "../src-js/cc2-s2-hybrid.mjs";
-import { selectS2RenQualityPlacement } from "../src-js/s2-ren-quality-selector.mjs";
-import { selectS2ConversionQualifiedRenFinisherPlacement } from "../src-js/s2-conversion-qualified-ren-finisher-selector.mjs";
-import {
-  attachS2SubmissionFingerprint,
-  selectS2F12AmountOnlyPostTankSolvencyRescuePlacement,
-} from "../src-js/s2-f12-amount-only-post-tank-solvency-rescue-selector.mjs";
-import { selectS2ThresholdImminentB2bRetentionPlacement } from "../src-js/s2-threshold-imminent-b2b-retention-selector.mjs";
+import { attachS2SubmissionFingerprint } from "../src-js/s2-f12-amount-only-post-tank-solvency-rescue-selector.mjs";
 import { guiStateToCanonical } from "../src-js/cc2-s2-adapter.mjs";
 import { invokeAnalysis } from "../src-js/analysis-api.mjs";
 import {
@@ -89,9 +86,6 @@ import {
 const root = resolve(fileURLToPath(new URL("../cc2-gui", import.meta.url)));
 const GUI_CC2_SEARCH_SEED = "5994928009864282113";
 const options = parseArguments(process.argv.slice(2));
-const f11WeightConfig = JSON.parse(readFileSync("fixtures/tuning/cc2-s2-initial-weight-grid.json", "utf8"));
-const f11Weights = f11WeightConfig.weightProfiles?.find((profile) => profile.id === "sparse-s2")?.weights;
-if (f11Weights === undefined) throw new Error("F11 GUI bot requires the sparse-s2 weight profile");
 const cc2Engines = Object.freeze({
   "cc2-raw": Object.freeze({
     botType: "cc2-raw",
@@ -111,68 +105,13 @@ const cc2Engines = Object.freeze({
     comparisonSource: "chouhy-cc2-final-placement",
     binary: options.chouhyBinary,
   }),
-  "cc2-s2": Object.freeze({
-    botType: "cc2-s2",
-    engineId: "cold-clear-2-s2-hybrid/1",
-    label: "CC2 S2 — Gen 008/009 rank-25 champion (512, development)",
-    repository: "https://github.com/61bi-234469/s2-analysis-engine",
-    commit: "ed8b193+local-s2-reranker",
-    comparisonSource: "cold-clear-2-s2-hybrid-final-placement",
-    protocolName: "Cold Clear 2 S2",
-    binary: options.s2Binary,
-    config: null,
-  }),
-  "cc2-s2-gen017": Object.freeze({
-    botType: "cc2-s2-gen017",
-    engineId: "cold-clear-2-s2-hybrid/gen017-aligned/1",
-    label: "CC2 S2 — Gen 017 aligned mini-spin value (512, development)",
-    repository: "https://github.com/61bi-234469/s2-analysis-engine",
-    commit: "ed8b193+local-s2-reranker",
-    comparisonSource: "cold-clear-2-s2-hybrid-gen017-aligned-final-placement",
-    protocolName: "Cold Clear 2 S2",
-    binary: options.s2Binary,
-    config: loadS2Config("fixtures/tuning/cc2-s2-spin-value-aligned.json"),
-  }),
-  "cc2-s2-f11": Object.freeze({
-    botType: "cc2-s2-f11",
-    engineId: "cold-clear-2-s2-f11-ren-quality/1",
-    label: "CC2 S2 — F11 REN quality (development)",
-    repository: "https://github.com/61bi-234469/s2-analysis-engine",
-    commit: "ed8b193+local-s2-reranker",
-    comparisonSource: "cold-clear-2-s2-f11-ren-quality-final-placement",
-    protocolName: "Cold Clear 2 S2",
-    binary: options.s2Binary,
-    config: loadS2Config("fixtures/tuning/cc2-s2-spin-value-aligned.json"),
-  }),
-  "cc2-s2-f12": Object.freeze({
-    botType: "cc2-s2-f12",
-    engineId: "cold-clear-2-s2-f12-conversion-qualified-ren-finisher/1",
-    label: "CC2 S2 — F12 Conversion-Qualified REN Finisher (development)",
-    repository: "https://github.com/61bi-234469/s2-analysis-engine",
-    commit: "ed8b193+local-s2-reranker",
-    comparisonSource: "cold-clear-2-s2-f12-conversion-qualified-ren-finisher-final-placement",
-    protocolName: "Cold Clear 2 S2",
-    binary: options.s2Binary,
-    config: loadS2Config("fixtures/tuning/cc2-s2-spin-value-aligned.json"),
-  }),
   "cc2-s2-f14": Object.freeze({
     botType: "cc2-s2-f14",
     engineId: "cold-clear-2-s2-f14-post-tank-solvency-rescue/1",
     label: "CC2 S2 — F14 post-tank solvency rescue (development)",
-    repository: "https://github.com/61bi-234469/s2-analysis-engine",
+    repository: "https://github.com/61bi-234469/s2-bot-lab",
     commit: "ed8b193+local-s2-reranker",
     comparisonSource: "cold-clear-2-s2-f14-post-tank-solvency-rescue-final-placement",
-    protocolName: "Cold Clear 2 S2",
-    binary: options.s2Binary,
-    config: loadS2Config("fixtures/tuning/cc2-s2-spin-value-aligned.json"),
-  }),
-  "cc2-s2-f25": Object.freeze({
-    botType: "cc2-s2-f25",
-    engineId: "cold-clear-2-s2-f25-threshold-imminent-b2b-retention/1",
-    label: "CC2 S2 — F25 threshold-imminent B2B retention (development)",
-    repository: "https://github.com/61bi-234469/s2-analysis-engine",
-    commit: "ed8b193+local-s2-reranker",
-    comparisonSource: "cold-clear-2-s2-f25-threshold-imminent-b2b-retention-final-placement",
     protocolName: "Cold Clear 2 S2",
     binary: options.s2Binary,
     config: loadS2Config("fixtures/tuning/cc2-s2-spin-value-aligned.json"),
@@ -181,11 +120,16 @@ const cc2Engines = Object.freeze({
     botType: "cc2-s2-champion",
     engineId: "cold-clear-2-s2-development-champion/f14-substrate-v2-search-state/1",
     label: "CC2 S2 — current development champion (not release-qualified)",
-    repository: "https://github.com/61bi-234469/s2-analysis-engine",
+    repository: "https://github.com/61bi-234469/s2-bot-lab",
     commit: "local-development-champion-f14-substrate-v2-search-state",
     comparisonSource: "cold-clear-2-s2-development-champion-final-placement",
     protocolName: "Cold Clear 2 S2",
-    binary: options.s2Binary,
+    binary: options.f14ChampionBinary,
+    wasm: options.f14Wasm,
+    f14Compat: options.f14ChampionBinary !== null,
+    f14WasmCompat: options.f14ChampionBinary === null && options.f14Wasm !== null,
+    f14Public: options.f14ChampionBinary !== null || options.f14Wasm !== null,
+    wasmSha256: fileSha256IfPresent(options.f14Wasm),
     config: loadS2Config("fixtures/tuning/cc2-s2-spawn-integrity-substrate-v2.json"),
   }),
 });
@@ -212,7 +156,40 @@ let matchSession = null;
    outside the chain, so waiting for a slow opponent never delays the player's
    own lock. */
 const matchMutations = createLiveMatchMutationQueue();
-const inputRuntime = createNativeInputRuntime({ engineFor: requireCc2Engine });
+
+// INPUT keeps its resolution worker. CC2 bots propose through their native
+// executables; the champion decides through the same F14 WASM core as its
+// final-placement route, read from `f14InputWasm` and bound to its startup hash.
+const inputChampionWasm = Object.freeze({ label: cc2Engines["cc2-s2-champion"].label,
+  wasm: options.f14InputWasm, wasmSha256: fileSha256IfPresent(options.f14InputWasm) });
+const inputRuntime = createNativeInputRuntime({ engineFor: inputEngineFor, f14SessionFor: inputF14Session });
+async function inputF14Session(type) {
+  if (type !== "cc2-s2-champion") throw new Error(`unsupported F14 INPUT bot ${type}`);
+  if (inputChampionWasm.wasmSha256 === null) throw new Error(`${inputChampionWasm.label} WASM artifact not found: ${inputChampionWasm.wasm}`);
+  return createCc2WasmSession({ wasmBytes: readWasmBytesMatchingHash(inputChampionWasm) });
+}
+function inputEngineFor(type) {
+  if (type === "cc2-s2-f14") return {
+    botType: type,
+    engineId: "cold-clear-2-s2-f14-post-tank-solvency-rescue/1",
+    protocolName: "Cold Clear 2 S2",
+    binary: options.s2Binary,
+    config: loadS2Config("fixtures/tuning/cc2-s2-spin-value-aligned.json"),
+  };
+  if (type === "cc2-s2-champion") {
+    if (inputChampionWasm.wasmSha256 === null) throw new Error(`${inputChampionWasm.label} WASM artifact not found: ${inputChampionWasm.wasm}`);
+    return { botType: type, f14Core: true };
+  }
+  return requireCc2Engine(type);
+}
+/* INPUT availability is reported separately because the champion's INPUT
+   route always has the WASM core (explicit locator or build output), even
+   when final placement is bound to a native `--f14-champion` binary. */
+function inputUnavailableReason(type) {
+  if (!isInputBotType(type)) return undefined;
+  try { inputEngineFor(type); return null; }
+  catch (error) { return error.message; }
+}
 const inputMatches = createGuiInputMatchHandlers({ runtime: inputRuntime });
 const server = createServer(async (request, response) => {
   try {
@@ -224,6 +201,55 @@ const server = createServer(async (request, response) => {
     if (request.method === "POST" && request.url === "/api/suggest") {
       const body = await readJson(request);
       const engine = requireCc2Engine(body.engine ?? "cc2-raw");
+      if (engine.f14Compat) {
+        const parameters = nativeChampionParameters(normalizeBotParameters(engine.botType, body.parameters));
+        const state = guiStateToCanonical(body.state);
+        const nativeRequest = createChampionRequest(state, parameters, { requestId: `analysis-${nextRequestId++}`, generation: 1 });
+        const abort = new AbortController();
+        const disconnected = () => { if (!response.writableEnded) abort.abort(); };
+        response.once("close", disconnected);
+        let session;
+        let payload;
+        try {
+          session = await createCc2Session({ binary: engine.binary, expectedName: engine.protocolName,
+            f14CompatProfile: nativeRequest.execution, suggestTimeoutMs: 32_000 });
+          const nativeDecision = await session.decide({ request: nativeRequest, signal: abort.signal });
+          const resolved = resolveChampionDecision({ state, gui: body.state, request: nativeRequest, response: nativeDecision, parameters });
+          payload = {
+            engine: publicEngine(engine), info: { name: engine.protocolName, version: "F14 public profile B" },
+            suggestion: { moves: [nativeDecision.selectedMove] },
+            nativeDecision,
+            verification: { ...resolved.verification, move: nativeDecision.selectedMove },
+          };
+        } finally {
+          try { await session?.close(); }
+          finally { response.off("close", disconnected); }
+        }
+        if (abort.signal.aborted) return;
+        return sendJson(response, 200, payload);
+      }
+      if (engine.f14WasmCompat) {
+        const parameters = normalizeBotParameters(engine.botType, body.parameters);
+        const state = guiStateToCanonical(body.state);
+        const nativeRequest = createChampionRequest(state, parameters, { requestId: `analysis-${nextRequestId++}`, generation: 1 });
+        const profile = nativeRequest.execution;
+        let session;
+        let payload;
+        try {
+          session = await createF14WasmSession(engine);
+          const nativeDecision = await session.decideF14({ request: nativeRequest, profile });
+          const resolved = resolveChampionDecision({ state, gui: body.state, request: nativeRequest, response: nativeDecision, parameters });
+          payload = {
+            engine: publicEngine(engine), info: { name: engine.protocolName, version: "F14 public profile B WASM" },
+            suggestion: { moves: [nativeDecision.selectedMove] },
+            nativeDecision,
+            verification: { ...resolved.verification, move: nativeDecision.selectedMove },
+          };
+        } finally {
+          await session?.close();
+        }
+        return sendJson(response, 200, payload);
+      }
       if (!isAdr062QualifiedStaticType(engine.botType)) throw new Error("ADR-062-qualified resolver required");
       const result = await requestCc2Suggestion({
         binary: engine.binary,
@@ -236,17 +262,10 @@ const server = createServer(async (request, response) => {
     if (request.method === "POST" && request.url === "/api/apply-s2") {
       const body = await readJson(request);
       const engine = requireCc2Engine(body.engine ?? "cc2-raw");
-      if (!isAdr062QualifiedStaticType(engine.botType)) throw new Error("ADR-062-qualified resolver required");
-      const state = guiStateToCanonical(body.state);
-      const resolved = resolveQualifiedStaticCc2Submission(createS2AmountOnlyDecisionRequest({
-        sessionKey: "analysis", state, moves: body.moves ?? [body.move], type: engine.botType,
-        engine: publicEngine(engine),
-      }));
-      const transition = applyTransition(state, { kind: "placement", placement: resolved.placement }, state.rulesetId);
-      const result = transition.legality?.legal === true
-        ? { status: "ok", transition, comparison: { score: resolved.score, witness: { placement: resolved.placement } } }
-        : { status: "unsupported", reasons: [transition.legality?.reason ?? "illegal"], transition: null };
-      return sendJson(response, result.status === "unsupported" ? 422 : 200, result);
+      if (engine.f14Compat || engine.f14WasmCompat) return sendJson(response, 422, { error: "F14 native compatibility publishes a verified final decision through /api/suggest; external reranking is unsupported" });
+      const result = applyQualifiedCc2Suggestion({ type: engine.botType, engine: publicEngine(engine),
+        state: guiStateToCanonical(body.state), moves: body.moves ?? [body.move] });
+      return sendJson(response, result.status, result.body);
     }
     if (request.method === "POST" && request.url === "/api/s2/transition") {
       const body = await readJson(request);
@@ -318,6 +337,12 @@ const server = createServer(async (request, response) => {
             ? fairComparisonBotParameters(rightType, body.rightParameters)
             : normalizeBotParameters(rightType, body.rightParameters),
         };
+        for (const [side, type] of [["left", leftType], ["right", rightType]]) {
+          if (type === "cc2-s2-champion") {
+            if (cc2Engines[type].f14Compat) nativeChampionParameters(botParameters[side]);
+            else assertChampionParameters(botParameters[side]);
+          }
+        }
       } catch (error) {
         return sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
       }
@@ -485,11 +510,16 @@ const server = createServer(async (request, response) => {
           ...Object.values(cc2Engines).map((engine) => ({
             ...publicEngine(engine),
             id: engine.botType,
-            available: engine.binary !== null && existsSync(engine.binary),
-            reason: engine.binary !== null && existsSync(engine.binary) ? null : "requires a local CC2 binary",
+            available: engineUnavailableReason(engine) === null,
+            reason: engineUnavailableReason(engine),
+            ...(isInputBotType(engine.botType) ? {
+              inputAvailable: inputUnavailableReason(engine.botType) === null,
+              inputReason: inputUnavailableReason(engine.botType),
+            } : {}),
             ...botParameterCapability(engine.botType),
+            ...((engine.f14Compat || engine.f14WasmCompat) ? { fixedDecision: true, execution: createPublicCompatProfile(),
+              description: engine.f14WasmCompat ? "F14 public profile B: local final placement and INPUT use the WASM artifact (--f14-wasm or the build output). The defaults (512 selections, THINK TIME off, queue 14) are the champion. Not release-qualified." : "F14 public profile B: local final placement uses one Rust process (THINK TIME needs the WASM core); INPUT uses the WASM core. The defaults are the champion. Not release-qualified." } : {}),
           })),
-          { id: "s2-simple", label: "S2 placement bot", available: true, ...botParameterCapability("s2-simple") },
           { id: "human", label: "You (1P)", available: true, ...botParameterCapability("human") },
         ],
       });
@@ -541,13 +571,19 @@ const server = createServer(async (request, response) => {
 server.listen(options.port, "127.0.0.1", () => {
   console.log(`CC2 GUI: http://127.0.0.1:${options.port}/`);
   for (const engine of Object.values(cc2Engines)) {
-    console.log(`${engine.label}: ${existsSync(engine.binary) ? engine.binary : `unavailable (${engine.binary})`}`);
+    const artifact = engine.f14WasmCompat
+      ? (engine.wasmSha256 === null ? `unavailable (${engine.wasm})` : `WASM ${engine.wasm} (${engine.wasmSha256})`)
+      : (isFilePath(engine.binary) ? engine.binary : `unavailable (${engine.binary ?? "not configured"})`);
+    console.log(`${engine.label}: ${artifact}`);
   }
 });
 
 process.once("exit", () => {
   if (!(matchSession?.cc2Sessions instanceof Map)) return;
-  for (const cc2Session of matchSession.cc2Sessions.values()) cc2Session.terminate();
+  for (const cc2Session of matchSession.cc2Sessions.values()) {
+    if (typeof cc2Session.terminate === "function") cc2Session.terminate();
+    else void cc2Session.close?.();
+  }
 });
 
 /** Serializes one mutation of the live match snapshot against every other. */
@@ -565,6 +601,7 @@ function withMatchMutation(work) {
  * placements are legal from its board.
  */
 async function stepScheduledBots(session, options = {}) {
+  if(session.engineCleanupError)throw new Error(session.engineCleanupError);
   if (session.inFlightStep !== null) return session.inFlightStep;
   cancelEngineIdleTimeout();
   searchesInFlight += 1;
@@ -689,19 +726,42 @@ async function searchForBot(session, bot, dueCount) {
   const engine = requireCc2Engine(type);
   let cc2Session = session.cc2Sessions.get(bot.id);
   if (cc2Session === undefined) {
-    cc2Session = await createCc2Session({
-      binary: engine.binary,
-      binaryArguments: s2ConfigArguments(engine.config ?? null),
-      expectedName: engine.protocolName,
-      selectionLimit: parameters.selectionEnabled ? parameters.selectionLimit : null,
-      searchSeed: GUI_CC2_SEARCH_SEED,
-    });
+    if (engine.f14WasmCompat) {
+      cc2Session = await createF14WasmSession(engine);
+    } else {
+      cc2Session = await createCc2Session({
+        binary: engine.binary,
+        binaryArguments: !engine.f14Compat ? s2ConfigArguments(engine.config ?? null) : [],
+        expectedName: engine.protocolName,
+        selectionLimit: !engine.f14Compat && parameters.selectionEnabled ? parameters.selectionLimit : null,
+        searchSeed: !engine.f14Compat ? GUI_CC2_SEARCH_SEED : null,
+        f14CompatProfile: engine.f14Compat ? createChampionProfile(nativeChampionParameters(parameters)) : null,
+      });
+    }
     session.cc2Sessions.set(bot.id, cc2Session);
   }
   const gui = botMatchToGuiState(session.match, bot.id);
   let cc2;
   const searchStartedAt = performance.now();
   try {
+    if (engine.f14WasmCompat) {
+      const request = createChampionRequest(bot.state, parameters, {
+        requestId: `gui-${bot.id}-${bot.stats.turns + 1}`, generation: bot.stats.turns + 1,
+      });
+      const response = await cc2Session.decideF14({ request, profile: request.execution });
+      const resolved = resolveChampionDecision({ state: bot.state, gui, request, response, parameters });
+      return { botId: bot.id, type, nativeResolved: resolved,
+        proposalResult: successfulProposal({ diagnostics: { botId: bot.id, engineType: type }, latencyMs: performance.now() - searchStartedAt }) };
+    }
+    if (engine.f14Compat) {
+      const request = createChampionRequest(bot.state, nativeChampionParameters(parameters), {
+        requestId: `gui-${bot.id}-${bot.stats.turns + 1}`, generation: bot.stats.turns + 1,
+      });
+      const response = await cc2Session.decide({ request });
+      const resolved = resolveChampionDecision({ state: bot.state, gui, request, response, parameters });
+      return { botId: bot.id, type, nativeResolved: resolved,
+        proposalResult: successfulProposal({ diagnostics: { botId: bot.id, engineType: type }, latencyMs: performance.now() - searchStartedAt }) };
+    }
     cc2 = await cc2Session.suggest({
       timeLimitEnabled: parameters.thinkTimeEnabled,
       thinkMs: session.humanSide !== null || parameters.ppsEnabled === false
@@ -762,6 +822,25 @@ function resolveProposal(session, proposal) {
   const bot = session.match.bots.find((candidate) => candidate.id === proposal.botId);
   const parameters = session.botParameters[bot.id];
   const gui = botMatchToGuiState(session.match, bot.id);
+  if (proposal.type === "cc2-s2-champion" && cc2Engines[proposal.type].f14Public) {
+    const resolved = proposal.nativeResolved;
+    if (resolved?.positionFingerprint !== fullStateKey(bot.state)) {
+      throw new Error("F14 native compatibility stale result");
+    }
+    if (resolved?.transition?.legality?.legal !== true || resolved.transition.nextState === null) {
+      throw new Error(`${bot.id} native placement rejected`);
+    }
+    const move = resolved.placement;
+    return {
+      botId: bot.id,
+      result: resolved,
+      positionFingerprint: resolved.positionFingerprint,
+      move,
+      score: resolved.score,
+      nativeDecision: resolved.nativeDecision,
+      lastPlaced: lockedPieceCells(gui.board, resolved.transition, move.piece),
+    };
+  }
   if (proposal.type === "s2-simple") {
     const analysis = analyzeSimpleS2FinalPlacements(bot.state, {
       topN: 1,
@@ -929,7 +1008,7 @@ function scheduleEngineIdleTimeout(session) {
   engineIdleTimer = setTimeout(() => {
     engineIdleTimer = null;
     if (searchesInFlight > 0) return;
-    void closeCc2MatchSessions(session);
+    void closeCc2MatchSessions(session).catch(error=>{session.engineCleanupError=`GUI engine cleanup failed: ${error.message}`;});
   }, ENGINE_IDLE_TIMEOUT_MS);
   // The idle timer must never be the reason this server stays alive.
   engineIdleTimer.unref();
@@ -940,92 +1019,79 @@ async function closeCc2MatchSessions(session) {
   // to release, and a new match must not be torn down by the old match's timer.
   cancelEngineIdleTimeout();
   if (!(session?.cc2Sessions instanceof Map)) return;
-  await Promise.allSettled([...session.cc2Sessions.values()].map((cc2Session) => cc2Session.close()));
-  session.cc2Sessions.clear();
+  for(const source of session.cc2Sessions.values())source.discardUncommittedTerminalChoice?.();
+  const entries=[...session.cc2Sessions.entries()];
+  const results=await Promise.allSettled(entries.map(([,source])=>source.close()));
+  const failures=[];for(const [i,result] of results.entries()){
+    if(result.status==='fulfilled')session.cc2Sessions.delete(entries[i][0]);else failures.push(result.reason);
+  }
+  if(failures.length)throw new AggregateError(failures,'GUI engine cleanup failed');
 }
 
 function assertBotType(value) {
-  if (!["cc2-raw", "cc2-chouhy", "cc2-s2", "cc2-s2-gen017", "cc2-s2-f11", "cc2-s2-f12", "cc2-s2-f14", "cc2-s2-f25", "cc2-s2-champion", "s2-simple", "human"].includes(value)) throw new Error(`unsupported match bot ${value}`);
-  if (value === "cc2-raw" || value === "cc2-chouhy" || isCc2S2Type(value)) requireCc2Engine(value);
-  if ((value === "cc2-raw" || value === "cc2-chouhy" || isCc2S2Type(value)) && !isAdr062QualifiedStaticType(value)) {
-    throw new Error("ADR-062-qualified resolver required");
-  }
+  if (!["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion", "s2-simple", "human"].includes(value)) throw new Error(`unsupported match bot ${value}`);
+  if (value in cc2Engines) requireCc2Engine(value);
+  if (value in cc2Engines && !isAdr062QualifiedStaticType(value)) throw new Error("ADR-062-qualified resolver required");
   return value;
+}
+
+/* The pinned native `--f14-champion` binary has no host-clocked time budget;
+   THINK TIME runs only on the WASM core. */
+function nativeChampionParameters(parameters) {
+  assertChampionParameters(parameters);
+  if (parameters.thinkTimeEnabled) throw new Error("CC2 S2 champion THINK TIME needs the WASM core (omit --f14-champion)");
+  return parameters;
 }
 
 function requireCc2Engine(botType) {
   const engine = cc2Engines[botType];
   if (engine === undefined) throw new Error(`unsupported CC2 engine ${botType}`);
-  if (engine.binary === null || !existsSync(engine.binary)) throw new Error(`${engine.label} binary not found; provide a local binary path`);
+  if (engine.f14WasmCompat) {
+    if (engine.wasmSha256 === null) throw new Error(`${engine.label} WASM artifact not found: ${engine.wasm ?? "not configured"}`);
+    readWasmBytesMatchingHash(engine);
+    return engine;
+  }
+  if (!isFilePath(engine.binary)) throw new Error(`${engine.label} binary not found: ${engine.binary ?? "not configured"}`);
   return engine;
 }
 
-function isCc2S2Type(botType) {
-  return botType === "cc2-s2" || botType === "cc2-s2-gen017" || botType === "cc2-s2-f11" || botType === "cc2-s2-f12" || botType === "cc2-s2-f14" || botType === "cc2-s2-f25" || botType === "cc2-s2-champion";
+function isFilePath(path) {
+  return typeof path === "string" && existsSync(path) && statSync(path).isFile();
 }
 
-function selectCc2S2Placement(guiState, moves, engine) {
-  if (engine.botType === "cc2-s2-f11") {
-    return selectS2RenQualityPlacement(guiState, moves, {
-      candidateLimit: 16,
-      rankPenalty: 25,
-      adjustmentScale: 28,
-      weightProfileId: "sparse-s2",
-      weights: f11Weights,
-      allowCompleteReturnedPrefix: true,
-      engineId: engine.engineId,
-      comparisonSource: engine.comparisonSource,
-    });
+function fileSha256IfPresent(path) {
+  if (!isFilePath(path)) return null;
+  return sha256Bytes(readFileSync(path));
+}
+
+async function createF14WasmSession(engine) {
+  if (!engine.f14WasmCompat || engine.wasmSha256 === null) {
+    throw new Error(`${engine.label} WASM artifact unavailable`);
   }
-  if (engine.botType === "cc2-s2-f12") {
-    return selectS2ConversionQualifiedRenFinisherPlacement(guiState, moves, {
-      candidateLimit: 16,
-      rankPenalty: 25,
-      adjustmentScale: 28,
-      weightProfileId: "sparse-s2",
-      weights: f11Weights,
-      allowCompleteReturnedPrefix: true,
-      engineId: engine.engineId,
-      comparisonSource: engine.comparisonSource,
-    });
+  return createCc2WasmSession({ wasmBytes: readWasmBytesMatchingHash(engine) });
+}
+
+function readWasmBytesMatchingHash(engine) {
+  let wasmBytes;
+  try {
+    wasmBytes = readFileSync(engine.wasm);
+  } catch {
+    throw new Error(`${engine.label} WASM artifact unavailable: ${engine.wasm}`);
   }
-  if (engine.botType === "cc2-s2-f14") {
-    return selectS2F12AmountOnlyPostTankSolvencyRescuePlacement(guiState, moves, {
-      candidateLimit: 16,
-      rankPenalty: 25,
-      adjustmentScale: 28,
-      weightProfileId: "sparse-s2",
-      weights: f11Weights,
-      allowCompleteReturnedPrefix: true,
-      engineId: engine.engineId,
-      comparisonSource: engine.comparisonSource,
-    });
+  const observedSha256 = sha256Bytes(wasmBytes);
+  if (observedSha256 !== engine.wasmSha256) {
+    throw new Error(`${engine.label} WASM artifact changed since startup: ${engine.wasm}`);
   }
-  if (engine.botType === "cc2-s2-f25") {
-    return selectS2ThresholdImminentB2bRetentionPlacement(guiState, moves, {
-      candidateLimit: 16,
-      rankPenalty: 25,
-      adjustmentScale: 28,
-      weightProfileId: "sparse-s2",
-      weights: f11Weights,
-      allowCompleteReturnedPrefix: true,
-      engineId: engine.engineId,
-      comparisonSource: engine.comparisonSource,
-    });
-  }
-  if (engine.botType === "cc2-s2-champion") {
-    return selectS2F12AmountOnlyPostTankSolvencyRescuePlacement(guiState, moves, {
-      candidateLimit: 16,
-      rankPenalty: 25,
-      adjustmentScale: 28,
-      weightProfileId: "sparse-s2",
-      weights: f11Weights,
-      allowCompleteReturnedPrefix: true,
-      engineId: engine.engineId,
-      comparisonSource: engine.comparisonSource,
-    });
-  }
-  return selectCc2S2HybridPlacement(guiState, moves, engine);
+  return wasmBytes;
+}
+
+function sha256Bytes(bytes) {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+function engineUnavailableReason(engine) {
+  try { requireCc2Engine(engine.botType); return null; }
+  catch (error) { return error.message; }
 }
 
 function publicEngine(engine) {
@@ -1035,6 +1101,7 @@ function publicEngine(engine) {
     label: engine.label,
     repository: engine.repository,
     commit: engine.commit,
+    ...(engine.f14WasmCompat ? { wasmSha256: engine.wasmSha256 } : {}),
   };
 }
 
@@ -1199,28 +1266,52 @@ function parseArguments(args) {
   const rawBinaryArgument = args.find((arg) => arg.startsWith("--cc2-raw="));
   const chouhyBinaryArgument = args.find((arg) => arg.startsWith("--cc2-chouhy="));
   const s2BinaryArgument = args.find((arg) => arg.startsWith("--cc2-s2="));
+  const f14WasmArgument = args.find((arg) => arg.startsWith("--f14-wasm="));
   const portArgument = args.find((arg) => arg.startsWith("--port="));
   const executableSuffix = process.platform === "win32" ? ".exe" : "";
-  const s2Fallback = fileURLToPath(new URL(`../bot/cold-clear-2-s2/target/release/cold-clear-2-s2${executableSuffix}`, import.meta.url));
-  const resolveOptionalPath = (value) => value === undefined ? null : resolve(value);
-  const rawBinary = resolveOptionalPath(
+  const rawFallback = fileURLToPath(new URL(
+    `../bot/cold-clear-2-upstream/target/release/cold-clear-2-upstream${executableSuffix}`,
+    import.meta.url,
+  ));
+  const chouhyFallback = fileURLToPath(new URL(
+    `../bot/cold-clear-2-chouhy/target/release/cold-clear-2-chouhy${executableSuffix}`,
+    import.meta.url,
+  ));
+  const s2Fallback = fileURLToPath(new URL(
+    `../bot/cold-clear-2-s2/target/release/cold-clear-2-s2${executableSuffix}`,
+    import.meta.url,
+  ));
+  const rawBinary = resolve(
     rawBinaryArgument?.slice("--cc2-raw=".length)
       ?? legacyBinaryArgument?.slice("--cc2=".length)
       ?? process.env.CC2_RAW_BINARY
-      ?? process.env.CC2_BINARY,
+      ?? process.env.CC2_BINARY
+      ?? rawFallback,
   );
-  const chouhyBinary = resolveOptionalPath(
+  const chouhyBinary = resolve(
     chouhyBinaryArgument?.slice("--cc2-chouhy=".length)
-      ?? process.env.CC2_CHOUHY_BINARY,
+      ?? process.env.CC2_CHOUHY_BINARY
+      ?? chouhyFallback,
   );
   const s2Binary = resolve(
     s2BinaryArgument?.slice("--cc2-s2=".length)
       ?? process.env.CC2_S2_BINARY
       ?? s2Fallback,
   );
+  // The public server decides the champion only through the WASM core; its
+  // bridge has no native F14 protocol, so there is no --f14-champion route.
+  const f14ChampionBinary = null;
+  const f14WasmLocator = f14WasmArgument?.slice("--f14-wasm=".length) ?? process.env.CC2_F14_WASM;
+  // Like the native executables, the champion's WASM core defaults to the
+  // repository build output; it never replaces an explicit --f14-champion.
+  const f14WasmFallback = fileURLToPath(new URL(
+    "../bot/cold-clear-2-s2/target/wasm32-unknown-unknown/release/cold_clear_2_s2.wasm", import.meta.url));
+  const f14InputWasm = resolve(f14WasmLocator ?? f14WasmFallback);
+  const f14Wasm = f14WasmLocator !== undefined ? resolve(f14WasmLocator)
+    : f14ChampionBinary === null && existsSync(f14WasmFallback) ? f14WasmFallback : null;
   const port = Number(portArgument?.slice("--port=".length) ?? 4173);
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new Error("port must be an integer from 1 to 65535");
-  return { rawBinary, chouhyBinary, s2Binary, port };
+  return { rawBinary, chouhyBinary, s2Binary, f14ChampionBinary, f14Wasm, f14InputWasm, port };
 }
 
 async function readJson(request) {

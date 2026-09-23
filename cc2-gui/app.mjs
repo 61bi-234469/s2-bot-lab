@@ -29,16 +29,12 @@ import {
   fairComparisonBotParameters,
   normalizeBotParameters,
 } from "/shared/bot-parameters.mjs";
-import {
-  canonicalPlacementToGuiMove,
-  simpleAnalysisToVerification,
-} from "./analysis-proposal.mjs";
+import { canonicalPlacementToGuiMove } from "./analysis-proposal.mjs";
 import {
   CANDIDATE_COUNT_LIMIT,
   markCandidateSelection,
   moveIdentity,
   renderCandidateList,
-  simpleAnalysisCandidateRows,
 } from "./analysis-candidates.mjs";
 import {
   HUMAN_ACTIONS,
@@ -94,6 +90,10 @@ import {
 
 const elements = Object.fromEntries([...document.querySelectorAll("[id]")].map((node) => [node.id, node]));
 const BOT_SIDES = Object.freeze(["left", "right"]);
+/* Before a match the metrics read as a round that has not started, rather than
+   being absent: the grid below each field keeps its height, so the arena does
+   not jump when the first view arrives or after RESET. */
+const EMPTY_MATCH_METRICS = calculatePlayerMetrics({ pieces: 0, attack: 0, garbageCleared: 0, elapsedFrames: 0 });
 const INPUT_EXECUTION_PROFILE = "s2-input-execution/1";
 const INPUT_MATCH_ENDPOINT = "/api/input-match";
 const INPUT_SUPPORTED_TYPES = new Set(["human", ...Object.keys(INPUT_BOT_PROFILES)]);
@@ -423,7 +423,12 @@ async function loadBotCapabilities() {
     if (!response.ok || !Array.isArray(capabilities.bots)) throw new Error("bot capability response is invalid");
   } catch (error) {
     capabilities = {
-      bots: [{ id: "s2-simple", label: "S2 placement bot", available: true }],
+      bots: [{
+        id: "bot-list",
+        label: "Bot list",
+        available: false,
+        reason: error instanceof Error ? error.message : String(error),
+      }],
     };
   }
   b2bCharging = capabilities.ruleset?.b2bCharging ?? false;
@@ -444,21 +449,36 @@ async function loadBotCapabilities() {
     const select = elements[selectId];
     for (const option of select.options) {
       const bot = byId.get(option.value);
-      if (!bot) continue;
+      if (!bot) {
+        option.disabled = true;
+        option.dataset.unavailable = "true";
+        option.dataset.reason = "この実行環境では利用できません";
+        option.title = option.dataset.reason;
+        continue;
+      }
       /* Whether the build has the bot at all is kept on the option, because the
          execution path also greys options and the two reasons must not
          overwrite each other. */
       option.dataset.unavailable = String(bot.available === false);
       option.dataset.reason = bot.reason ?? "";
+      /* INPUT can run a bot through a different executable than final
+         placement, so a host may report its availability separately. */
+      if (typeof bot.inputAvailable === "boolean") {
+        option.dataset.inputUnavailable = String(!bot.inputAvailable);
+        option.dataset.inputReason = bot.inputReason ?? "";
+      }
       option.disabled = bot.available === false;
       option.textContent = bot.available === false ? `${bot.label} · unavailable` : bot.label;
       option.title = bot.reason ?? "";
     }
+  }
+  syncInputBotOptions();
+  for (const selectId of ["analysis-bot", "left-bot", "right-bot"]) {
+    const select = elements[selectId];
     if (select.selectedOptions[0]?.disabled) {
       select.value = [...select.options].find((option) => !option.disabled)?.value ?? "";
     }
   }
-  syncInputBotOptions();
   const unavailable = [...byId.values()].filter((bot) => bot.available === false);
   if (unavailable.length > 0) {
     elements["match-bot-note"].hidden = false;
@@ -574,7 +594,7 @@ function botParameterRow(parameter, values, { nested = false, describe = true, s
     input.type = "number";
     input.min = parameter.minimum;
     input.max = parameter.maximum;
-    if (parameter.key === "queueDepth" && inputModeSelected()) input.max = 15;
+    if (parameter.key === "queueDepth" && inputModeSelected()) input.max = Math.min(15, parameter.maximum);
     input.step = parameter.step;
     input.value = values[parameter.key];
   }
@@ -940,23 +960,19 @@ async function think() {
   try {
     const suggestionStartedAt = performance.now();
     const simpleRequest = requestSimpleAnalysis(s2Snapshot, 5);
-    const suggestionRequest = engine === "s2-simple" ? null : requestSuggestion(engine, cc2Snapshot);
-    const [s2, response] = await Promise.all([simpleRequest, suggestionRequest]);
-    const body = response === null ? null : await response.json();
+    const [s2, response] = await Promise.all([simpleRequest, requestSuggestion(engine, cc2Snapshot, s2Snapshot)]);
+    const body = await response.json();
     if (generation !== analysisGeneration) return;
-    if (response !== null && !response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
+    if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
     const suggestionElapsedMs = Math.max(1, performance.now() - suggestionStartedAt);
     pendingThinkElapsedMs = suggestionElapsedMs;
 
     let verification;
-    if (engine === "s2-simple") {
-      verification = simpleAnalysisToVerification(s2);
-      pendingMove = canonicalPlacementToGuiMove(
-        s2.moves[0].placement,
-        verification.transition.lockResult.spin,
-      );
+    pendingMove = body.suggestion.moves[0];
+    if (botCapabilities.get(engine)?.fixedDecision) {
+      verification = body.verification;
+      if (verification?.transition?.legality?.legal !== true) throw new Error("F14 native decision verification missing");
     } else {
-      pendingMove = body.suggestion.moves[0];
       const verificationResponse = await fetch("/api/apply-s2", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -988,15 +1004,11 @@ async function think() {
     const lock = verification.transition.lockResult;
     const attack = verification.transition.attackStages.outgoingBeforeCancel;
     const clear = clearLabel(lock.spin, lock.lines, lock.perfectClear) || "NO CLEAR";
-    const cc2Diagnostic = engine === "s2-simple" ? "" : ` · CC2 label ${pendingMove.spin}`;
-    if (engine === "s2-simple") {
-      elements["nodes-value"].textContent = compact(s2.generatedMoves);
-      elements["nps-value"].textContent = "—";
-    } else {
-      const info = body.suggestion.move_info;
-      elements["nodes-value"].textContent = compact(info.nodes);
-      elements["nps-value"].textContent = Number.isFinite(info.nps) ? compact(Math.round(info.nps)) : "—";
-    }
+    const cc2Diagnostic = ` · CC2 label ${pendingMove.spin}`;
+    // An F14 core decision reports its search in nativeDecision, not move_info.
+    const info = body.suggestion.move_info ?? { nodes: body.nativeDecision?.search?.nodes };
+    elements["nodes-value"].textContent = Number.isFinite(info.nodes) ? compact(info.nodes) : "—";
+    elements["nps-value"].textContent = Number.isFinite(info.nps) ? compact(Math.round(info.nps)) : "—";
     elements["suggestion-move"].textContent = formatMove(pendingMove);
     elements["suggestion-detail"].textContent = `S2: ${clear} · ${attack} attack${cc2Diagnostic}`;
     setStatus("ready", "SUGGESTED");
@@ -1140,6 +1152,16 @@ function renderAnalysisEngineIdentity() {
   const label = capability?.label ?? elements["analysis-bot"].selectedOptions[0]?.textContent ?? botType;
   elements["suggestion-engine-label"].textContent = `${label.toUpperCase()} SUGGESTION`;
   elements["comparison-engine-label"].textContent = `${label.toUpperCase()} · S2 VERIFIED`;
+  const fixed = capability?.fixedDecision === true;
+  elements["think-ms"].disabled = fixed;
+  elements["think-ms"].title = fixed ? "championの単体解析は既定設定（512 selections）で判断します。対戦時の設定は SETTINGS で変更できます" : "";
+  const count = elements["candidate-count"];
+  if (fixed && count.value !== "1") {
+    count.dataset.previousCount = count.value;
+    if (![...count.options].some(option => option.value === "1")) count.add(new Option("確定 1 手", "1"));
+    count.value = "1";
+  } else if (!fixed && count.value === "1") count.value = count.dataset.previousCount ?? "5";
+  count.disabled = fixed;
 }
 
 /* 考える and 候補 ask the same proposer about the same position, so only one of
@@ -1191,9 +1213,7 @@ async function loadCandidates() {
   try {
     const startedAt = performance.now();
     const reference = await requestSimpleAnalysis(s2Snapshot, count);
-    const rows = engine === "s2-simple"
-      ? simpleAnalysisCandidateRows(reference, count)
-      : await requestCc2CandidateRows(engine, cc2Snapshot, s2Snapshot, count);
+    const rows = await requestCc2CandidateRows(engine, cc2Snapshot, s2Snapshot, count);
     if (generation !== analysisGeneration) return;
     candidateElapsedMs = Math.max(1, performance.now() - startedAt);
     candidateReference = reference;
@@ -1222,9 +1242,13 @@ async function loadCandidates() {
 }
 
 async function requestCc2CandidateRows(engine, cc2State, s2State, count) {
-  const response = await requestSuggestion(engine, cc2State);
+  const response = await requestSuggestion(engine, cc2State, s2State);
   const body = await response.json();
   if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
+  if (botCapabilities.get(engine)?.fixedDecision) {
+    if (body.verification?.transition?.legality?.legal !== true) throw new Error("F14 native decision verification missing");
+    return [{ move: body.suggestion.moves[0], verification: body.verification }];
+  }
   return Promise.all(body.suggestion.moves.slice(0, count)
     .map((move) => verifyCandidate(engine, s2State, move)));
 }
@@ -1342,7 +1366,7 @@ async function requestSimpleAnalysis(state, n) {
   return analysis;
 }
 
-function requestSuggestion(engine, cc2State) {
+function requestSuggestion(engine, cc2State, s2State = null) {
   return fetch("/api/suggest", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -1350,12 +1374,12 @@ function requestSuggestion(engine, cc2State) {
       engine,
       parameters: {
         ...defaultBotParameters(engine),
-        selectionEnabled: false,
-        thinkTimeEnabled: true,
+        selectionEnabled: botCapabilities.get(engine)?.fixedDecision === true,
+        thinkTimeEnabled: botCapabilities.get(engine)?.fixedDecision !== true,
         thinkMs: Number(elements["think-ms"].value),
       },
       thinkMs: Number(elements["think-ms"].value),
-      state: cc2State,
+      state: botCapabilities.get(engine)?.fixedDecision ? s2State : cc2State,
     }),
   });
 }
@@ -2744,6 +2768,7 @@ function renderMatchRunButton() {
   button.textContent = { start: "START MATCH", running: "PAUSE", paused: "RESUME" }[state];
   button.setAttribute("aria-pressed", String(state === "running"));
   button.disabled = matchStarting || matchRoundFinalization !== null;
+  renderTurnIndicator();
 }
 
 function renderMatchSummary() {
@@ -2881,6 +2906,7 @@ function renderEmptyMatchFields() {
     field.classList.toggle("input-spawn-field", inputModeSelected());
     const board = Array.from({ length: 40 }, () => Array(10).fill(null));
     renderMatchField(field, board, [], null, { rows: inputModeSelected() ? 23 : 20 });
+    renderMatchMetrics(side, EMPTY_MATCH_METRICS, 0);
   }
 }
 
@@ -3016,12 +3042,13 @@ function syncInputBotOptions() {
   const inputMode = inputModeSelected() || (matchRunning && inputModeActive());
   for (const side of BOT_SIDES) {
     for (const option of elements[`${side}-bot`].options) {
-      const unavailable = option.dataset.unavailable === "true";
+      const inputRoute = inputMode && option.dataset.inputUnavailable !== undefined;
+      const unavailable = (inputRoute ? option.dataset.inputUnavailable : option.dataset.unavailable) === "true";
       const inadmissible = inputMode && !inputBotAdmitted(side, option.value);
       option.disabled = unavailable || inadmissible;
       option.title = inadmissible && !unavailable
         ? "TTRM INPUT では使えません（実入力の対応Botではありません）"
-        : option.dataset.reason ?? "";
+        : (inputRoute ? option.dataset.inputReason : option.dataset.reason) ?? "";
     }
   }
 }
@@ -3202,6 +3229,51 @@ function humanTurnDue() {
   return side !== null && lastMatchView?.dueBotIds?.includes(side) === true;
 }
 
+/* The person's side of a turn match shows whose turn it is; out of turn their
+   hard drop does nothing, and this is what tells them so. Nothing is shown
+   outside a running turn match. */
+function renderTurnIndicator() {
+  const view = lastMatchView;
+  const side = human?.side ?? view?.humanSide ?? null;
+  const state = !turnMatchActive() || !matchRunning || view === null || side === null ||
+    view.outcome?.complete === true
+    ? null
+    : humanTurnDue() ? "human" : "bot";
+  for (const id of BOT_SIDES) {
+    const own = state !== null && id === side;
+    const label = elements[`match-${id}-turn`];
+    label.hidden = !own;
+    if (!own) {
+      delete label.dataset.state;
+      continue;
+    }
+    // Every INPUT frame repaints; rewriting an unchanged live region would
+    // announce it again.
+    const text = state === "human" ? "YOUR TURN" : matchAutoplay ? "BOT THINKING" : "BOT TURN";
+    if (label.textContent !== text) label.textContent = text;
+    label.dataset.state = state;
+  }
+  renderToppedOutFields(view);
+}
+
+/* A board that topped out is dimmed for as long as its round stays on screen,
+   in every match. The legacy view flags each side; an INPUT view names only the
+   winner of a top-out, so every other side is the one that topped out. */
+function renderToppedOutFields(view) {
+  const toppedOut = new Set();
+  if (view?.outcome?.reason === "top-out") {
+    const flagged = view.bots.filter((bot) => bot.toppedOut === true);
+    for (const bot of flagged.length > 0 ? flagged : view.bots.filter((bot) => bot.id !== view.outcome.winnerBotId)) {
+      toppedOut.add(bot.id);
+    }
+  }
+  for (const id of BOT_SIDES) {
+    const field = elements[`match-${id}-field`];
+    if (toppedOut.has(id)) field.dataset.toppedOut = "true";
+    else delete field.dataset.toppedOut;
+  }
+}
+
 function syncRandomSeedControl(matchSettingsDisabled = false) {
   const random = elements["match-random-seed"].checked;
   elements["match-seed"].disabled = matchSettingsDisabled || random;
@@ -3350,6 +3422,7 @@ function paintMatchView(view) {
     renderGarbageGauge(elements[`match-${side}-gauge`], bot.garbage.packets, `${side} bot`);
     renderMatchMetrics(side, bot.metrics, bot.stats.turns);
   }
+  renderTurnIndicator();
   renderMatchSaveButton();
 }
 
@@ -3507,14 +3580,6 @@ function renderComparison(raw, comparison) {
   elements["s2-best-move"].textContent = formatCanonicalPlacement(best.placement);
   elements["s2-score"].textContent = `${best.score.toFixed(2)} · ${comparison.status}`;
   elements["score-gap"].textContent = `${gap >= 0 ? "+" : ""}${gap.toFixed(2)}`;
-}
-
-function renderUnavailableComparison(raw, s2) {
-  elements["raw-score"].textContent = raw.comparison.score.toFixed(2);
-  elements["raw-comparison-status"].textContent = raw.status;
-  elements["s2-best-move"].textContent = "この局面では比較できません";
-  elements["s2-score"].textContent = s2.degraded?.join(", ") ?? s2.status;
-  elements["score-gap"].textContent = "—";
 }
 
 function resetComparison() {

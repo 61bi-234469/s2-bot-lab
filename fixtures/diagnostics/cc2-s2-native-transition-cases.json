@@ -1,0 +1,6991 @@
+{
+  "schemaVersion": 1,
+  "rulesetId": "tetrio-s2-v19-2c47b3df945f6714449b92d1b44346ef4bf0e1a20e95be8ed10c28be75c66a60-beta-1-5-0",
+  "source": "pinned canonical evaluateLockStages; component fixtures, not games",
+  "cases": [
+    {
+      "id": "0/4/0/0/none/false/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 0,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 0,
+        "afterMultiplier": 0,
+        "afterRounding": 0,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 0
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 0,
+        "b2bBefore": 4,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "0",
+      "afterMultiplierDecimal": "0"
+    },
+    {
+      "id": "0/4/0/0/mini/false/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 0,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 0,
+        "afterMultiplier": 0,
+        "afterRounding": 0,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 0
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 0,
+        "b2bBefore": 4,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "0",
+      "afterMultiplierDecimal": "0"
+    },
+    {
+      "id": "0/4/0/0/normal/false/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 0,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 0,
+        "afterMultiplier": 0,
+        "afterRounding": 0,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 0
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 0,
+        "b2bBefore": 4,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "0",
+      "afterMultiplierDecimal": "0"
+    },
+    {
+      "id": "0/4/0/1/none/false/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 0,
+        "afterMultiplier": 0,
+        "afterRounding": 0,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 0
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "0",
+      "afterMultiplierDecimal": "0"
+    },
+    {
+      "id": "0/4/0/1/none/false/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 0,
+        "afterMultiplier": 0,
+        "afterRounding": 0,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 0
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "0",
+      "afterMultiplierDecimal": "0"
+    },
+    {
+      "id": "0/4/0/1/none/true/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 1,
+        "afterMultiplier": 1,
+        "afterRounding": 1,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 6
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "1",
+      "afterMultiplierDecimal": "1"
+    },
+    {
+      "id": "0/4/0/1/none/true/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 1,
+        "afterMultiplier": 1,
+        "afterRounding": 1,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 6
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "1",
+      "afterMultiplierDecimal": "1"
+    },
+    {
+      "id": "0/4/0/1/mini/false/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 1,
+        "afterMultiplier": 1,
+        "afterRounding": 1,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 1
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "1",
+      "afterMultiplierDecimal": "1"
+    },
+    {
+      "id": "0/4/0/1/mini/false/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 1,
+        "afterMultiplier": 1,
+        "afterRounding": 2,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 2
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "1",
+      "afterMultiplierDecimal": "1"
+    },
+    {
+      "id": "0/4/0/1/mini/true/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 1,
+        "afterMultiplier": 1,
+        "afterRounding": 1,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 6
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "1",
+      "afterMultiplierDecimal": "1"
+    },
+    {
+      "id": "0/4/0/1/mini/true/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 1,
+        "afterMultiplier": 1,
+        "afterRounding": 2,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 7
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "1",
+      "afterMultiplierDecimal": "1"
+    },
+    {
+      "id": "0/4/0/1/normal/false/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 3,
+        "afterMultiplier": 3,
+        "afterRounding": 3,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 3
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "3",
+      "afterMultiplierDecimal": "3"
+    },
+    {
+      "id": "0/4/0/1/normal/false/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 3,
+        "afterMultiplier": 3,
+        "afterRounding": 4,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 4
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "3",
+      "afterMultiplierDecimal": "3"
+    },
+    {
+      "id": "0/4/0/1/normal/true/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 3,
+        "afterMultiplier": 3,
+        "afterRounding": 3,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 8
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "3",
+      "afterMultiplierDecimal": "3"
+    },
+    {
+      "id": "0/4/0/1/normal/true/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 3,
+        "afterMultiplier": 3,
+        "afterRounding": 4,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 9
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "3",
+      "afterMultiplierDecimal": "3"
+    },
+    {
+      "id": "0/4/0/2/none/false/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 1,
+        "afterMultiplier": 1,
+        "afterRounding": 1,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 1
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "1",
+      "afterMultiplierDecimal": "1"
+    },
+    {
+      "id": "0/4/0/2/none/false/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 1,
+        "afterMultiplier": 1,
+        "afterRounding": 1,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 1
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "1",
+      "afterMultiplierDecimal": "1"
+    },
+    {
+      "id": "0/4/0/2/none/true/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 2,
+        "afterMultiplier": 2,
+        "afterRounding": 2,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 7
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "2",
+      "afterMultiplierDecimal": "2"
+    },
+    {
+      "id": "0/4/0/2/none/true/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 2,
+        "afterMultiplier": 2,
+        "afterRounding": 2,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 7
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "2",
+      "afterMultiplierDecimal": "2"
+    },
+    {
+      "id": "0/4/0/2/mini/false/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 2,
+        "afterMultiplier": 2,
+        "afterRounding": 2,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 2
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "2",
+      "afterMultiplierDecimal": "2"
+    },
+    {
+      "id": "0/4/0/2/mini/false/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 2,
+        "afterMultiplier": 2,
+        "afterRounding": 3,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 3
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "2",
+      "afterMultiplierDecimal": "2"
+    },
+    {
+      "id": "0/4/0/2/mini/true/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 2,
+        "afterMultiplier": 2,
+        "afterRounding": 2,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 7
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "2",
+      "afterMultiplierDecimal": "2"
+    },
+    {
+      "id": "0/4/0/2/mini/true/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 2,
+        "afterMultiplier": 2,
+        "afterRounding": 3,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 8
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "2",
+      "afterMultiplierDecimal": "2"
+    },
+    {
+      "id": "0/4/0/2/normal/false/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 5,
+        "afterMultiplier": 5,
+        "afterRounding": 5,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 5
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "5",
+      "afterMultiplierDecimal": "5"
+    },
+    {
+      "id": "0/4/0/2/normal/false/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 5,
+        "afterMultiplier": 5,
+        "afterRounding": 6,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 6
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "5",
+      "afterMultiplierDecimal": "5"
+    },
+    {
+      "id": "0/4/0/2/normal/true/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 5,
+        "afterMultiplier": 5,
+        "afterRounding": 5,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 10
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "5",
+      "afterMultiplierDecimal": "5"
+    },
+    {
+      "id": "0/4/0/2/normal/true/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 5,
+        "afterMultiplier": 5,
+        "afterRounding": 6,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 11
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "5",
+      "afterMultiplierDecimal": "5"
+    },
+    {
+      "id": "0/4/0/3/none/false/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 2,
+        "afterMultiplier": 2,
+        "afterRounding": 2,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 2
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "2",
+      "afterMultiplierDecimal": "2"
+    },
+    {
+      "id": "0/4/0/3/none/false/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 2,
+        "afterMultiplier": 2,
+        "afterRounding": 2,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 2
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "2",
+      "afterMultiplierDecimal": "2"
+    },
+    {
+      "id": "0/4/0/3/none/true/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 3,
+        "afterMultiplier": 3,
+        "afterRounding": 3,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 8
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "3",
+      "afterMultiplierDecimal": "3"
+    },
+    {
+      "id": "0/4/0/3/none/true/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 3,
+        "afterMultiplier": 3,
+        "afterRounding": 3,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 8
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "3",
+      "afterMultiplierDecimal": "3"
+    },
+    {
+      "id": "0/4/0/3/mini/false/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 3,
+        "afterMultiplier": 3,
+        "afterRounding": 3,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 3
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "3",
+      "afterMultiplierDecimal": "3"
+    },
+    {
+      "id": "0/4/0/3/mini/false/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 3,
+        "afterMultiplier": 3,
+        "afterRounding": 4,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 4
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "3",
+      "afterMultiplierDecimal": "3"
+    },
+    {
+      "id": "0/4/0/3/mini/true/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 3,
+        "afterMultiplier": 3,
+        "afterRounding": 3,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 8
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "3",
+      "afterMultiplierDecimal": "3"
+    },
+    {
+      "id": "0/4/0/3/mini/true/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 3,
+        "afterMultiplier": 3,
+        "afterRounding": 4,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 9
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "3",
+      "afterMultiplierDecimal": "3"
+    },
+    {
+      "id": "0/4/0/3/normal/false/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 7,
+        "afterMultiplier": 7,
+        "afterRounding": 7,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 7
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "7",
+      "afterMultiplierDecimal": "7"
+    },
+    {
+      "id": "0/4/0/3/normal/false/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 7,
+        "afterMultiplier": 7,
+        "afterRounding": 8,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 8
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "7",
+      "afterMultiplierDecimal": "7"
+    },
+    {
+      "id": "0/4/0/3/normal/true/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 7,
+        "afterMultiplier": 7,
+        "afterRounding": 7,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 12
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "7",
+      "afterMultiplierDecimal": "7"
+    },
+    {
+      "id": "0/4/0/3/normal/true/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 7,
+        "afterMultiplier": 7,
+        "afterRounding": 8,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 13
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "7",
+      "afterMultiplierDecimal": "7"
+    },
+    {
+      "id": "0/4/0/4/none/false/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 5,
+        "afterMultiplier": 5,
+        "afterRounding": 5,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 5
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "5",
+      "afterMultiplierDecimal": "5"
+    },
+    {
+      "id": "0/4/0/4/none/false/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 5,
+        "afterMultiplier": 5,
+        "afterRounding": 6,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 6
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "5",
+      "afterMultiplierDecimal": "5"
+    },
+    {
+      "id": "0/4/0/4/none/true/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 5,
+        "afterMultiplier": 5,
+        "afterRounding": 5,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 10
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "5",
+      "afterMultiplierDecimal": "5"
+    },
+    {
+      "id": "0/4/0/4/none/true/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 5,
+        "afterMultiplier": 5,
+        "afterRounding": 6,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 11
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "5",
+      "afterMultiplierDecimal": "5"
+    },
+    {
+      "id": "0/4/0/4/mini/false/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 11,
+        "afterMultiplier": 11,
+        "afterRounding": 11,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 11
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "11",
+      "afterMultiplierDecimal": "11"
+    },
+    {
+      "id": "0/4/0/4/mini/false/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 11,
+        "afterMultiplier": 11,
+        "afterRounding": 12,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 12
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "11",
+      "afterMultiplierDecimal": "11"
+    },
+    {
+      "id": "0/4/0/4/mini/true/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 11,
+        "afterMultiplier": 11,
+        "afterRounding": 11,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 16
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "11",
+      "afterMultiplierDecimal": "11"
+    },
+    {
+      "id": "0/4/0/4/mini/true/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 11,
+        "afterMultiplier": 11,
+        "afterRounding": 12,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 17
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "11",
+      "afterMultiplierDecimal": "11"
+    },
+    {
+      "id": "0/4/0/4/normal/false/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 11,
+        "afterMultiplier": 11,
+        "afterRounding": 11,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 11
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "11",
+      "afterMultiplierDecimal": "11"
+    },
+    {
+      "id": "0/4/0/4/normal/false/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 11,
+        "afterMultiplier": 11,
+        "afterRounding": 12,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 12
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "11",
+      "afterMultiplierDecimal": "11"
+    },
+    {
+      "id": "0/4/0/4/normal/true/false",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 11,
+        "afterMultiplier": 11,
+        "afterRounding": 11,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 16
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "11",
+      "afterMultiplierDecimal": "11"
+    },
+    {
+      "id": "0/4/0/4/normal/true/true",
+      "before": {
+        "combo": 0,
+        "b2b": 4
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 11,
+        "afterMultiplier": 11,
+        "afterRounding": 12,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 17
+      },
+      "expectedChain": {
+        "comboBefore": 0,
+        "comboAfter": 1,
+        "b2bBefore": 4,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "11",
+      "afterMultiplierDecimal": "11"
+    },
+    {
+      "id": "2/5/12300/0/none/false/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 0,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 0,
+        "afterMultiplier": 0,
+        "afterRounding": 0,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 0
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 0,
+        "b2bBefore": 5,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "0",
+      "afterMultiplierDecimal": "0"
+    },
+    {
+      "id": "2/5/12300/0/mini/false/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 0,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 0,
+        "afterMultiplier": 0,
+        "afterRounding": 0,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 0
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 0,
+        "b2bBefore": 5,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "0",
+      "afterMultiplierDecimal": "0"
+    },
+    {
+      "id": "2/5/12300/0/normal/false/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 0,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 0,
+        "afterMultiplier": 0,
+        "afterRounding": 0,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 0
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 0,
+        "b2bBefore": 5,
+        "b2bAfter": 5,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "0",
+      "afterMultiplierDecimal": "0"
+    },
+    {
+      "id": "2/5/12300/1/none/false/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 1.252762968495368,
+        "afterMultiplier": 1.503315562194414,
+        "afterRounding": 1,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [
+          1,
+          1,
+          2
+        ],
+        "outgoingBeforeCancel": 5
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "1.252762968495368",
+      "afterMultiplierDecimal": "1.503315562194414"
+    },
+    {
+      "id": "2/5/12300/1/none/false/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 1.252762968495368,
+        "afterMultiplier": 1.503315562194414,
+        "afterRounding": 1,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [
+          1,
+          1,
+          2
+        ],
+        "outgoingBeforeCancel": 5
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "1.252762968495368",
+      "afterMultiplierDecimal": "1.503315562194414"
+    },
+    {
+      "id": "2/5/12300/1/none/true/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 1.5,
+        "afterMultiplier": 1.799999999999967,
+        "afterRounding": 1,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 6
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "1.5",
+      "afterMultiplierDecimal": "1.799999999999967"
+    },
+    {
+      "id": "2/5/12300/1/none/true/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 1.5,
+        "afterMultiplier": 1.799999999999967,
+        "afterRounding": 1,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 6
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "1.5",
+      "afterMultiplierDecimal": "1.799999999999967"
+    },
+    {
+      "id": "2/5/12300/1/mini/false/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 1.5,
+        "afterMultiplier": 1.799999999999967,
+        "afterRounding": 1,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 1
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "1.5",
+      "afterMultiplierDecimal": "1.799999999999967"
+    },
+    {
+      "id": "2/5/12300/1/mini/false/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 1.5,
+        "afterMultiplier": 1.799999999999967,
+        "afterRounding": 2,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 2
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "1.5",
+      "afterMultiplierDecimal": "1.799999999999967"
+    },
+    {
+      "id": "2/5/12300/1/mini/true/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 1.5,
+        "afterMultiplier": 1.799999999999967,
+        "afterRounding": 1,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 6
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "1.5",
+      "afterMultiplierDecimal": "1.799999999999967"
+    },
+    {
+      "id": "2/5/12300/1/mini/true/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 1.5,
+        "afterMultiplier": 1.799999999999967,
+        "afterRounding": 2,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 7
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "1.5",
+      "afterMultiplierDecimal": "1.799999999999967"
+    },
+    {
+      "id": "2/5/12300/1/normal/false/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 4.5,
+        "afterMultiplier": 5.399999999999901,
+        "afterRounding": 5,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 5
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "4.5",
+      "afterMultiplierDecimal": "5.399999999999901"
+    },
+    {
+      "id": "2/5/12300/1/normal/false/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 4.5,
+        "afterMultiplier": 5.399999999999901,
+        "afterRounding": 6,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 6
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "4.5",
+      "afterMultiplierDecimal": "5.399999999999901"
+    },
+    {
+      "id": "2/5/12300/1/normal/true/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 4.5,
+        "afterMultiplier": 5.399999999999901,
+        "afterRounding": 5,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 10
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "4.5",
+      "afterMultiplierDecimal": "5.399999999999901"
+    },
+    {
+      "id": "2/5/12300/1/normal/true/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 4.5,
+        "afterMultiplier": 5.399999999999901,
+        "afterRounding": 6,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 11
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "4.5",
+      "afterMultiplierDecimal": "5.399999999999901"
+    },
+    {
+      "id": "2/5/12300/2/none/false/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 1.5,
+        "afterMultiplier": 1.799999999999967,
+        "afterRounding": 1,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [
+          1,
+          1,
+          2
+        ],
+        "outgoingBeforeCancel": 5
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "1.5",
+      "afterMultiplierDecimal": "1.799999999999967"
+    },
+    {
+      "id": "2/5/12300/2/none/false/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 1.5,
+        "afterMultiplier": 1.799999999999967,
+        "afterRounding": 1,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [
+          1,
+          1,
+          2
+        ],
+        "outgoingBeforeCancel": 5
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "1.5",
+      "afterMultiplierDecimal": "1.799999999999967"
+    },
+    {
+      "id": "2/5/12300/2/none/true/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 3,
+        "afterMultiplier": 3.599999999999934,
+        "afterRounding": 3,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 8
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "3",
+      "afterMultiplierDecimal": "3.599999999999934"
+    },
+    {
+      "id": "2/5/12300/2/none/true/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 3,
+        "afterMultiplier": 3.599999999999934,
+        "afterRounding": 3,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 8
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "3",
+      "afterMultiplierDecimal": "3.599999999999934"
+    },
+    {
+      "id": "2/5/12300/2/mini/false/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 3,
+        "afterMultiplier": 3.599999999999934,
+        "afterRounding": 3,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 3
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "3",
+      "afterMultiplierDecimal": "3.599999999999934"
+    },
+    {
+      "id": "2/5/12300/2/mini/false/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 3,
+        "afterMultiplier": 3.599999999999934,
+        "afterRounding": 4,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 4
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "3",
+      "afterMultiplierDecimal": "3.599999999999934"
+    },
+    {
+      "id": "2/5/12300/2/mini/true/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 3,
+        "afterMultiplier": 3.599999999999934,
+        "afterRounding": 3,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 8
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "3",
+      "afterMultiplierDecimal": "3.599999999999934"
+    },
+    {
+      "id": "2/5/12300/2/mini/true/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 3,
+        "afterMultiplier": 3.599999999999934,
+        "afterRounding": 4,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 9
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "3",
+      "afterMultiplierDecimal": "3.599999999999934"
+    },
+    {
+      "id": "2/5/12300/2/normal/false/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 7.5,
+        "afterMultiplier": 8.999999999999835,
+        "afterRounding": 8,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 8
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "7.5",
+      "afterMultiplierDecimal": "8.999999999999835"
+    },
+    {
+      "id": "2/5/12300/2/normal/false/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 7.5,
+        "afterMultiplier": 8.999999999999835,
+        "afterRounding": 9,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 9
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "7.5",
+      "afterMultiplierDecimal": "8.999999999999835"
+    },
+    {
+      "id": "2/5/12300/2/normal/true/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 7.5,
+        "afterMultiplier": 8.999999999999835,
+        "afterRounding": 8,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 13
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "7.5",
+      "afterMultiplierDecimal": "8.999999999999835"
+    },
+    {
+      "id": "2/5/12300/2/normal/true/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 7.5,
+        "afterMultiplier": 8.999999999999835,
+        "afterRounding": 9,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 14
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "7.5",
+      "afterMultiplierDecimal": "8.999999999999835"
+    },
+    {
+      "id": "2/5/12300/3/none/false/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 3,
+        "afterMultiplier": 3.599999999999934,
+        "afterRounding": 3,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [
+          1,
+          1,
+          2
+        ],
+        "outgoingBeforeCancel": 7
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "3",
+      "afterMultiplierDecimal": "3.599999999999934"
+    },
+    {
+      "id": "2/5/12300/3/none/false/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 3,
+        "afterMultiplier": 3.599999999999934,
+        "afterRounding": 3,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [
+          1,
+          1,
+          2
+        ],
+        "outgoingBeforeCancel": 7
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "3",
+      "afterMultiplierDecimal": "3.599999999999934"
+    },
+    {
+      "id": "2/5/12300/3/none/true/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 4.5,
+        "afterMultiplier": 5.399999999999901,
+        "afterRounding": 5,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 10
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "4.5",
+      "afterMultiplierDecimal": "5.399999999999901"
+    },
+    {
+      "id": "2/5/12300/3/none/true/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 4.5,
+        "afterMultiplier": 5.399999999999901,
+        "afterRounding": 5,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 10
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "4.5",
+      "afterMultiplierDecimal": "5.399999999999901"
+    },
+    {
+      "id": "2/5/12300/3/mini/false/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 4.5,
+        "afterMultiplier": 5.399999999999901,
+        "afterRounding": 5,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 5
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "4.5",
+      "afterMultiplierDecimal": "5.399999999999901"
+    },
+    {
+      "id": "2/5/12300/3/mini/false/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 4.5,
+        "afterMultiplier": 5.399999999999901,
+        "afterRounding": 6,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 6
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "4.5",
+      "afterMultiplierDecimal": "5.399999999999901"
+    },
+    {
+      "id": "2/5/12300/3/mini/true/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 4.5,
+        "afterMultiplier": 5.399999999999901,
+        "afterRounding": 5,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 10
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "4.5",
+      "afterMultiplierDecimal": "5.399999999999901"
+    },
+    {
+      "id": "2/5/12300/3/mini/true/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 4.5,
+        "afterMultiplier": 5.399999999999901,
+        "afterRounding": 6,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 11
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "4.5",
+      "afterMultiplierDecimal": "5.399999999999901"
+    },
+    {
+      "id": "2/5/12300/3/normal/false/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 10.5,
+        "afterMultiplier": 12.599999999999769,
+        "afterRounding": 12,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 12
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "10.5",
+      "afterMultiplierDecimal": "12.599999999999769"
+    },
+    {
+      "id": "2/5/12300/3/normal/false/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 10.5,
+        "afterMultiplier": 12.599999999999769,
+        "afterRounding": 13,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 13
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "10.5",
+      "afterMultiplierDecimal": "12.599999999999769"
+    },
+    {
+      "id": "2/5/12300/3/normal/true/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 10.5,
+        "afterMultiplier": 12.599999999999769,
+        "afterRounding": 12,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 17
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "10.5",
+      "afterMultiplierDecimal": "12.599999999999769"
+    },
+    {
+      "id": "2/5/12300/3/normal/true/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 10.5,
+        "afterMultiplier": 12.599999999999769,
+        "afterRounding": 13,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 18
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "10.5",
+      "afterMultiplierDecimal": "12.599999999999769"
+    },
+    {
+      "id": "2/5/12300/4/none/false/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 7.5,
+        "afterMultiplier": 8.999999999999835,
+        "afterRounding": 8,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 8
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "7.5",
+      "afterMultiplierDecimal": "8.999999999999835"
+    },
+    {
+      "id": "2/5/12300/4/none/false/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 7.5,
+        "afterMultiplier": 8.999999999999835,
+        "afterRounding": 9,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 9
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "7.5",
+      "afterMultiplierDecimal": "8.999999999999835"
+    },
+    {
+      "id": "2/5/12300/4/none/true/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 7.5,
+        "afterMultiplier": 8.999999999999835,
+        "afterRounding": 8,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 13
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "7.5",
+      "afterMultiplierDecimal": "8.999999999999835"
+    },
+    {
+      "id": "2/5/12300/4/none/true/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 7.5,
+        "afterMultiplier": 8.999999999999835,
+        "afterRounding": 9,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 14
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "7.5",
+      "afterMultiplierDecimal": "8.999999999999835"
+    },
+    {
+      "id": "2/5/12300/4/mini/false/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 16.5,
+        "afterMultiplier": 19.799999999999635,
+        "afterRounding": 19,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 19
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "16.5",
+      "afterMultiplierDecimal": "19.799999999999635"
+    },
+    {
+      "id": "2/5/12300/4/mini/false/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 16.5,
+        "afterMultiplier": 19.799999999999635,
+        "afterRounding": 20,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 20
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "16.5",
+      "afterMultiplierDecimal": "19.799999999999635"
+    },
+    {
+      "id": "2/5/12300/4/mini/true/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 16.5,
+        "afterMultiplier": 19.799999999999635,
+        "afterRounding": 19,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 24
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "16.5",
+      "afterMultiplierDecimal": "19.799999999999635"
+    },
+    {
+      "id": "2/5/12300/4/mini/true/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 16.5,
+        "afterMultiplier": 19.799999999999635,
+        "afterRounding": 20,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 25
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "16.5",
+      "afterMultiplierDecimal": "19.799999999999635"
+    },
+    {
+      "id": "2/5/12300/4/normal/false/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 16.5,
+        "afterMultiplier": 19.799999999999635,
+        "afterRounding": 19,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 19
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "16.5",
+      "afterMultiplierDecimal": "19.799999999999635"
+    },
+    {
+      "id": "2/5/12300/4/normal/false/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 16.5,
+        "afterMultiplier": 19.799999999999635,
+        "afterRounding": 20,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 20
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "16.5",
+      "afterMultiplierDecimal": "19.799999999999635"
+    },
+    {
+      "id": "2/5/12300/4/normal/true/false",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 16.5,
+        "afterMultiplier": 19.799999999999635,
+        "afterRounding": 19,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 24
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "16.5",
+      "afterMultiplierDecimal": "19.799999999999635"
+    },
+    {
+      "id": "2/5/12300/4/normal/true/true",
+      "before": {
+        "combo": 2,
+        "b2b": 5
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 12300,
+      "multiplier": 1.199999999999978,
+      "expectedAttack": {
+        "raw": 16.5,
+        "afterMultiplier": 19.799999999999635,
+        "afterRounding": 20,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 25
+      },
+      "expectedChain": {
+        "comboBefore": 2,
+        "comboAfter": 3,
+        "b2bBefore": 5,
+        "b2bAfter": 6,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.199999999999978",
+      "rawDecimal": "16.5",
+      "afterMultiplierDecimal": "19.799999999999635"
+    },
+    {
+      "id": "255/256/0/0/none/false/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 0,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 0,
+        "afterMultiplier": 0,
+        "afterRounding": 0,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 0
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 0,
+        "b2bBefore": 256,
+        "b2bAfter": 256,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "0",
+      "afterMultiplierDecimal": "0"
+    },
+    {
+      "id": "255/256/0/0/mini/false/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 0,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 0,
+        "afterMultiplier": 0,
+        "afterRounding": 0,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 0
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 0,
+        "b2bBefore": 256,
+        "b2bAfter": 256,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "0",
+      "afterMultiplierDecimal": "0"
+    },
+    {
+      "id": "255/256/0/0/normal/false/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 0,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 0,
+        "afterMultiplier": 0,
+        "afterRounding": 0,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 0
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 0,
+        "b2bBefore": 256,
+        "b2bAfter": 256,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "0",
+      "afterMultiplierDecimal": "0"
+    },
+    {
+      "id": "255/256/0/1/none/false/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 5.767539440458952,
+        "afterMultiplier": 5.767539440458952,
+        "afterRounding": 5,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [
+          85,
+          85,
+          85
+        ],
+        "outgoingBeforeCancel": 260
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "5.767539440458952",
+      "afterMultiplierDecimal": "5.767539440458952"
+    },
+    {
+      "id": "255/256/0/1/none/false/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 5.767539440458952,
+        "afterMultiplier": 5.767539440458952,
+        "afterRounding": 5,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [
+          85,
+          85,
+          85
+        ],
+        "outgoingBeforeCancel": 260
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "5.767539440458952",
+      "afterMultiplierDecimal": "5.767539440458952"
+    },
+    {
+      "id": "255/256/0/1/none/true/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 64.75,
+        "afterMultiplier": 64.75,
+        "afterRounding": 64,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 69
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "64.75",
+      "afterMultiplierDecimal": "64.75"
+    },
+    {
+      "id": "255/256/0/1/none/true/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 64.75,
+        "afterMultiplier": 64.75,
+        "afterRounding": 64,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 69
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "64.75",
+      "afterMultiplierDecimal": "64.75"
+    },
+    {
+      "id": "255/256/0/1/mini/false/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 64.75,
+        "afterMultiplier": 64.75,
+        "afterRounding": 64,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 64
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "64.75",
+      "afterMultiplierDecimal": "64.75"
+    },
+    {
+      "id": "255/256/0/1/mini/false/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 64.75,
+        "afterMultiplier": 64.75,
+        "afterRounding": 65,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 65
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "64.75",
+      "afterMultiplierDecimal": "64.75"
+    },
+    {
+      "id": "255/256/0/1/mini/true/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 64.75,
+        "afterMultiplier": 64.75,
+        "afterRounding": 64,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 69
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "64.75",
+      "afterMultiplierDecimal": "64.75"
+    },
+    {
+      "id": "255/256/0/1/mini/true/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 64.75,
+        "afterMultiplier": 64.75,
+        "afterRounding": 65,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 70
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "64.75",
+      "afterMultiplierDecimal": "64.75"
+    },
+    {
+      "id": "255/256/0/1/normal/false/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 194.25,
+        "afterMultiplier": 194.25,
+        "afterRounding": 194,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 194
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "194.25",
+      "afterMultiplierDecimal": "194.25"
+    },
+    {
+      "id": "255/256/0/1/normal/false/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 194.25,
+        "afterMultiplier": 194.25,
+        "afterRounding": 195,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 195
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "194.25",
+      "afterMultiplierDecimal": "194.25"
+    },
+    {
+      "id": "255/256/0/1/normal/true/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 194.25,
+        "afterMultiplier": 194.25,
+        "afterRounding": 194,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 199
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "194.25",
+      "afterMultiplierDecimal": "194.25"
+    },
+    {
+      "id": "255/256/0/1/normal/true/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 194.25,
+        "afterMultiplier": 194.25,
+        "afterRounding": 195,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 200
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "194.25",
+      "afterMultiplierDecimal": "194.25"
+    },
+    {
+      "id": "255/256/0/2/none/false/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 64.75,
+        "afterMultiplier": 64.75,
+        "afterRounding": 64,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [
+          85,
+          85,
+          85
+        ],
+        "outgoingBeforeCancel": 319
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "64.75",
+      "afterMultiplierDecimal": "64.75"
+    },
+    {
+      "id": "255/256/0/2/none/false/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 64.75,
+        "afterMultiplier": 64.75,
+        "afterRounding": 64,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [
+          85,
+          85,
+          85
+        ],
+        "outgoingBeforeCancel": 319
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "64.75",
+      "afterMultiplierDecimal": "64.75"
+    },
+    {
+      "id": "255/256/0/2/none/true/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 129.5,
+        "afterMultiplier": 129.5,
+        "afterRounding": 129,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 134
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "129.5",
+      "afterMultiplierDecimal": "129.5"
+    },
+    {
+      "id": "255/256/0/2/none/true/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 129.5,
+        "afterMultiplier": 129.5,
+        "afterRounding": 129,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 134
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "129.5",
+      "afterMultiplierDecimal": "129.5"
+    },
+    {
+      "id": "255/256/0/2/mini/false/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 129.5,
+        "afterMultiplier": 129.5,
+        "afterRounding": 129,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 129
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "129.5",
+      "afterMultiplierDecimal": "129.5"
+    },
+    {
+      "id": "255/256/0/2/mini/false/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 129.5,
+        "afterMultiplier": 129.5,
+        "afterRounding": 130,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 130
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "129.5",
+      "afterMultiplierDecimal": "129.5"
+    },
+    {
+      "id": "255/256/0/2/mini/true/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 129.5,
+        "afterMultiplier": 129.5,
+        "afterRounding": 129,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 134
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "129.5",
+      "afterMultiplierDecimal": "129.5"
+    },
+    {
+      "id": "255/256/0/2/mini/true/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 129.5,
+        "afterMultiplier": 129.5,
+        "afterRounding": 130,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 135
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "129.5",
+      "afterMultiplierDecimal": "129.5"
+    },
+    {
+      "id": "255/256/0/2/normal/false/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 323.75,
+        "afterMultiplier": 323.75,
+        "afterRounding": 323,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 323
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "323.75",
+      "afterMultiplierDecimal": "323.75"
+    },
+    {
+      "id": "255/256/0/2/normal/false/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 323.75,
+        "afterMultiplier": 323.75,
+        "afterRounding": 324,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 324
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "323.75",
+      "afterMultiplierDecimal": "323.75"
+    },
+    {
+      "id": "255/256/0/2/normal/true/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 323.75,
+        "afterMultiplier": 323.75,
+        "afterRounding": 323,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 328
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "323.75",
+      "afterMultiplierDecimal": "323.75"
+    },
+    {
+      "id": "255/256/0/2/normal/true/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 323.75,
+        "afterMultiplier": 323.75,
+        "afterRounding": 324,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 329
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "323.75",
+      "afterMultiplierDecimal": "323.75"
+    },
+    {
+      "id": "255/256/0/3/none/false/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 129.5,
+        "afterMultiplier": 129.5,
+        "afterRounding": 129,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [
+          85,
+          85,
+          85
+        ],
+        "outgoingBeforeCancel": 384
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "129.5",
+      "afterMultiplierDecimal": "129.5"
+    },
+    {
+      "id": "255/256/0/3/none/false/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 129.5,
+        "afterMultiplier": 129.5,
+        "afterRounding": 129,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [
+          85,
+          85,
+          85
+        ],
+        "outgoingBeforeCancel": 384
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "129.5",
+      "afterMultiplierDecimal": "129.5"
+    },
+    {
+      "id": "255/256/0/3/none/true/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 194.25,
+        "afterMultiplier": 194.25,
+        "afterRounding": 194,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 199
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "194.25",
+      "afterMultiplierDecimal": "194.25"
+    },
+    {
+      "id": "255/256/0/3/none/true/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 194.25,
+        "afterMultiplier": 194.25,
+        "afterRounding": 194,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 199
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "194.25",
+      "afterMultiplierDecimal": "194.25"
+    },
+    {
+      "id": "255/256/0/3/mini/false/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 194.25,
+        "afterMultiplier": 194.25,
+        "afterRounding": 194,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 194
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "194.25",
+      "afterMultiplierDecimal": "194.25"
+    },
+    {
+      "id": "255/256/0/3/mini/false/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 194.25,
+        "afterMultiplier": 194.25,
+        "afterRounding": 195,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 195
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "194.25",
+      "afterMultiplierDecimal": "194.25"
+    },
+    {
+      "id": "255/256/0/3/mini/true/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 194.25,
+        "afterMultiplier": 194.25,
+        "afterRounding": 194,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 199
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "194.25",
+      "afterMultiplierDecimal": "194.25"
+    },
+    {
+      "id": "255/256/0/3/mini/true/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 194.25,
+        "afterMultiplier": 194.25,
+        "afterRounding": 195,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 200
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "194.25",
+      "afterMultiplierDecimal": "194.25"
+    },
+    {
+      "id": "255/256/0/3/normal/false/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 453.25,
+        "afterMultiplier": 453.25,
+        "afterRounding": 453,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 453
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "453.25",
+      "afterMultiplierDecimal": "453.25"
+    },
+    {
+      "id": "255/256/0/3/normal/false/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 453.25,
+        "afterMultiplier": 453.25,
+        "afterRounding": 454,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 454
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "453.25",
+      "afterMultiplierDecimal": "453.25"
+    },
+    {
+      "id": "255/256/0/3/normal/true/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 453.25,
+        "afterMultiplier": 453.25,
+        "afterRounding": 453,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 458
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "453.25",
+      "afterMultiplierDecimal": "453.25"
+    },
+    {
+      "id": "255/256/0/3/normal/true/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 453.25,
+        "afterMultiplier": 453.25,
+        "afterRounding": 454,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 459
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "453.25",
+      "afterMultiplierDecimal": "453.25"
+    },
+    {
+      "id": "255/256/0/4/none/false/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 323.75,
+        "afterMultiplier": 323.75,
+        "afterRounding": 323,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 323
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "323.75",
+      "afterMultiplierDecimal": "323.75"
+    },
+    {
+      "id": "255/256/0/4/none/false/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 323.75,
+        "afterMultiplier": 323.75,
+        "afterRounding": 324,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 324
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "323.75",
+      "afterMultiplierDecimal": "323.75"
+    },
+    {
+      "id": "255/256/0/4/none/true/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 323.75,
+        "afterMultiplier": 323.75,
+        "afterRounding": 323,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 328
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "323.75",
+      "afterMultiplierDecimal": "323.75"
+    },
+    {
+      "id": "255/256/0/4/none/true/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 323.75,
+        "afterMultiplier": 323.75,
+        "afterRounding": 324,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 329
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "323.75",
+      "afterMultiplierDecimal": "323.75"
+    },
+    {
+      "id": "255/256/0/4/mini/false/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 712.25,
+        "afterMultiplier": 712.25,
+        "afterRounding": 712,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 712
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "712.25",
+      "afterMultiplierDecimal": "712.25"
+    },
+    {
+      "id": "255/256/0/4/mini/false/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 712.25,
+        "afterMultiplier": 712.25,
+        "afterRounding": 713,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 713
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "712.25",
+      "afterMultiplierDecimal": "712.25"
+    },
+    {
+      "id": "255/256/0/4/mini/true/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 712.25,
+        "afterMultiplier": 712.25,
+        "afterRounding": 712,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 717
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "712.25",
+      "afterMultiplierDecimal": "712.25"
+    },
+    {
+      "id": "255/256/0/4/mini/true/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 712.25,
+        "afterMultiplier": 712.25,
+        "afterRounding": 713,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 718
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "712.25",
+      "afterMultiplierDecimal": "712.25"
+    },
+    {
+      "id": "255/256/0/4/normal/false/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 712.25,
+        "afterMultiplier": 712.25,
+        "afterRounding": 712,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 712
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "712.25",
+      "afterMultiplierDecimal": "712.25"
+    },
+    {
+      "id": "255/256/0/4/normal/false/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 712.25,
+        "afterMultiplier": 712.25,
+        "afterRounding": 713,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 713
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "712.25",
+      "afterMultiplierDecimal": "712.25"
+    },
+    {
+      "id": "255/256/0/4/normal/true/false",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 712.25,
+        "afterMultiplier": 712.25,
+        "afterRounding": 712,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 717
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "712.25",
+      "afterMultiplierDecimal": "712.25"
+    },
+    {
+      "id": "255/256/0/4/normal/true/true",
+      "before": {
+        "combo": 255,
+        "b2b": 256
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 0,
+      "multiplier": 1,
+      "expectedAttack": {
+        "raw": 712.25,
+        "afterMultiplier": 712.25,
+        "afterRounding": 713,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 718
+      },
+      "expectedChain": {
+        "comboBefore": 255,
+        "comboAfter": 256,
+        "b2bBefore": 256,
+        "b2bAfter": 257,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1",
+      "rawDecimal": "712.25",
+      "afterMultiplierDecimal": "712.25"
+    },
+    {
+      "id": "256/3/10801/0/none/false/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 0,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 0,
+        "afterMultiplier": 0,
+        "afterRounding": 0,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 0
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 0,
+        "b2bBefore": 3,
+        "b2bAfter": 3,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "0",
+      "afterMultiplierDecimal": "0"
+    },
+    {
+      "id": "256/3/10801/0/mini/false/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 0,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 0,
+        "afterMultiplier": 0,
+        "afterRounding": 0,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 0
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 0,
+        "b2bBefore": 3,
+        "b2bAfter": 3,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "0",
+      "afterMultiplierDecimal": "0"
+    },
+    {
+      "id": "256/3/10801/0/normal/false/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 0,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 0,
+        "afterMultiplier": 0,
+        "afterRounding": 0,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 0
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 0,
+        "b2bBefore": 3,
+        "b2bAfter": 3,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "0",
+      "afterMultiplierDecimal": "0"
+    },
+    {
+      "id": "256/3/10801/1/none/false/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 5.771441123130016,
+        "afterMultiplier": 5.7722106486130995,
+        "afterRounding": 5,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 5
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "5.771441123130016",
+      "afterMultiplierDecimal": "5.7722106486130995"
+    },
+    {
+      "id": "256/3/10801/1/none/false/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 5.771441123130016,
+        "afterMultiplier": 5.7722106486130995,
+        "afterRounding": 5,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 5
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "5.771441123130016",
+      "afterMultiplierDecimal": "5.7722106486130995"
+    },
+    {
+      "id": "256/3/10801/1/none/true/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 65,
+        "afterMultiplier": 65.00866666666667,
+        "afterRounding": 65,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 70
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "65",
+      "afterMultiplierDecimal": "65.00866666666667"
+    },
+    {
+      "id": "256/3/10801/1/none/true/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 65,
+        "afterMultiplier": 65.00866666666667,
+        "afterRounding": 65,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 70
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "65",
+      "afterMultiplierDecimal": "65.00866666666667"
+    },
+    {
+      "id": "256/3/10801/1/mini/false/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 65,
+        "afterMultiplier": 65.00866666666667,
+        "afterRounding": 65,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 65
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "65",
+      "afterMultiplierDecimal": "65.00866666666667"
+    },
+    {
+      "id": "256/3/10801/1/mini/false/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 65,
+        "afterMultiplier": 65.00866666666667,
+        "afterRounding": 66,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 66
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "65",
+      "afterMultiplierDecimal": "65.00866666666667"
+    },
+    {
+      "id": "256/3/10801/1/mini/true/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 65,
+        "afterMultiplier": 65.00866666666667,
+        "afterRounding": 65,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 70
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "65",
+      "afterMultiplierDecimal": "65.00866666666667"
+    },
+    {
+      "id": "256/3/10801/1/mini/true/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 65,
+        "afterMultiplier": 65.00866666666667,
+        "afterRounding": 66,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 71
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "65",
+      "afterMultiplierDecimal": "65.00866666666667"
+    },
+    {
+      "id": "256/3/10801/1/normal/false/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 195,
+        "afterMultiplier": 195.026,
+        "afterRounding": 195,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 195
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "195",
+      "afterMultiplierDecimal": "195.026"
+    },
+    {
+      "id": "256/3/10801/1/normal/false/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 195,
+        "afterMultiplier": 195.026,
+        "afterRounding": 196,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 196
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "195",
+      "afterMultiplierDecimal": "195.026"
+    },
+    {
+      "id": "256/3/10801/1/normal/true/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 195,
+        "afterMultiplier": 195.026,
+        "afterRounding": 195,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 200
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "195",
+      "afterMultiplierDecimal": "195.026"
+    },
+    {
+      "id": "256/3/10801/1/normal/true/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 1,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 195,
+        "afterMultiplier": 195.026,
+        "afterRounding": 196,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 201
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "195",
+      "afterMultiplierDecimal": "195.026"
+    },
+    {
+      "id": "256/3/10801/2/none/false/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 65,
+        "afterMultiplier": 65.00866666666667,
+        "afterRounding": 65,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 65
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "65",
+      "afterMultiplierDecimal": "65.00866666666667"
+    },
+    {
+      "id": "256/3/10801/2/none/false/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 65,
+        "afterMultiplier": 65.00866666666667,
+        "afterRounding": 65,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 65
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "65",
+      "afterMultiplierDecimal": "65.00866666666667"
+    },
+    {
+      "id": "256/3/10801/2/none/true/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 130,
+        "afterMultiplier": 130.01733333333334,
+        "afterRounding": 130,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 135
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "130",
+      "afterMultiplierDecimal": "130.01733333333334"
+    },
+    {
+      "id": "256/3/10801/2/none/true/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 130,
+        "afterMultiplier": 130.01733333333334,
+        "afterRounding": 130,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 135
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "130",
+      "afterMultiplierDecimal": "130.01733333333334"
+    },
+    {
+      "id": "256/3/10801/2/mini/false/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 130,
+        "afterMultiplier": 130.01733333333334,
+        "afterRounding": 130,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 130
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "130",
+      "afterMultiplierDecimal": "130.01733333333334"
+    },
+    {
+      "id": "256/3/10801/2/mini/false/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 130,
+        "afterMultiplier": 130.01733333333334,
+        "afterRounding": 131,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 131
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "130",
+      "afterMultiplierDecimal": "130.01733333333334"
+    },
+    {
+      "id": "256/3/10801/2/mini/true/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 130,
+        "afterMultiplier": 130.01733333333334,
+        "afterRounding": 130,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 135
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "130",
+      "afterMultiplierDecimal": "130.01733333333334"
+    },
+    {
+      "id": "256/3/10801/2/mini/true/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 130,
+        "afterMultiplier": 130.01733333333334,
+        "afterRounding": 131,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 136
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "130",
+      "afterMultiplierDecimal": "130.01733333333334"
+    },
+    {
+      "id": "256/3/10801/2/normal/false/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 325,
+        "afterMultiplier": 325.04333333333335,
+        "afterRounding": 325,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 325
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "325",
+      "afterMultiplierDecimal": "325.04333333333335"
+    },
+    {
+      "id": "256/3/10801/2/normal/false/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 325,
+        "afterMultiplier": 325.04333333333335,
+        "afterRounding": 326,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 326
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "325",
+      "afterMultiplierDecimal": "325.04333333333335"
+    },
+    {
+      "id": "256/3/10801/2/normal/true/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 325,
+        "afterMultiplier": 325.04333333333335,
+        "afterRounding": 325,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 330
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "325",
+      "afterMultiplierDecimal": "325.04333333333335"
+    },
+    {
+      "id": "256/3/10801/2/normal/true/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 2,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 325,
+        "afterMultiplier": 325.04333333333335,
+        "afterRounding": 326,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 331
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "325",
+      "afterMultiplierDecimal": "325.04333333333335"
+    },
+    {
+      "id": "256/3/10801/3/none/false/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 130,
+        "afterMultiplier": 130.01733333333334,
+        "afterRounding": 130,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 130
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "130",
+      "afterMultiplierDecimal": "130.01733333333334"
+    },
+    {
+      "id": "256/3/10801/3/none/false/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 130,
+        "afterMultiplier": 130.01733333333334,
+        "afterRounding": 130,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 130
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 0,
+        "brokeB2b": true
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "130",
+      "afterMultiplierDecimal": "130.01733333333334"
+    },
+    {
+      "id": "256/3/10801/3/none/true/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 195,
+        "afterMultiplier": 195.026,
+        "afterRounding": 195,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 200
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "195",
+      "afterMultiplierDecimal": "195.026"
+    },
+    {
+      "id": "256/3/10801/3/none/true/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 195,
+        "afterMultiplier": 195.026,
+        "afterRounding": 195,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 200
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "195",
+      "afterMultiplierDecimal": "195.026"
+    },
+    {
+      "id": "256/3/10801/3/mini/false/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 195,
+        "afterMultiplier": 195.026,
+        "afterRounding": 195,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 195
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "195",
+      "afterMultiplierDecimal": "195.026"
+    },
+    {
+      "id": "256/3/10801/3/mini/false/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 195,
+        "afterMultiplier": 195.026,
+        "afterRounding": 196,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 196
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "195",
+      "afterMultiplierDecimal": "195.026"
+    },
+    {
+      "id": "256/3/10801/3/mini/true/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 195,
+        "afterMultiplier": 195.026,
+        "afterRounding": 195,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 200
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "195",
+      "afterMultiplierDecimal": "195.026"
+    },
+    {
+      "id": "256/3/10801/3/mini/true/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 195,
+        "afterMultiplier": 195.026,
+        "afterRounding": 196,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 201
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "195",
+      "afterMultiplierDecimal": "195.026"
+    },
+    {
+      "id": "256/3/10801/3/normal/false/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 455,
+        "afterMultiplier": 455.06066666666663,
+        "afterRounding": 455,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 455
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "455",
+      "afterMultiplierDecimal": "455.06066666666663"
+    },
+    {
+      "id": "256/3/10801/3/normal/false/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 455,
+        "afterMultiplier": 455.06066666666663,
+        "afterRounding": 456,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 456
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "455",
+      "afterMultiplierDecimal": "455.06066666666663"
+    },
+    {
+      "id": "256/3/10801/3/normal/true/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 455,
+        "afterMultiplier": 455.06066666666663,
+        "afterRounding": 455,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 460
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "455",
+      "afterMultiplierDecimal": "455.06066666666663"
+    },
+    {
+      "id": "256/3/10801/3/normal/true/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 3,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 455,
+        "afterMultiplier": 455.06066666666663,
+        "afterRounding": 456,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 461
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "455",
+      "afterMultiplierDecimal": "455.06066666666663"
+    },
+    {
+      "id": "256/3/10801/4/none/false/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 325,
+        "afterMultiplier": 325.04333333333335,
+        "afterRounding": 325,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 325
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "325",
+      "afterMultiplierDecimal": "325.04333333333335"
+    },
+    {
+      "id": "256/3/10801/4/none/false/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "none",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 325,
+        "afterMultiplier": 325.04333333333335,
+        "afterRounding": 326,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 326
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "325",
+      "afterMultiplierDecimal": "325.04333333333335"
+    },
+    {
+      "id": "256/3/10801/4/none/true/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 325,
+        "afterMultiplier": 325.04333333333335,
+        "afterRounding": 325,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 330
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "325",
+      "afterMultiplierDecimal": "325.04333333333335"
+    },
+    {
+      "id": "256/3/10801/4/none/true/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "none",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 325,
+        "afterMultiplier": 325.04333333333335,
+        "afterRounding": 326,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 331
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "325",
+      "afterMultiplierDecimal": "325.04333333333335"
+    },
+    {
+      "id": "256/3/10801/4/mini/false/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 715,
+        "afterMultiplier": 715.0953333333333,
+        "afterRounding": 715,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 715
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "715",
+      "afterMultiplierDecimal": "715.0953333333333"
+    },
+    {
+      "id": "256/3/10801/4/mini/false/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "mini",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 715,
+        "afterMultiplier": 715.0953333333333,
+        "afterRounding": 716,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 716
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "715",
+      "afterMultiplierDecimal": "715.0953333333333"
+    },
+    {
+      "id": "256/3/10801/4/mini/true/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 715,
+        "afterMultiplier": 715.0953333333333,
+        "afterRounding": 715,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 720
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "715",
+      "afterMultiplierDecimal": "715.0953333333333"
+    },
+    {
+      "id": "256/3/10801/4/mini/true/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "mini",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 715,
+        "afterMultiplier": 715.0953333333333,
+        "afterRounding": 716,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 721
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "715",
+      "afterMultiplierDecimal": "715.0953333333333"
+    },
+    {
+      "id": "256/3/10801/4/normal/false/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 715,
+        "afterMultiplier": 715.0953333333333,
+        "afterRounding": 715,
+        "specialBonus": 0,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 715
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "715",
+      "afterMultiplierDecimal": "715.0953333333333"
+    },
+    {
+      "id": "256/3/10801/4/normal/false/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "normal",
+        "perfectClear": false,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 715,
+        "afterMultiplier": 715.0953333333333,
+        "afterRounding": 716,
+        "specialBonus": 1,
+        "perfectClearBonus": 0,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 716
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "715",
+      "afterMultiplierDecimal": "715.0953333333333"
+    },
+    {
+      "id": "256/3/10801/4/normal/true/false",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": false
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 715,
+        "afterMultiplier": 715.0953333333333,
+        "afterRounding": 715,
+        "specialBonus": 0,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 720
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "715",
+      "afterMultiplierDecimal": "715.0953333333333"
+    },
+    {
+      "id": "256/3/10801/4/normal/true/true",
+      "before": {
+        "combo": 256,
+        "b2b": 3
+      },
+      "clear": {
+        "lines": 4,
+        "spin": "normal",
+        "perfectClear": true,
+        "clearedAnyG": true
+      },
+      "frame": 10801,
+      "multiplier": 1.0001333333333333,
+      "expectedAttack": {
+        "raw": 715,
+        "afterMultiplier": 715.0953333333333,
+        "afterRounding": 716,
+        "specialBonus": 1,
+        "perfectClearBonus": 5,
+        "surgeChunks": [],
+        "outgoingBeforeCancel": 721
+      },
+      "expectedChain": {
+        "comboBefore": 256,
+        "comboAfter": 257,
+        "b2bBefore": 3,
+        "b2bAfter": 4,
+        "brokeB2b": false
+      },
+      "multiplierDecimal": "1.0001333333333333",
+      "rawDecimal": "715",
+      "afterMultiplierDecimal": "715.0953333333333"
+    }
+  ]
+}

@@ -21,6 +21,9 @@ const entryPoints = [
   "cc2-gui/static-entry.mjs",
   "cc2-gui/cc2-worker.mjs",
   "src-js/cc2-wasm-engine.mjs",
+  // Started by native-input-runtime.mjs through `new Worker(new URL(...))`,
+  // which the import scan does not follow.
+  "src-js/input-resolution-worker.mjs",
   "scripts/cs1.mjs",
   "scripts/wasm-engine.mjs",
   "scripts/build-pages.mjs",
@@ -52,6 +55,22 @@ const fixedAssets = [
   "THIRD_PARTY_LICENSES.md",
   "fixtures/benchmark/search-v1.json",
   "fixtures/tuning/cc2-s2-initial-weight-grid.json",
+  // Compiled into the F14 core (`include_str!` in f14_compat/transport.rs).
+  "fixtures/tuning/cc2-s2-r3-core-allspin-v1-candidate.json",
+  "fixtures/tuning/cc2-s2-s1a-mini-spin-single-06.json",
+  // Read by the bot crate's own tests (include_str! or a fixed path), so the
+  // published crate's test targets build and run.
+  "fixtures/tuning/cc2-s2-a0-amount-top-out-cost.json",
+  "fixtures/tuning/cc2-s2-post-r3-s2-b2b-surge-search-state-candidate.json",
+  "fixtures/tuning/cc2-s2-post-r3-s3-incoming-cancel-state-only-r3-base.json",
+  "fixtures/diagnostics/cc2-s2-f14-amount-only-native-compat-p2-ranking.json",
+  "fixtures/diagnostics/cc2-s2-f14-amount-only-native-compat-p3.json",
+  "fixtures/diagnostics/cc2-s2-f14-amount-only-native-compat-p4.json",
+  "fixtures/diagnostics/cc2-s2-f14-amount-only-native-compat-p5.json",
+  "fixtures/diagnostics/cc2-s2-native-transition-cases.json",
+  "fixtures/diagnostics/f14-core-allspin-rescue-request.json",
+  "fixtures/diagnostics/f14-public-rescue.json",
+  "fixtures/diagnostics/f14-public-search-rescue-request.json",
   "fixtures/tuning/cc2-s2-spin-value-aligned.json",
   "fixtures/tuning/cc2-s2-spawn-integrity-substrate-v2.json",
   "package-lock.json",

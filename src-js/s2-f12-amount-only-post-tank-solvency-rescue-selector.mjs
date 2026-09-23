@@ -1,4 +1,5 @@
 import { applyTransition } from "./transition.mjs";
+import {noteStrategicCall} from './s2-strategic-audit.mjs';
 import { fullStateKey } from "./state-keys.mjs";
 import {
   S2_AMOUNT_ONLY_CONVERSION_POLICY,
@@ -11,6 +12,7 @@ export const S2_F12_POST_TANK_SOLVENCY_RESCUE_SELECTOR_POLICY_V2 =
   "f12-control-with-amount-only-post-tank-solvency-rescue/1";
 
 export function chooseS2F12AmountOnlyPostTankSolvencyRescue(candidates) {
+  noteStrategicCall('legacyF14RescueCalls');
   if (!Array.isArray(candidates) || candidates.length === 0) {
     throw new Error("amount-only F14 rescue requires F12-ranked candidates");
   }

@@ -1,0 +1,19 @@
+{
+  "engineId": "s2-cc2-integrated/1",
+  "schemaVersion": 2,
+  "stateModel": "s2-public-phantom-tank-key/1",
+  "tankModel": "unknown-shape-scalar-cumulative-pressure-only/1",
+  "rulesHash": "sha256:2c47b3df945f6714449b92d1b44346ef4bf0e1a20e95be8ed10c28be75c66a60",
+  "amountModel": "canonical-u32-outgoing-all-remaining-due-next-lock/1",
+  "clockModel": "frozen-root-rules/1",
+  "randomizerModel": "known-next-only/1",
+  "movement": "native-s2-final-placement/1",
+  "featureVersion": "s2-cc2-h-r-features/1",
+  "tsdWitnessModel": "normal-entry-first-64-public-t/1",
+  "maxKnownNext": 13,
+  "workerConcurrency": 1,
+  "speculate": false,
+  "resourceModel": "s2-precommit-charge/1",
+  "queueWindowModel": "explicit-current-inclusive-prefix/1",
+  "boundaryAuditModel": "request-local-strategic-entry-counters/1"
+}

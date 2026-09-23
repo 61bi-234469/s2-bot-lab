@@ -14,6 +14,8 @@ import { humanEngineHandling } from '../cc2-gui/human-controls.mjs';
 import { HANDICAP_GARBAGE_ID, handicapColumnHeights, handicapGarbageCells,
   handicapRecord, normalizeHandicapGarbage } from './gui-1p-handicap-garbage.mjs';
 import { normalizeTurnMatch } from './gui-turn-match.mjs';
+import { championInputMoves, createChampionInputRequest } from './input-champion-decision.mjs';
+import { assertChampionParameters, championVisibleState, createChampionProfile } from './champion-parameters.mjs';
 
 const IDS = ['left', 'right'];
 const KEYS = new Set(['moveLeft', 'moveRight', 'softDrop', 'hardDrop', 'rotateCW', 'rotateCCW', 'rotate180', 'hold']);
@@ -21,9 +23,13 @@ const equal = (a, b) => canonicalize(a) === canonicalize(b);
 const paceFrame = value => Math.ceil(value - 1e-9);
 const pieceIdentity = state => ({ board: state.decision.board, pieces: state.decision.pieces,
   chain: state.decision.chain, piecesPlaced: state.decision.lockTime.piecesPlaced });
+// The champion decides through the F14 core, whose amount-only selector reads
+// incoming rows; a CC2 proposal never sees them.
+const F14_CORE_TYPES = new Set(['cc2-s2-champion']);
 const nativeInputState = (decision, parameters, type) => ({
   ...guiStateToCc2NativeStart(decisionStateToSyntheticGui(decision), { queueLimit: parameters.queueDepth }),
   ...(['cc2-raw', 'cc2-chouhy'].includes(type) ? { input_candidates: true } : {}),
+  ...(F14_CORE_TYPES.has(type) ? { incoming: structuredClone(decision.incoming) } : {}),
 });
 const normalizeStallPenalty = (value, humanSide) => {
   const enabled = value?.enabled === true;
@@ -84,6 +90,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           }
           if (!runtime) throw new Error('input CC2 runtime unavailable');
           const parameters = Object.fromEntries(IDS.map(id => [id, normalizeBotParameters(types[id], body[`${id}Parameters`])]));
+          for (const id of IDS) if (F14_CORE_TYPES.has(types[id])) assertChampionParameters(parameters[id]);
           const humanSide = types.left === 'human' ? 'left' : null;
           const stallPenalty = normalizeStallPenalty(body.stallLock, humanSide);
           const handicap = normalizeHandicapGarbage(body.handicap, { humanSide });
@@ -117,7 +124,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
               stallPenaltyForgivenessId: stallPenalty.enabled && stallPenalty.penalty === 'penalty-line' ? 'left' : null,
               initialGarbageById: handicapTerrain === null ? {} : { [humanSide]: handicapGarbageCells(handicapTerrain) },
               handlingById: types.left === 'human' ? { left: humanEngineHandling(body.humanControls) } : {} }), closed: false, failure: null,
-            jobs: {}, ready: {}, plans: {}, proposals: {}, pathWaits: {}, lastLock: {}, misses: {}, leadFrames: {}, paceDeadline: {}, saved: null, maxTurns: body.maxTurns ?? null,
+            jobs: {}, ready: {}, plans: {}, proposals: {}, f14Requests: 0, pathWaits: {}, lastLock: {}, misses: {}, leadFrames: {}, paceDeadline: {}, saved: null, maxTurns: body.maxTurns ?? null,
             selections: {}, stallPenalty: { ...stallPenalty, rows: 0,
               forcedLockPending: false, dueFrame: stallPenalty.enabled ? 60 / stallPenalty.pps : null },
             diagnostics: Object.fromEntries(IDS.map(id => [id,
@@ -168,6 +175,9 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
               adopt(session, id);
               const plan = session.plans[id];
               if (plan) inputs[id] = plan.events.filter(event => event.frame === frame);
+              else if (turnLockSubstitutesGravity(session, id)) {
+                inputs[id] = ['keydown', 'keyup'].map(type => ({ frame, type, data: { key: 'hardDrop', subframe: 0 } }));
+              }
             }
             if (session.types.left === 'human') {
               inputs.left = [];
@@ -289,6 +299,22 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
     stall.dueFrame = session.round.frame + 60 / stall.pps;
     if (stall.penalty === 'forced-lock' && session.round.status === 'active') stall.forcedLockPending = true;
   }
+  /* Both no-input outcomes below wait for gravity to lock the piece where it
+     stands. A turn match switches gravity off, so that lock would never come
+     and a bot with no placement left could never top out. On its own turn the
+     piece is hard-dropped instead: the same straight-down resting place a
+     natural lock reaches, only without the wait, so a piece with nowhere to go
+     below the ceiling ends the round exactly as it would with gravity on. */
+  function turnLockSubstitutesGravity(session, id) {
+    if (!session.turnMatch.enabled || session.round.naturalGravity || !turnAllowsLock(session, id) ||
+        session.jobs[id] || session.ready[id]) return false;
+    const latest = session.round.publicState(id);
+    const identity = pieceIdentity(latest);
+    if (session.pathWaits[id] && equal(session.pathWaits[id], identity)) return true;
+    const proposed = session.proposals[id];
+    return proposed?.status === 'no-input' && equal(proposed.identity, identity) &&
+      equal(proposed.state, nativeInputState(latest.decision, session.parameters[id], session.types[id]));
+  }
   function adopt(session, id) {
     const ready = session.ready[id];
     if (!ready) return;
@@ -365,7 +391,23 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
         delete session.proposals[id];
         const savedState = structuredClone(state);
         let response;
-        try { response = await runtime.propose({ sessionKey, engine: type, state,
+        if (F14_CORE_TYPES.has(type)) {
+          // The same SELECTION / THINK TIME / QUEUE DEPTH the other CC2 bots
+          // take here; THINK TIME is fitted to the pace like theirs.
+          const profile = createChampionProfile({ ...parameters, thinkMs: !parameters.thinkTimeEnabled ? parameters.thinkMs
+            : session.turnMatch.enabled || parameters.ppsEnabled === false ? parameters.thinkMs
+              : realtimeCc2ThinkMs({ thinkMs: parameters.thinkMs, stepFrames: interval }) });
+          const decided = await runtime.decideF14({ sessionKey, type, engine: { botType: type, engineId: type },
+            request: createChampionInputRequest(championVisibleState(initial.decision, parameters.queueDepth),
+              { requestId: `f14-input-${++session.f14Requests}`, profile, queueDepth: parameters.queueDepth }),
+            profile });
+          // No legal placement is no controller input, as for CC2. The core
+          // reports it as root-no-move before search or empty-candidates after
+          // it; the champion screen runner counts both as terminal.
+          proposed = decided.status === 'root-no-move' || (decided.status === 'error' && decided.reason === 'empty-candidates')
+            ? { identity, state: savedState, status: 'no-input', evidence: { status: decided.status, reason: decided.reason } }
+            : { identity, state: savedState, moves: championInputMoves(decided, initial.decision.pieces) };
+        } else try { response = await runtime.propose({ sessionKey, engine: type, state,
           selectionLimit: parameters.selectionEnabled ? parameters.selectionLimit : null,
           thinkMs: !parameters.thinkTimeEnabled ? null : session.turnMatch.enabled || parameters.ppsEnabled === false ? parameters.thinkMs :
             realtimeCc2ThinkMs({ thinkMs: parameters.thinkMs, stepFrames: interval }) });

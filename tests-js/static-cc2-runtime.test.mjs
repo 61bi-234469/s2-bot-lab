@@ -119,6 +119,60 @@ test("static CC2 runtime sends suggest and resolve through one retained worker",
   assert.equal(messages.at(-1).type, "close");
 });
 
+test("static CC2 runtime starts a champion worker for decideF14 and forwards identity", async () => {
+  const messages = [];
+  class FakeWorker {
+    postMessage(message) {
+      messages.push(structuredClone(message));
+      queueMicrotask(() => this.onmessage({ data: {
+        id: message.id, ok: true,
+        value: message.type === "decideF14" ? { type: "f14_decision", status: "move" } : {},
+      } }));
+    }
+    terminate() {}
+  }
+  const runtime = createStaticCc2Runtime({ WorkerType: FakeWorker });
+  const payload = {
+    sessionKey: "champion", type: "cc2-s2-champion",
+    engine: { botType: "cc2-s2-champion", engineId: "cc2-s2-champion" },
+    request: { type: "f14_decide", requestId: "test" },
+    profile: { profileId: "f14-amount-only-compat-b/1" },
+  };
+  try {
+    const response = await runtime.decideF14(payload);
+    assert.deepEqual(response, { type: "f14_decision", status: "move" });
+    assert.deepEqual(messages.map(({ type }) => type), ["init", "decideF14"]);
+    assert.deepEqual(messages.at(-1).payload, payload);
+  } finally { await runtime.closeSessions(); }
+});
+
+test("static CC2 runtime reuses a session key for the champion after another bot", async () => {
+  const messages = [];
+  class FakeWorker {
+    postMessage(message) {
+      messages.push(structuredClone(message));
+      queueMicrotask(() => this.onmessage({ data: {
+        id: message.id, ok: true,
+        value: message.type === "decideF14" ? { type: "f14_decision", status: "move" }
+          : message.type === "suggest" ? { moves: [] } : {},
+      } }));
+    }
+    terminate() {}
+  }
+  const runtime = createStaticCc2Runtime({ WorkerType: FakeWorker });
+  try {
+    // The analysis deck asks F14 first, then the champion, on the same key.
+    await runtime.propose({ sessionKey: "analysis", engine: "cc2-s2-f14", state: {}, selectionLimit: null, thinkMs: 100 });
+    const response = await runtime.decideF14({ sessionKey: "analysis", type: "cc2-s2-champion",
+      engine: { botType: "cc2-s2-champion", engineId: "cc2-s2-champion" }, request: {}, profile: {} });
+    assert.equal(response.status, "move");
+    assert.deepEqual(messages.filter(({ type }) => type === "init").map(({ payload }) => payload.engine),
+      ["cc2-s2-f14", "cc2-s2-champion"]);
+    await assert.rejects(runtime.decideF14({ sessionKey: "analysis", type: "cc2-s2-champion",
+      engine: { botType: "cc2-s2-champion", engineId: "other" }, request: {}, profile: {} }), /identity mismatch/);
+  } finally { await runtime.closeSessions(); }
+});
+
 test("static runtime forwards native-order Raw/chouhy requests to the worker", async () => {
   const messages = [];
   class FakeWorker {

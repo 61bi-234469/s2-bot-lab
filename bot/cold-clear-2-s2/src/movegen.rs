@@ -21,7 +21,7 @@ pub struct CompleteRootMoves {
 ///
 /// This deliberately does not participate in `find_moves_complete`: production
 /// dominance remains keyed by `Placement`, while this expanded state retains a
-/// direct-180 bit and a deterministic predecessor solely for games-zero audits.
+/// direct-180 bit and a deterministic predecessor solely for offline audits.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Direct180RouteSearch {
@@ -406,14 +406,131 @@ pub fn find_moves_complete_with_entry(
     enable_direct_180: bool,
     entry: RootEntry,
 ) -> CompleteRootMoves {
+    find_moves_core(board, piece, enable_direct_180, entry, None)
+}
+
+/// Last-input evidence emitted from reachable states of the existing generator.
+/// Coordinates retain their actual orientation (no symmetry canonicalization).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct NativeS2Move {
+    #[serde(skip)]
+    pub(crate) source_board: std::rc::Rc<Board>,
+    pub(crate) location: PieceLocation,
+    pub(crate) spin: crate::native_s2::CanonicalSpin,
+    pub(crate) soft_drops: u32,
+    pub(crate) rotation_from: Option<PieceLocation>,
+    pub(crate) native_kick_index: Option<usize>,
+    pub(crate) native_kick_offset: Option<(i8, i8)>,
+}
+
+type NativeWitnessSink = (std::rc::Rc<Board>, Vec<NativeS2Move>);
+
+pub fn find_native_s2_moves(board: &Board, piece: Piece, entry: RootEntry) -> Vec<NativeS2Move> {
+    let mut sink = (std::rc::Rc::new(*board), Vec::new());
+    find_moves_core(board, piece, true, entry, Some(&mut sink));
+    let mut witnesses = sink.1;
+    // Stable, evidence-sensitive identity; keep the cheapest path to that identity.
+    witnesses.sort_by_key(|w| {
+        (
+            w.location.piece as u8,
+            w.location.rotation as u8,
+            w.location.x,
+            w.location.y,
+            w.spin as u8,
+            w.rotation_from.map(|p| (p.rotation as u8, p.x, p.y)),
+            w.native_kick_index,
+            w.soft_drops,
+        )
+    });
+    witnesses.dedup_by(|a, b| {
+        a.location == b.location
+            && a.spin == b.spin
+            && a.rotation_from == b.rotation_from
+            && a.native_kick_index == b.native_kick_index
+    });
+    if entry == RootEntry::SpawnBufferFallback {
+        witnesses.retain(|w| w.location.cells().iter().all(|&(_, y)| y < 20));
+    }
+    witnesses
+}
+
+fn record_s2_rotation(
+    sink: &mut Option<&mut NativeWitnessSink>,
+    board: &Board,
+    from: PieceLocation,
+    mut mv: Placement,
+    soft_drops: u32,
+) -> Placement {
+    if let Some((source, sink)) = sink.as_deref_mut() {
+        let offset = (mv.location.x - from.x, mv.location.y - from.y);
+        let spin =
+            crate::native_s2::spin_from_evidence(board, mv.location, true, from.rotation, offset);
+        mv.spin = match spin {
+            crate::native_s2::CanonicalSpin::None => Spin::None,
+            crate::native_s2::CanonicalSpin::Mini => Spin::Mini,
+            crate::native_s2::CanonicalSpin::Normal => Spin::Full,
+        };
+        if mv.location.drop_distance(board) == 0 {
+            let index = if mv.location.rotation == from.rotation.flip() {
+                let transition = direct_180_transition(from.piece, from.rotation);
+                transition
+                    .rows
+                    .iter()
+                    .take(transition.row_count as usize)
+                    .position(|row| row.native_offset == offset)
+            } else {
+                kicks(from.piece, from.rotation, mv.location.rotation)
+                    .iter()
+                    .position(|o| *o == offset)
+            };
+            sink.push(NativeS2Move {
+                source_board: source.clone(),
+                location: mv.location,
+                spin,
+                soft_drops,
+                rotation_from: Some(from),
+                native_kick_index: index,
+                native_kick_offset: Some(offset),
+            });
+        }
+    }
+    mv
+}
+
+fn record_s2_drop(
+    sink: &mut Option<&mut NativeWitnessSink>,
+    _board: &Board,
+    mv: Placement,
+    soft_drops: u32,
+) {
+    if mv.spin == Spin::None {
+        if let Some((source, sink)) = sink.as_deref_mut() {
+            sink.push(NativeS2Move {
+                source_board: source.clone(),
+                location: mv.location,
+                spin: crate::native_s2::CanonicalSpin::None,
+                soft_drops,
+                rotation_from: None,
+                native_kick_index: None,
+                native_kick_offset: None,
+            });
+        }
+    }
+}
+
+fn find_moves_core(
+    board: &Board, piece: Piece, enable_direct_180: bool, entry: RootEntry,
+    mut witnesses: Option<&mut NativeWitnessSink>,
+) -> CompleteRootMoves {
     puffin::profile_function!();
     let mut queue = BinaryHeap::new();
     let mut values = AHashMap::new();
     let mut underground_locks = AHashMap::new();
     let mut locks = Vec::with_capacity(64);
-    let collision_map = CollisionMaps::new(board, piece).with_ceiling(
+    let mut collision_map = CollisionMaps::new(board, piece).with_ceiling(
         if entry == RootEntry::SpawnBufferFallback { 21 } else { 20 },
     );
+    collision_map.canonical_rotation = witnesses.is_some();
 
     let fast_mode = board.cols.iter().all(|&c| c.leading_zeros() > 64 - 16);
     if entry == RootEntry::SpawnBufferFallback && fast_mode {
@@ -448,23 +565,29 @@ pub fn find_moves_complete_with_entry(
                     update_position(&mut queue, &mut values, fast_mode, board);
 
                 if let Some(mv) = shift(location, &collision_map, -1) {
+                    if witnesses.is_some() && mv.location.drop_distance(board)==0 { record_s2_drop(&mut witnesses,board,mv,distance as u32); }
                     update_position(mv, distance as u32);
                 }
                 if let Some(mv) = shift(location, &collision_map, 1) {
+                    if witnesses.is_some() && mv.location.drop_distance(board)==0 { record_s2_drop(&mut witnesses,board,mv,distance as u32); }
                     update_position(mv, distance as u32);
                 }
                 if let Some(mv) = rotate_cw(location, &collision_map, board) {
+                    let mv = record_s2_rotation(&mut witnesses, board, location, mv, distance as u32);
                     update_position(mv, distance as u32);
                 }
                 if let Some(mv) = rotate_ccw(location, &collision_map, board) {
+                    let mv = record_s2_rotation(&mut witnesses, board, location, mv, distance as u32);
                     update_position(mv, distance as u32);
                 }
                 if enable_direct_180 {
                     if let Some(mv) = rotate_180(location, &collision_map, board) {
+                        let mv = record_s2_rotation(&mut witnesses, board, location, mv, distance as u32);
                         update_position(mv, distance as u32);
                     }
                 }
 
+                record_s2_drop(&mut witnesses, board, mv, 0);
                 if location.canonical_form() == location {
                     locks.push((mv, 0));
                 }
@@ -490,6 +613,7 @@ pub fn find_moves_complete_with_entry(
             location: spawned,
             spin: Spin::None,
         };
+        if witnesses.is_some() && spawned.location.drop_distance(board)==0 { record_s2_drop(&mut witnesses,board,spawned,0); }
         queue.push(Intermediate {
             soft_drops: 0,
             mv: spawned,
@@ -515,6 +639,7 @@ pub fn find_moves_complete_with_entry(
             },
         };
 
+        if drop_dist>0 { record_s2_drop(&mut witnesses, board, dropped, expand.soft_drops); }
         let sds = underground_locks
             .entry(Placement {
                 location: dropped.location.canonical_form(),
@@ -528,19 +653,24 @@ pub fn find_moves_complete_with_entry(
         update_position(dropped, expand.soft_drops + drop_dist as u32);
 
         if let Some(mv) = shift(expand.mv.location, &collision_map, -1) {
+            if witnesses.is_some() && mv.location.drop_distance(board)==0 { record_s2_drop(&mut witnesses,board,mv,expand.soft_drops); }
             update_position(mv, expand.soft_drops);
         }
         if let Some(mv) = shift(expand.mv.location, &collision_map, 1) {
+            if witnesses.is_some() && mv.location.drop_distance(board)==0 { record_s2_drop(&mut witnesses,board,mv,expand.soft_drops); }
             update_position(mv, expand.soft_drops);
         }
         if let Some(mv) = rotate_cw(expand.mv.location, &collision_map, board) {
+            let mv = record_s2_rotation(&mut witnesses, board, expand.mv.location, mv, expand.soft_drops);
             update_position(mv, expand.soft_drops);
         }
         if let Some(mv) = rotate_ccw(expand.mv.location, &collision_map, board) {
+            let mv = record_s2_rotation(&mut witnesses, board, expand.mv.location, mv, expand.soft_drops);
             update_position(mv, expand.soft_drops);
         }
         if enable_direct_180 {
             if let Some(mv) = rotate_180(expand.mv.location, &collision_map, board) {
+                let mv = record_s2_rotation(&mut witnesses, board, expand.mv.location, mv, expand.soft_drops);
                 update_position(mv, expand.soft_drops);
             }
         }
@@ -743,7 +873,18 @@ fn rotate(
             y: unkicked.y + dy,
             ..unkicked
         };
-        if collision_map.obstructed(target) {
+        // An exploration ceiling is not a physical obstruction. Native S2
+        // must stop at the first kick legal on the canonical 40-row board,
+        // even if that kick cannot enter this bounded movement frontier.
+        // Legacy/F14 retain their existing proposal generation semantics.
+        if collision_map.canonical_rotation {
+            if target.obstructed(board) {
+                continue;
+            }
+            if collision_map.obstructed(target) {
+                return None;
+            }
+        } else if collision_map.obstructed(target) {
             continue;
         }
 
@@ -998,6 +1139,7 @@ impl PartialOrd for Intermediate {
 struct CollisionMaps {
     boards: [[u64; 10]; 4],
     ceiling: i8,
+    canonical_rotation: bool,
 }
 
 impl CollisionMaps {
@@ -1020,7 +1162,7 @@ impl CollisionMaps {
                 }
             }
         }
-        CollisionMaps { boards, ceiling: 20 }
+        CollisionMaps { boards, ceiling: 20, canonical_rotation: false }
     }
 
     fn with_ceiling(mut self, ceiling: i8) -> Self {
@@ -1065,6 +1207,16 @@ mod tests {
         }
     }
     #[test]
+    fn native_s2_witness_frontier_preserves_spawn_buffer_capability() {
+        let board=a3_board();
+        for piece in [Piece::L,Piece::Z] {
+            let witnesses=super::find_native_s2_moves(&board,piece,super::RootEntry::SpawnBufferFallback);
+            assert!(!witnesses.is_empty());
+            assert!(witnesses.iter().all(|w| w.location.cells().iter().all(|&(_,y)|y<20)));
+            assert_eq!(witnesses,super::find_native_s2_moves(&board,piece,super::RootEntry::SpawnBufferFallback));
+        }
+    }
+    #[test]
     fn spawn_buffer_fails_closed_when_hidden_origin_is_occupied() {
         let mut board = a3_board();
         for col in &mut board.cols { *col |= 1 << 20; }
@@ -1084,6 +1236,36 @@ mod tests {
         }
     }
 
+    #[test]
+    fn native_s2_ceiling_cannot_skip_the_first_physical_kick() {
+        // Two obstructions force the upward SRS kick at origin y21. A
+        // legal downward kick must never replace that earlier attempt.
+        let board = board_with_cells(&[(4, 19), (5, 19)]);
+        for shift in 0..=2 {
+            let board = Board { cols: board.cols.map(|c| c >> shift) };
+            let from = PieceLocation { piece: Piece::L, rotation: Rotation::North, x: 4, y: 20-shift };
+            let ceiling = if shift == 0 { 21 } else { 20 };
+            let mut map = CollisionMaps::new(&board, Piece::L).with_ceiling(ceiling);
+            let legacy = super::rotate_cw(from, &map, &board).unwrap();
+            assert_eq!(legacy.location.y, if shift < 2 { 18-shift } else { 21-shift });
+            map.canonical_rotation = true;
+            let native = super::rotate_cw(from, &map, &board);
+            if shift < 2 {
+                assert!(native.is_none());
+            } else {
+                assert_eq!(native.unwrap().location, PieceLocation { x: 3, y: 19, rotation: Rotation::East, ..from });
+            }
+        }
+        // If the earlier kick really collides, the later kick is still legal.
+        let mut blocked = board;
+        blocked.cols[3] |= 1 << 22;
+        let from = PieceLocation { piece: Piece::L, rotation: Rotation::North, x: 4, y: 20 };
+        let mut map = CollisionMaps::new(&blocked, Piece::L).with_ceiling(21);
+        map.canonical_rotation = true;
+        assert_eq!(super::rotate_cw(from, &map, &blocked).unwrap().location,
+            PieceLocation { rotation: Rotation::East, x: 3, y: 18, ..from });
+    }
+
     const ROTATIONS: [Rotation; 4] = [
         Rotation::North,
         Rotation::West,
@@ -1093,6 +1275,111 @@ mod tests {
 
     const NON_O_PIECES: [Piece; 6] = [Piece::I, Piece::T, Piece::L, Piece::J, Piece::S, Piece::Z];
 
+    #[test]
+    fn four_line_clear_cannot_be_reported_as_a_spin() {
+        // A tetromino can complete four distinct full rows only when it has
+        // exactly one cell in each row. Shape enumeration proves that the
+        // only such shape is vertical I; the loop below then covers every
+        // in-bounds I target at every wall/floor height. Each board is built
+        // with exactly those four rows one cell short, so placing the target
+        // necessarily produces a four-line clear.
+        let pieces = [Piece::I, Piece::O, Piece::T, Piece::L, Piece::J, Piece::S, Piece::Z];
+        let mut vertical_i_targets = Vec::new();
+        for piece in pieces {
+            for rotation in ROTATIONS {
+                for x in 0..10i8 {
+                    for y in 0..40i8 {
+                        let target = PieceLocation { piece, rotation, x, y };
+                        let cells = target.cells();
+                        if cells.iter().any(|&(cx, cy)| !(0..10).contains(&cx) || !(0..40).contains(&cy)) {
+                            continue;
+                        }
+                        let mut rows = [0u8; 40];
+                        for &(_, cy) in &cells {
+                            rows[cy as usize] += 1;
+                        }
+                        let occupied_rows: Vec<_> = rows
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(row, count)| (*count > 0).then_some(row))
+                            .collect();
+                        if occupied_rows.len() == 4 && occupied_rows.iter().all(|&row| rows[row] == 1) {
+                            assert_eq!(piece, Piece::I, "only vertical I can fill four distinct rows");
+                            vertical_i_targets.push(target);
+                        }
+                    }
+                }
+            }
+        }
+        assert!(!vertical_i_targets.is_empty());
+
+        // Both root-entry modes and both 90/direct-180 routes are production
+        // paths. Enumerating all targets above therefore covers the complete
+        // kick table, wall/floor positions, and the spawn-buffer fallback.
+        for target in vertical_i_targets {
+            let cells = target.cells();
+            let min_row = cells.iter().map(|&(_, row)| row).min().unwrap();
+            let max_row = cells.iter().map(|&(_, row)| row).max().unwrap();
+            // The final non-T Mini predicate reads only the four cardinal
+            // neighbors of the accepted pose. Target rows already block both
+            // horizontal neighbors; enumerate both vertical neighbors. Any
+            // other outside cell can only remove edges from this complete
+            // frontier, so the minimal board below is the maximal-reachability
+            // representative for each final Mini classification.
+            for below_blocked in [false, true] {
+                for above_blocked in [false, true] {
+                    let mut board = Board::default();
+                    for &(_, row) in &cells {
+                        for col in 0..10i8 {
+                            if !cells.contains(&(col, row)) {
+                                board.cols[col as usize] |= 1_u64 << row as u32;
+                            }
+                        }
+                    }
+                    if below_blocked && min_row > 0 {
+                        board.cols[target.x as usize] |= 1_u64 << (min_row - 1) as u32;
+                    }
+                    if above_blocked && max_row < 39 {
+                        board.cols[target.x as usize] |= 1_u64 << (max_row + 1) as u32;
+                    }
+                    for enable_direct_180 in [false, true] {
+                        let normal = super::find_moves_complete_with_entry(
+                            &board,
+                            Piece::I,
+                            enable_direct_180,
+                            super::RootEntry::Normal,
+                        );
+                        assert!(normal.queue_exhausted);
+                        for (placement, _) in &normal.moves {
+                            let mut after = board;
+                            after.place(placement.location);
+                            if after.line_clears().count_ones() == 4 {
+                                assert!(!matches!(placement.spin, Spin::Mini | Spin::Full),
+                                    "4-line spin generated for target {target:?}, below {below_blocked}, above {above_blocked}, entry Normal, direct180 {enable_direct_180}: {placement:?}");
+                            }
+                        }
+                        if normal.moves.is_empty() {
+                            let fallback = super::find_moves_complete_with_entry(
+                                &board,
+                                Piece::I,
+                                enable_direct_180,
+                                super::RootEntry::SpawnBufferFallback,
+                            );
+                            assert!(fallback.queue_exhausted);
+                            for (placement, _) in &fallback.moves {
+                                let mut after = board;
+                                after.place(placement.location);
+                                if after.line_clears().count_ones() == 4 {
+                                    assert!(!matches!(placement.spin, Spin::Mini | Spin::Full),
+                                        "4-line spin generated for target {target:?}, below {below_blocked}, above {above_blocked}, entry SpawnBufferFallback, direct180 {enable_direct_180}: {placement:?}");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn diagnostic_expanded_state_retains_j_double_route_and_first_legal_row() {
         let mut board = Board::default();
@@ -1182,7 +1469,7 @@ mod tests {
 
     fn collision_map_blocking(targets: impl IntoIterator<Item = PieceLocation>) -> CollisionMaps {
         let mut collision_map = CollisionMaps {
-            boards: [[0; 10]; 4], ceiling: 20,
+            boards: [[0; 10]; 4], ceiling: 20, canonical_rotation: false,
         };
         for target in targets {
             assert!((0..10).contains(&target.x));

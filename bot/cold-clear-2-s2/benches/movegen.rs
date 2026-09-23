@@ -1,5 +1,5 @@
-use cold_clear_2::data::{Board, Piece};
-use cold_clear_2::movegen::find_moves;
+use cold_clear_2_s2::data::{Board, Piece};
+use cold_clear_2_s2::movegen::find_moves;
 use criterion::{criterion_group, criterion_main, Criterion};
 
 const PIECES: [Piece; 7] = [

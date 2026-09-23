@@ -12,6 +12,8 @@ import { Engine, Tetromino } from '@haelp/teto/engine';
 import { guiStateToCc2NativeStart } from '../src-js/cc2-s2-native-start.mjs';
 import { decisionStateToSyntheticGui } from '../src-js/s2-amount-only-decision-state.mjs';
 import { handicapColumnHeights } from '../src-js/gui-1p-handicap-garbage.mjs';
+import { listS2AmountOnlyPublicReachablePlacements } from '../src-js/s2-amount-only-public-candidates.mjs';
+import { createPublicCompatProfile } from '../src-js/public-compat-request.mjs';
 
 const tap = (frame, key) => ['keydown', 'keyup'].map(type => ({ frame, type, data: { key, subframe: 0 } }));
 const config = { left: 'human', right: 'cc2-s2-f14', seed: 42, maxTurns: null };
@@ -21,7 +23,7 @@ const searchedEmpty = () => Object.assign(new Error('CC2 returned no suggested m
 });
 
 test('only raw/chouhy input connections request a native candidate prefix', async () => {
-  for (const type of ['cc2-raw', 'cc2-chouhy', 'cc2-s2-f14', 'cc2-s2-champion']) {
+  for (const type of ['cc2-raw', 'cc2-chouhy', 'cc2-s2-f14']) {
     let state;
     const handlers = createGuiInputMatchHandlers({ runtime: {
       propose: async request => { state = request.state; return new Promise(() => {}); }, closeSessions: async () => {},
@@ -29,6 +31,62 @@ test('only raw/chouhy input connections request a native candidate prefix', asyn
     const start = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: { ...config, right: type } });
     await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: { sessionId: start.body.sessionId, frame: 1 } });
     assert.equal(state.input_candidates, ['cc2-raw', 'cc2-chouhy'].includes(type) ? true : undefined);
+  }
+});
+
+function fakeCoreDecision(request, selectedCc2Rank) {
+  const placements = listS2AmountOnlyPublicReachablePlacements(request.selector)
+    .filter(placement => !placement.usedHold && placement.rotation === 'spawn').slice(0, 4);
+  const identities = placements.map(placement => canonicalize(canonicalPlacementToGuiMove(placement)));
+  return { status: 'move', reason: 'selection-budget', selectedIdentity: identities[selectedCc2Rank],
+    selectedMove: JSON.parse(identities[selectedCc2Rank]), selectedPlacement: placements[selectedCc2Rank],
+    ranking: { identities, selectedCc2Rank,
+      candidates: identities.map((_, cc2Rank) => ({ cc2Rank, solvent: true, selectionScore: -cc2Rank })) } };
+}
+
+test('champion INPUT asks the F14 profile-B core and locks its selected move', async () => {
+  let proposals = 0;
+  let decided;
+  let core;
+  let resolved;
+  const handlers = createGuiInputMatchHandlers({ runtime: {
+    propose: () => { proposals++; return new Promise(() => {}); },
+    decideF14: async payload => { decided = payload; core = fakeCoreDecision(payload.request, 3); return core; },
+    resolveInput: async payload => (resolved = resolveInputJob(payload)),
+    closeSessions: async () => {},
+  } });
+  const start = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: { ...config, right: 'cc2-s2-champion' } });
+  assert.equal(start.status, 200, JSON.stringify(start.body));
+  for (let frame = 1; frame <= 4 && resolved === undefined; frame++) {
+    await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: { sessionId: start.body.sessionId, frame } });
+    for (let i = 0; i < 5; i++) await flush();
+  }
+  assert.equal(proposals, 0, 'the champion never asks a CC2 proposal process');
+  assert.deepEqual(decided.profile, createPublicCompatProfile());
+  assert.equal(decided.request.execution.profileId, 'f14-amount-only-compat-b/1');
+  assert.equal(resolved.status, 'planned', JSON.stringify(resolved));
+  assert.equal(resolved.selection.adoptionRank, 0);
+  const pose = placement => [placement.piece, placement.rotation, placement.x, placement.y, placement.usedHold];
+  assert.deepEqual(pose(resolved.placement), pose(core.selectedPlacement));
+});
+
+test('champion INPUT treats a core with no legal placement as no controller input', async () => {
+  for (const empty of [{ status: 'root-no-move', reason: 'no-legal-placement' }, { status: 'error', reason: 'empty-candidates' }]) {
+    const handlers = createGuiInputMatchHandlers({ runtime: {
+      propose: () => assert.fail('the champion never asks a CC2 proposal process'),
+      decideF14: async () => empty,
+      resolveInput: () => assert.fail('an empty decision must not fabricate a target'),
+      closeSessions: async () => {},
+    } });
+    const start = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: { ...config, right: 'cc2-s2-champion' } });
+    let view;
+    for (let frame = 1; frame <= 3; frame++) {
+      const stepped = await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: { sessionId: start.body.sessionId, frame } });
+      assert.equal(stepped.status, 200, JSON.stringify(stepped.body));
+      view = stepped.body;
+      for (let i = 0; i < 5; i++) await flush();
+    }
+    assert.equal(view.bots[1].inputExecution.noInputResponses, 1, empty.status);
   }
 });
 

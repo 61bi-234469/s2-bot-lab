@@ -26,6 +26,7 @@ parking_lot = "0.11.1"
 puffin_http = { version = "0.7.0", optional = true }
 serde = { version = "1.0.130", features = ["derive"] }
 serde_json = "1.0.64"
+sha2 = "=0.10.9"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rand = "0.8.3"
@@ -33,10 +34,17 @@ structopt = "0.3.25"
 puffin = { version = "0.10.0" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+instant = "0.1.13"
 rand = { version = "0.8.3", default-features = false, features = ["std_rng"] }
 puffin-noop = { package = "puffin", path = "../puffin-noop" }
 
 [features]
+native-pressure-height-recovery = []
+native-root-first-expansion = []
+native-root-attack-tiebreak = ["native-root-first-expansion"]
+native-tsd-formation = ["native-root-first-expansion"]
+native-tslot-preview = ["native-tsd-formation"]
+native-tslot-bonus-distance = ["native-tslot-preview"]
 
 [patch.crates-io]
 instant = { path = "../instant-wasm-safe" }
