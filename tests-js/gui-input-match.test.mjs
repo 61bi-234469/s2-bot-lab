@@ -40,7 +40,7 @@ function fakeCoreDecision(request, selectedCc2Rank) {
   const identities = placements.map(placement => canonicalize(canonicalPlacementToGuiMove(placement)));
   return { status: 'move', reason: 'selection-budget', selectedIdentity: identities[selectedCc2Rank],
     selectedMove: JSON.parse(identities[selectedCc2Rank]), selectedPlacement: placements[selectedCc2Rank],
-    ranking: { identities, selectedCc2Rank,
+    ranking: { returnedIdentities: identities, identities: [identities[selectedCc2Rank], ...identities.filter((_, rank) => rank !== selectedCc2Rank)], selectedCc2Rank,
       candidates: identities.map((_, cc2Rank) => ({ cc2Rank, solvent: true, selectionScore: -cc2Rank })) } };
 }
 

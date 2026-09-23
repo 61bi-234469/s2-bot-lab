@@ -57,8 +57,11 @@ test("INPUT champion request equals the final-placement champion request for the
 test("champion INPUT order keeps the core's selection first, then solvent candidates by score", () => {
   const identity = (x) => canonicalize({ location: { orientation: "north", type: "O", x, y: 1 }, spin: "none" });
   const identities = [0, 2, 4, 6].map(identity);
+  // `returnedIdentities` is CC2 order (what cc2Rank indexes); `identities` is
+  // the core's ranked order, which differs from it.
   const moves = championInputMoves({ status: "move", selectedIdentity: identities[2], ranking: {
-    identities, selectedCc2Rank: 2, candidates: [
+    returnedIdentities: identities, identities: [identities[2], identities[3], identities[0], identities[1]],
+    selectedCc2Rank: 2, candidates: [
       { cc2Rank: 0, solvent: false, selectionScore: 10 },
       { cc2Rank: 1, solvent: true, selectionScore: -3 },
       { cc2Rank: 2, solvent: true, selectionScore: -9 },
@@ -67,12 +70,40 @@ test("champion INPUT order keeps the core's selection first, then solvent candid
   assert.deepEqual(moves.map(canonicalize), [identities[2], identities[3], identities[1], identities[0]]);
   assert.throws(() => championInputMoves({ status: "incomplete", reason: "deadline" }), /incomplete/);
   const withHold = { status: "move", selectedIdentity: canonicalize({ location: { orientation: "north", type: "T", x: 4, y: 1 }, spin: "none" }),
-    ranking: { selectedCc2Rank: 0, identities: [
+    ranking: { selectedCc2Rank: 0, returnedIdentities: [
       canonicalize({ location: { orientation: "north", type: "T", x: 4, y: 1 }, spin: "none" }), identities[1], identities[0]],
     candidates: [{ cc2Rank: 0, solvent: true, selectionScore: 0 }, { cc2Rank: 1, solvent: true, selectionScore: -1 },
       { cc2Rank: 2, solvent: true, selectionScore: -2 }] } };
   // A replan after this piece's HOLD cannot place the held piece.
   assert.deepEqual(championInputMoves(withHold, { current: "O", holdAvailable: false }).map(canonicalize), [identities[1], identities[0]]);
+});
+
+test("champion INPUT with SELECTION off and a 10 ms THINK TIME keeps playing", { skip: !existsSync(wasmPath), timeout: 300_000 }, async () => {
+  // The reported stop: a shallow search ranks candidates away from CC2 order,
+  // so the core's selection is not identities[selectedCc2Rank].
+  const wasmBytes = readFileSync(wasmPath);
+  const runtime = createNativeInputRuntime({ engineFor: () => assert.fail("the champion never starts a CC2 process"),
+    f14SessionFor: () => createCc2WasmSession({ wasmBytes }) });
+  const responses = [];
+  const handlers = createGuiInputMatchHandlers({ runtime: { ...runtime,
+    decideF14: async (payload) => { const response = await runtime.decideF14(payload); responses.push(response); return response; } } });
+  const parameters = { ...defaultBotParameters("cc2-s2-champion"), ppsEnabled: false, selectionEnabled: false, thinkTimeEnabled: true, thinkMs: 10 };
+  try {
+    const start = await handlers.handle({ method: "POST", path: "/api/input-match/start", body: {
+      left: "human", right: "cc2-s2-champion", seed: 42, maxTurns: null, rightParameters: parameters } });
+    assert.equal(start.status, 200, JSON.stringify(start.body));
+    let view = start.body;
+    for (let frame = 1; frame < 20_000 && view.bots[1].stats.turns < 40 && !view.outcome.complete; frame += 2) {
+      const stepped = await handlers.handle({ method: "POST", path: "/api/input-match/step", body: { sessionId: start.body.sessionId, frame } });
+      assert.equal(stepped.status, 200, JSON.stringify(stepped.body));
+      view = stepped.body;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 2));
+    }
+    assert.ok(view.bots[1].stats.turns >= 20 || view.outcome.complete, `champion placed ${view.bots[1].stats.turns}`);
+    for (const response of responses.filter(({ status }) => status === "move")) {
+      assert.equal(canonicalize(championInputMoves(response)[0]), response.selectedIdentity);
+    }
+  } finally { await runtime.closeSessions(); }
 });
 
 test("champion INPUT match locks the WASM F14 core selection, also under incoming garbage", { skip: !existsSync(wasmPath) || !existsSync(rawBinary), timeout: 300_000 }, async (t) => {

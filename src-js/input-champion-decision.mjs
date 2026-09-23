@@ -39,11 +39,13 @@ export function createChampionInputRequest(decision, { requestId, generation = 1
  */
 export function championInputMoves(response, { current = null, holdAvailable = true } = {}) {
   if (response?.status !== "move") throw new Error(`champion INPUT decision ${response?.status}: ${response?.reason}`);
-  const { identities, candidates, selectedCc2Rank } = response.ranking;
-  if (identities[selectedCc2Rank] !== response.selectedIdentity) throw new Error("champion INPUT selected identity mismatch");
+  // `identities` is the core's ranked order; `returnedIdentities` is CC2 order,
+  // the one a `cc2Rank` indexes.
+  const { returnedIdentities, candidates, selectedCc2Rank } = response.ranking;
+  if (returnedIdentities?.[selectedCc2Rank] !== response.selectedIdentity) throw new Error("champion INPUT selected identity mismatch");
   const rest = candidates.filter((candidate) => candidate.cc2Rank !== selectedCc2Rank)
     .sort((a, b) => Number(b.solvent) - Number(a.solvent) || b.selectionScore - a.selectionScore || a.cc2Rank - b.cc2Rank);
-  const moves = [selectedCc2Rank, ...rest.map((candidate) => candidate.cc2Rank)].map((rank) => JSON.parse(identities[rank]));
+  const moves = [selectedCc2Rank, ...rest.map((candidate) => candidate.cc2Rank)].map((rank) => JSON.parse(returnedIdentities[rank]));
   if (holdAvailable) return moves;
   // Only an INPUT replan after this piece's HOLD input sees HOLD spent, which
   // the core cannot be asked about; keep its order among the moves that
