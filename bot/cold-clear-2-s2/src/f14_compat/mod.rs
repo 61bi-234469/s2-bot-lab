@@ -620,13 +620,12 @@ pub fn metrics_from_occupancy(board: &Board) -> BoardMetrics {
     }
 }
 
-pub fn extract_amount_only_decision_features(
-    board: LockBoardView<'_>,
+pub fn amount_only_features_from_metrics(
+    metrics: BoardMetrics,
     projection: FeatureProjection,
-) -> Result<[f64; 19], CompatError> {
-    let metrics = lock_board_metrics(board)?;
+) -> [f64; 19] {
     let topped_out = if projection.amount_topped_out { 1.0 } else { 0.0 };
-    Ok([
+    [
         metrics.aggregate_height,
         metrics.max_height,
         metrics.holes,
@@ -646,7 +645,15 @@ pub fn extract_amount_only_decision_features(
         projection.b2b_after,
         projection.b2b_after,
         projection.surge_sent,
-    ])
+    ]
+}
+
+pub fn extract_amount_only_decision_features(
+    board: LockBoardView<'_>,
+    projection: FeatureProjection,
+) -> Result<[f64; 19], CompatError> {
+    let metrics = lock_board_metrics(board)?;
+    Ok(amount_only_features_from_metrics(metrics, projection))
 }
 
 pub fn extract_amount_only_feature_object(
@@ -1418,9 +1425,14 @@ mod tests {
                 let board = lock_board_view(&candidate["lockBoard"]);
                 let projection = feature_projection(&candidate["projection"]);
                 let features = extract_amount_only_decision_features(board, projection).unwrap();
+                let from_metrics = amount_only_features_from_metrics(
+                    lock_board_metrics(board).unwrap(),
+                    projection,
+                );
                 let expected = bits19(&candidate["featureBits"]);
                 for index in 0..19 {
                     assert_eq!(hex_bits(features[index]), hex_bits(expected[index]), "{} {}", decision["id"], FEATURE_NAMES[index]);
+                    assert_eq!(hex_bits(features[index]), hex_bits(from_metrics[index]), "{} {} metric contract", decision["id"], FEATURE_NAMES[index]);
                 }
                 let object = extract_amount_only_feature_object(board, projection).unwrap();
                 assert_eq!(object.len(), 21);
@@ -1455,6 +1467,32 @@ mod tests {
     }
 
     #[test]
+    fn public_amount_only_features_accept_exact_one_by_one_board() {
+        let features = extract_amount_only_decision_features(
+            LockBoardView {
+                fidelity: "exact",
+                width: 1,
+                height: 1,
+                cells: "_",
+            },
+            FeatureProjection {
+                amount_topped_out: false,
+                remaining_rows: 0.0,
+                tank_rows: 0.0,
+                visible_margin_after_lock: 0.0,
+                outgoing_before_cancel: 0.0,
+                outgoing_after_cancel: 0.0,
+                cancelled_rows: 0.0,
+                combo_after: 0.0,
+                b2b_after: 0.0,
+                surge_sent: 0.0,
+            },
+        )
+        .unwrap();
+        assert!(features.iter().all(|feature| feature.is_finite()));
+    }
+
+    #[test]
     fn p3a_synthetic_boards_cover_holes_g_buffer_and_mapping() {
         let p3 = load_p3();
         let weights = bits19(&p3["weightBits"]);
@@ -1463,12 +1501,24 @@ mod tests {
             let board = lock_board_view(&board_case["lockBoard"]);
             let projection = feature_projection(&board_case["projection"]);
             let features = extract_amount_only_decision_features(board, projection).unwrap();
+            let from_metrics = amount_only_features_from_metrics(
+                lock_board_metrics(board).unwrap(),
+                projection,
+            );
             let expected = bits19(&board_case["featureBits"]);
             for index in 0..19 {
                 assert_eq!(hex_bits(features[index]), hex_bits(expected[index]), "{} {}", board_case["id"], FEATURE_NAMES[index]);
+                assert_eq!(hex_bits(features[index]), hex_bits(from_metrics[index]), "{} {} metric contract", board_case["id"], FEATURE_NAMES[index]);
             }
             let (occupancy, garbage) = occupancy_from_lock_board(board).unwrap();
             assert_eq!(metrics_from_occupancy(&occupancy), lock_board_metrics(board).unwrap());
+            let native_features = amount_only_features_from_metrics(
+                metrics_from_occupancy(&occupancy),
+                projection,
+            );
+            for index in 0..19 {
+                assert_eq!(hex_bits(features[index]), hex_bits(native_features[index]), "{} {} native contract", board_case["id"], FEATURE_NAMES[index]);
+            }
             let expected_g = board_case["occupancy"]["garbage"].as_array().unwrap();
             for x in 0..10 {
                 assert_eq!(garbage.cols[x], u64::from_str_radix(expected_g[x].as_str().unwrap(), 16).unwrap());

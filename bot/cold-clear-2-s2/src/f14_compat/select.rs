@@ -11,8 +11,8 @@ use super::reach::{
 use super::{
     advance_f14_amount_only, advance_f14_chain, advance_f14_pieces, apply_f14_lock_blocks,
     calculate_f14_surge, choose_rescue, classify_conversion_for_policy,
-    extract_amount_only_decision_features, non_t_all_spin_clear, occupied_height,
-    rank_candidates_with_policy,
+    amount_only_features_from_metrics, metrics_from_occupancy, non_t_all_spin_clear,
+    occupancy_from_lock_board, occupied_height, rank_candidates_with_policy,
     score_evaluation_features, CompatError, Conversion, ConversionBranch, F14Incoming,
     F14LockPublic, F14Pieces, FeatureProjection, FinalOrderPolicy, LockBoardView, PostSpinPolicy,
     RankedCandidate,
@@ -2143,7 +2143,12 @@ fn evaluate_f14_candidate(
         height: state.height,
         cells: &facts.cells,
     };
-    let features = extract_amount_only_decision_features(board, facts.actual)?;
+    // All production paths to this evaluator pass through a 10×40 state guard.
+    let (occupancy, _) = occupancy_from_lock_board(board)?;
+    let features = amount_only_features_from_metrics(
+        metrics_from_occupancy(&occupancy),
+        facts.actual,
+    );
     let s2_score = score_evaluation_features(&features, &options.weights)?;
     // Keep InvalidSolvency after scoring, matching the pre-extraction order.
     // solvency is an integer-derived f64 difference and is not observed non-finite.
