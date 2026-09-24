@@ -6,7 +6,31 @@ import { createGuiRequestHandlers } from "../src-js/gui-request-handlers.mjs";
 import { guiStateToCanonical } from "../src-js/gui-state.mjs";
 import { analyzeSimpleS2FinalPlacements } from "../src-js/simple-s2-bot.mjs";
 import { applyHumanFinalPlacementUnderObservedS2 } from "../src-js/human-s2-adapter.mjs";
-import { resolveQualifiedStaticCc2Submission } from "../src-js/static-cc2-proposal.mjs";
+import { resolveGuiStaticSubmission as resolveQualifiedStaticCc2Submission } from "../src-js/gui-static-public-resolver.mjs";
+import { cc2MoveToCanonicalPlacement } from "../src-js/cc2-s2-adapter.mjs";
+import { canonicalize } from "../scripts/cs1.mjs";
+import { INPUT_BOT_PROFILES } from "../src-js/input-bot-contract.mjs";
+
+const LEGACY_STATIC_ENGINE = "cc2-raw";
+
+function fakeF14Decision({ request }) {
+  const piece = request.start.queue[0];
+  const selectedMove = { location: {
+    type: piece, orientation: "north", x: 4, y: piece === "I" ? 2 : 0,
+  }, spin: "none" };
+  const selectedPlacement = cc2MoveToCanonicalPlacement({ queue: [piece] }, selectedMove);
+  const selectedIdentity = canonicalize(selectedMove);
+  return {
+    type: "f14_decision", schemaVersion: 1, requestId: request.requestId,
+    positionId: request.positionId, generation: request.generation,
+    profileId: request.execution.profileId, status: "move", reason: "selection-budget",
+    execution: structuredClone(request.execution),
+    boundaryAudit: { externalStrategicReselectCalls: 0, legacyF14RescueCalls: 0, legacyF14SelectionCalls: 0 },
+    search: { requestedSelections: request.execution.budget.selections, actualSelections: request.execution.budget.selections },
+    selectedMove, selectedIdentity, selectedPlacement,
+    ranking: { identities: [selectedIdentity] },
+  };
+}
 
 async function request(handlers, method, path, body = null) {
   const result = await handlers.handle({ method, path, body });
@@ -14,9 +38,72 @@ async function request(handlers, method, path, body = null) {
   return result.body;
 }
 
-test("static handler exposes only browser-capable bots", async () => {
+async function exerciseStaleOnePlayerProposal(makeSecondError) {
+  let proposalCalls = 0;
+  let releaseSecondProposal;
+  let secondProposalStarted;
+  let closed = 0;
+  const secondProposalGate = new Promise((resolve) => { releaseSecondProposal = resolve; });
+  const startedGate = new Promise((resolve) => { secondProposalStarted = resolve; });
+  const handlers = createGuiRequestHandlers({ cc2: {
+    async propose({ state }) {
+      proposalCalls += 1;
+      if (proposalCalls === 2) {
+        secondProposalStarted();
+        await secondProposalGate;
+        throw makeSecondError();
+      }
+      const piece = state.queue[0];
+      return { suggestion: { moves: [{ location: {
+        type: piece, orientation: "north", x: proposalCalls === 1 ? 4 : 1, y: piece === "I" ? 2 : 0,
+      }, spin: "none" }] } };
+    },
+    async closeSessions() { closed += 1; },
+  }, now: () => 0, wait: async () => {} });
+  const seed = 42;
+  await request(handlers, "POST", "/api/match/start", {
+    left: "human",
+    right: LEGACY_STATIC_ENGINE,
+    seed,
+    rightParameters: { ppsEnabled: true, pps: 1 },
+  });
+  closed = 0;
+
+  const first = await request(handlers, "POST", "/api/match/step", { lockFrame: 0 });
+  assert.equal(first.turnNumber, 1);
+  const initial = guiStateToCanonical(toS2GuiState(createGame(seed)));
+  const firstPlacement = analyzeSimpleS2FinalPlacements(initial, { topN: 1 }).moves[0].placement;
+  const firstHuman = await request(handlers, "POST", "/api/match/human-lock", {
+    lockFrame: 1001, placement: firstPlacement,
+  });
+  assert.equal(firstHuman.turnNumber, 2);
+
+  const staleStep = handlers.handle({ method: "POST", path: "/api/match/step", body: { lockFrame: 0 } });
+  await startedGate;
+  const afterFirst = applyHumanFinalPlacementUnderObservedS2(initial, firstPlacement).transition.nextState;
+  const secondPlacement = analyzeSimpleS2FinalPlacements(afterFirst, { topN: 1 }).moves[0].placement;
+  const secondHuman = await request(handlers, "POST", "/api/match/human-lock", {
+    lockFrame: 1002, placement: secondPlacement,
+  });
+  assert.equal(secondHuman.turnNumber, 3);
+
+  releaseSecondProposal();
+  const stale = await staleStep;
+  assert.equal(stale.status, 200, JSON.stringify(stale.body));
+  assert.equal(stale.body.turnNumber, 3);
+  assert.equal(stale.body.outcome.complete, false);
+  assert.equal(closed, 0);
+
+  const fresh = await request(handlers, "POST", "/api/match/step", { lockFrame: 0 });
+  assert.equal(fresh.turnNumber, 4);
+  assert.equal(fresh.outcome.complete, false);
+  assert.equal(proposalCalls, 3);
+  assert.equal(closed, 0);
+}
+
+test("static handler lists exactly the INPUT bots and You, unavailable without WASM", async () => {
   const capabilities = await request(createGuiRequestHandlers(), "GET", "/api/bots");
-  assert.ok(capabilities.bots.find((bot) => bot.id === "s2-simple" && bot.available));
+  assert.deepEqual(capabilities.bots.map((bot) => bot.id), ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion", "human"]);
   assert.ok(capabilities.bots.filter((bot) => bot.id.startsWith("cc2-")).every((bot) => !bot.available));
 });
 
@@ -82,7 +169,21 @@ test("static handler answers the same pure API family used by the GUI", async ()
   assert.equal(compared.contractId, "s2-same-position-comparison/1");
 });
 
-test("qualified analysis supplies canonical comparison identity after public selection", async () => {
+test("retired family bots are rejected as unsupported by live GUI routes", async () => {
+  const handlers = createGuiRequestHandlers({ proposeCc2: async () => assert.fail("must not search") });
+  for (const engine of ["cc2-s2-f11", "cc2-s2-f12", "cc2-s2-f25"]) {
+    // Retired ids now take the shape unknown CC2 ids always had on each route: /api/suggest
+    // throws before any route logic runs, /api/apply-s2 and match start map it to a status.
+    await assert.rejects(handlers.handle({ method: "POST", path: "/api/suggest", body: { engine } }),
+      new RegExp(`^Error: unsupported CC2 engine ${engine}$`));
+    const applied = await handlers.handle({ method: "POST", path: "/api/apply-s2", body: { engine } });
+    assert.deepEqual(applied, { status: 422, body: { error: `unsupported CC2 engine ${engine}` } });
+    const match = await handlers.handle({ method: "POST", path: "/api/match/start", body: { left: engine, right: "s2-simple" } });
+    assert.deepEqual(match, { status: 400, body: { error: `unsupported CC2 engine ${engine}` } });
+  }
+});
+
+test("F14 stays a live GUI bot through the qualified static resolver", async () => {
   const handlers = createGuiRequestHandlers();
   const state = toS2GuiState(createGame(42));
   const piece = state.queue[0];
@@ -94,17 +195,49 @@ test("qualified analysis supplies canonical comparison identity after public sel
   const compared = await request(handlers, "POST", "/api/compare-simple", {
     baseline: applied.comparison, challenger,
   });
-  assert.equal(compared.contractId, "s2-same-position-comparison/1");
   assert.equal(compared.baseline.score, applied.comparison.score);
   assert.ok(applied.move.location);
-  assert.equal(typeof applied.move.spin, "string");
 });
 
-test("single analysis exposes every static CC2 engine", async () => {
+test("static champion match uses the WASM decision route", async () => {
+  let selectedPlacement;
+  const handlers = createGuiRequestHandlers({ cc2: {
+    async decideF14(payload) { const decision = fakeF14Decision(payload); selectedPlacement = decision.selectedPlacement; return decision; },
+    async closeSessions() {},
+  } });
+  await request(handlers, "POST", "/api/match/start", { left: "cc2-s2-champion", right: "s2-simple", seed: 42, preLockPreview: true });
+  const stepped = await handlers.handle({ method: "POST", path: "/api/match/step", body: {} });
+  assert.equal(stepped.status, 200, JSON.stringify(stepped.body));
+  assert.deepEqual(stepped.body.bots.find(({ id }) => id === "left").preLockPreview.placement, selectedPlacement);
+});
+
+test("qualified analysis supplies canonical comparison identity after public selection", async () => {
+  const handlers = createGuiRequestHandlers({ cc2: { decideF14: async (payload) => fakeF14Decision(payload) } });
+  const state = toS2GuiState(createGame(42));
+  const suggested = await request(handlers, "POST", "/api/suggest", {
+    engine: "cc2-s2-champion", state,
+  });
+  const challenger = await request(handlers, "POST", "/api/simple-s2", { state, n: 1 });
+  const compared = await request(handlers, "POST", "/api/compare-simple", {
+    baseline: suggested.verification.comparison, challenger,
+  });
+  assert.equal(compared.contractId, "s2-same-position-comparison/1");
+  assert.equal(compared.baseline.score, suggested.verification.comparison.score);
+  assert.ok(suggested.suggestion.moves[0].location);
+  assert.equal(typeof suggested.suggestion.moves[0].spin, "string");
+});
+
+// The GUI offers only the bots TTRM INPUT admits (plus You on the left), so the
+// public and local hosts show one list and nothing non-OSS can enter it.
+test("selectors offer all INPUT bots with the comparison before the current champion", async () => {
   const html = await readFile(new URL("../cc2-gui/index.html", import.meta.url), "utf8");
-  const analysis = html.match(/<select id="analysis-bot">([\s\S]*?)<\/select>/)?.[1] ?? "";
-  const ids = [...analysis.matchAll(/value="(cc2-[^"]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(ids, ["cc2-raw", "cc2-chouhy", "cc2-s2", "cc2-s2-gen017", "cc2-s2-f11", "cc2-s2-f12", "cc2-s2-f14", "cc2-s2-f25", "cc2-s2-champion"]);
+  const optionsFor = (id) => [...(html.match(new RegExp(`<select id="${id}">([\\s\\S]*?)</select>`))?.[1] ?? "")
+    .matchAll(/<option value="([^"]+)"/g)].map((match) => match[1]);
+  const orderedBots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion"];
+  assert.deepEqual(new Set(orderedBots), new Set(Object.keys(INPUT_BOT_PROFILES)));
+  assert.deepEqual(optionsFor("analysis-bot"), orderedBots);
+  assert.deepEqual(optionsFor("left-bot"), [...orderedBots, "human"]);
+  assert.deepEqual(optionsFor("right-bot"), orderedBots);
 });
 
 test("bot-vs-bot selectors expose the current champion", async () => {
@@ -115,21 +248,29 @@ test("bot-vs-bot selectors expose the current champion", async () => {
   }
 });
 
-test("bot-vs-bot selectors keep one automated-bot order and hide retired development variants", async () => {
-  const html = await readFile(new URL("../cc2-gui/index.html", import.meta.url), "utf8");
-  const optionsFor = (id) => html.match(new RegExp(`<select id="${id}">([\\s\\S]*?)</select>`))?.[1] ?? "";
-  const botIds = (id) => [...optionsFor(id).matchAll(/<option value="([^"]+)">/g)]
-    .map((match) => match[1])
-    .filter((botId) => botId !== "human");
-  const expected = ["cc2-raw", "cc2-chouhy", "cc2-s2-gen017", "cc2-s2-f14", "cc2-s2-f25", "cc2-s2-champion", "s2-simple"];
-
-  assert.deepEqual(botIds("left-bot"), expected);
-  assert.deepEqual(botIds("right-bot"), expected);
-  for (const id of ["left-bot", "right-bot"]) {
-    assert.doesNotMatch(optionsFor(id), /value="cc2-s2"/);
-    assert.doesNotMatch(optionsFor(id), /value="cc2-s2-f11"/);
-    assert.doesNotMatch(optionsFor(id), /value="cc2-s2-f12"/);
-  }
+test('legacy champion is available in both match modes on the static host', async () => {
+  const handlers = createGuiRequestHandlers({ proposeCc2: async ({ state }) => ({
+    suggestion: { moves: [{ location: {
+      type: state.queue[0], orientation: "north", x: 4, y: state.queue[0] === "I" ? 2 : 0,
+    }, spin: "none" }] },
+  }) });
+  const bot = (await request(handlers, 'GET', '/api/bots')).bots.find(bot => bot.id === 'cc2-s2-champion-legacy');
+  assert.equal(bot.available, true);
+  assert.notEqual(bot.inputAvailable, false);
+  assert.equal(bot.inputOnly, undefined);
+  const seed = 42;
+  const result = await handlers.handle({ method: 'POST', path: '/api/match/start',
+    body: { left: bot.id, right: 's2-simple', seed, preLockPreview: true } });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  const stepped = await request(handlers, 'POST', '/api/match/step');
+  const preview = stepped.bots.find(({ id }) => id === 'left').preLockPreview;
+  const state = toS2GuiState(createGame(seed));
+  const applied = await request(handlers, 'POST', '/api/apply-s2', {
+    engine: bot.id, state, moves: [{ location: {
+      type: state.queue[0], orientation: 'north', x: 4, y: state.queue[0] === 'I' ? 2 : 0,
+    }, spin: 'none' }],
+  });
+  assert.deepEqual(preview.placement, applied.comparison.witness.placement);
 });
 
 test("bot-vs-bot exposes You (1P) only in the left-player selector", async () => {
@@ -153,10 +294,22 @@ test("CC2 pace is bot-specific and the former match-wide pace toggle is absent",
   assert.doesNotMatch(html, /match-think-time-pace|THINK TIME PACE/);
   const capability = (await request(createGuiRequestHandlers({ proposeCc2: async () => ({}) }), "GET", "/api/bots"))
     .bots.find((bot) => bot.id === "cc2-s2-champion");
+  assert.equal(capability.fixedDecision, true);
+  assert.deepEqual(capability.execution.budget, { mode: "selection", selections: 512, maxMillis: 30000 });
+  assert.equal(capability.execution.profileId, "f14-amount-only-compat-b/1");
   assert.deepEqual(capability.parameters.slice(0, 2).map(({ key, controlledBy }) => ({ key, controlledBy })), [
     { key: "ppsEnabled", controlledBy: undefined },
     { key: "pps", controlledBy: "ppsEnabled" },
   ]);
+  // SELECTION, THINK TIME and QUEUE DEPTH are adjustable like the other CC2 bots,
+  // within what the F14 core runs; the defaults are the champion.
+  const byKey = Object.fromEntries(capability.parameters.map((parameter) => [parameter.key, parameter]));
+  assert.equal(byKey.selectionLimit.maximum, 1_000_000);
+  assert.equal(byKey.selectionLimit.defaultValue, 512);
+  assert.equal(byKey.thinkTimeEnabled.defaultValue, false);
+  assert.equal(byKey.queueDepth.maximum, 28);
+  assert.equal(byKey.queueDepth.minimum, 2);
+  assert.equal(byKey.queueDepth.defaultValue, 14);
 });
 
 test("match start rejects You (1P) on the right side", async () => {
@@ -171,42 +324,38 @@ test("match start rejects You (1P) on the right side", async () => {
 
 test("static CC2 suggestion preserves the GUI response identity contract", async () => {
   let proposalRequest;
-  const handlers = createGuiRequestHandlers({ proposeCc2: async (request) => {
-    proposalRequest = request;
-    return { suggestion: { moves: [{ location: { type: "T", orientation: "north", x: 0, y: 0 }, spin: "none" }], move_info: { nodes: 512, nps: 512 } }, peakMemoryBytes: 65536 };
+  const handlers = createGuiRequestHandlers({ cc2: {
+    async decideF14(payload) { proposalRequest = payload.request; return fakeF14Decision(payload); },
   } });
   const state = toS2GuiState(createGame(71001));
   state.s2.b2b = 7;
   const body = await request(handlers, "POST", "/api/suggest", {
     engine: "cc2-s2-champion", state,
   });
-  assert.equal(proposalRequest.state.b2b, 7);
-  assert.equal(Object.hasOwn(proposalRequest.state, "s2"), false);
-  assert.equal(body.info.version, "deterministic-wasm-512");
+  assert.equal(proposalRequest.selector.chain.b2b, 7);
+  assert.equal(Object.hasOwn(proposalRequest.selector, "garbage"), false);
+  assert.equal(body.info.version, "F14 public profile B WASM");
   assert.equal(body.engine.botType, "cc2-s2-champion");
-  assert.equal(body.suggestion.move_info.nodes, 512);
-  assert.equal(proposalRequest.selectionLimit, 512);
-  assert.equal(proposalRequest.thinkMs, null);
+  assert.equal(body.nativeDecision.search.actualSelections, 512);
+  assert.equal(proposalRequest.execution.budget.selections, 512);
 });
 
-test("static CC2 supports a time-only search budget", async () => {
-  let proposalRequest;
-  const handlers = createGuiRequestHandlers({ proposeCc2: async (request) => {
-    proposalRequest = request;
-    return { suggestion: { moves: [{}], move_info: {} }, peakMemoryBytes: 65536 };
+test("static CC2 champion always uses the fixed F14 selection profile", async () => {
+  let decisionRequest;
+  const handlers = createGuiRequestHandlers({ cc2: {
+    async decideF14(payload) { decisionRequest = payload.request; return fakeF14Decision(payload); },
   } });
   const body = await request(handlers, "POST", "/api/suggest", {
     engine: "cc2-s2-champion",
     state: toS2GuiState(createGame(71002)),
-    parameters: { selectionEnabled: false, thinkTimeEnabled: true, thinkMs: 250 },
+    parameters: { selectionEnabled: true, selectionLimit: 512, thinkTimeEnabled: false, queueDepth: 14 },
   });
-  assert.equal(body.info.version, "time-budgeted-wasm");
-  assert.equal(proposalRequest.selectionLimit, null);
-  assert.equal(proposalRequest.thinkMs, 250);
+  assert.equal(body.info.version, "F14 public profile B WASM");
+  assert.equal(decisionRequest.execution.budget.selections, 512);
 });
 
 test("static CC2 rejects disabling both search limits", async () => {
-  const handlers = createGuiRequestHandlers({ proposeCc2: async () => { throw new Error("must not run"); } });
+  const handlers = createGuiRequestHandlers({ cc2: { decideF14: async () => { throw new Error("must not run"); } } });
   const result = await handlers.handle({
     method: "POST",
     path: "/api/suggest",
@@ -216,13 +365,21 @@ test("static CC2 rejects disabling both search limits", async () => {
   assert.match(result.body.error, /cannot both be disabled/);
 });
 
+test("static champion apply-s2 remains unavailable after WASM selection", async () => {
+  const result = await createGuiRequestHandlers().handle({
+    method: "POST", path: "/api/apply-s2",
+    body: { engine: "cc2-s2-champion", state: toS2GuiState(createGame(71004)), move: {} },
+  });
+  assert.equal(result.status, 422);
+});
+
 test("static matches release both CC2 sessions after a proposal failure", async () => {
   const closed = [];
   const handlers = createGuiRequestHandlers({ cc2: {
     async propose() { throw new Error("proposal failed"); },
     async closeSessions(options) { closed.push(options); },
   } });
-  await request(handlers, "POST", "/api/match/start", { left: "cc2-s2-champion", right: "s2-simple" });
+  await request(handlers, "POST", "/api/match/start", { left: LEGACY_STATIC_ENGINE, right: "s2-simple" });
   closed.length = 0;
   const result = await handlers.handle({ method: "POST", path: "/api/match/step", body: {} });
   assert.equal(result.status, 422);
@@ -230,44 +387,94 @@ test("static matches release both CC2 sessions after a proposal failure", async 
   assert.deepEqual(closed, [{ sessionKeys: ["left", "right"] }]);
 });
 
-test("static CC2 match pacing follows each bot PPS toggle and FAIR override", async () => {
-  const selectionPaced = await request(createGuiRequestHandlers(), "POST", "/api/match/start", {
-    left: "cc2-s2-champion",
-    right: "cc2-s2-champion",
-    leftParameters: { ppsEnabled: false, selectionEnabled: true, thinkTimeEnabled: false },
-    rightParameters: { ppsEnabled: false, selectionEnabled: true, thinkTimeEnabled: false },
+test("static legacy matches score a searched empty response as one game loss and remain restartable", async () => {
+  let calls = 0;
+  const handlers = createGuiRequestHandlers({ cc2: {
+    async propose({ state }) {
+      calls += 1;
+      if (calls === 2) {
+        throw Object.assign(new Error("CC2 returned no suggested move"), {
+          suggestionReceived: true,
+          requestToSuggestionMs: 0.25,
+          moveInfo: { selections: 512, nodes: 0, candidate_values: [], extra: "searched root" },
+        });
+      }
+      const piece = state.queue[0];
+      return { suggestion: { moves: [{ location: {
+        type: piece, orientation: "north", x: 4, y: piece === "I" ? 2 : 0,
+      }, spin: "none" }] } };
+    },
+    async closeSessions() {},
+  } });
+  await request(handlers, "POST", "/api/match/start", {
+    left: LEGACY_STATIC_ENGINE, right: "s2-simple", seed: 42,
+    leftParameters: { ppsEnabled: false, selectionEnabled: true, selectionLimit: 512, thinkTimeEnabled: false },
   });
-  assert.equal(selectionPaced.nextStepFrames, 6);
+  const first = await request(handlers, "POST", "/api/match/step");
+  assert.equal(first.bots.find((bot) => bot.id === "left").stats.turns, 1);
 
-  const realtimeSelectionPaced = await request(createGuiRequestHandlers(), "POST", "/api/match/start", {
-    left: "human",
-    right: "cc2-s2-champion",
-    rightParameters: { ppsEnabled: false, selectionEnabled: true, thinkTimeEnabled: false },
+  const terminal = await request(handlers, "POST", "/api/match/step");
+  assert.deepEqual(terminal.outcome, {
+    complete: true,
+    reason: "no-suggested-move",
+    winnerBotId: "right",
+    proposalResult: terminal.outcome.proposalResult,
   });
-  assert.equal(realtimeSelectionPaced.nextStepFrames, 3);
+  assert.equal(terminal.outcome.proposalResult.status, "terminal");
+  assert.equal(terminal.outcome.proposalResult.latencyMs, 0.25);
+  assert.equal(terminal.outcome.proposalResult.diagnostics.moveInfo.extra, "searched root");
+  assert.equal(terminal.nextStepFrames, null);
 
-  const timePaced = await request(createGuiRequestHandlers(), "POST", "/api/match/start", {
-    left: "cc2-s2-champion",
-    right: "cc2-s2-champion",
-    leftParameters: { ppsEnabled: false, selectionEnabled: false, thinkTimeEnabled: true, thinkMs: 250 },
-    rightParameters: { ppsEnabled: false, selectionEnabled: false, thinkTimeEnabled: true, thinkMs: 250 },
+  const round = await request(handlers, "GET", "/api/match/round");
+  assert.equal(round.result.reasons.left, "no-suggested-move");
+  assert.equal(round.result.proposalResult.status, "terminal");
+  const restarted = await request(handlers, "POST", "/api/match/start", {
+    left: LEGACY_STATIC_ENGINE, right: "s2-simple", seed: 43,
   });
-  assert.equal(timePaced.nextStepFrames, 15);
+  assert.equal(restarted.outcome.complete, false);
+});
 
-  const fair = await request(createGuiRequestHandlers(), "POST", "/api/match/start", {
-    left: "cc2-s2-champion",
-    right: "cc2-s2-champion",
-    fairComparison: true,
-    leftParameters: { ppsEnabled: true, selectionEnabled: false, selectionLimit: 999, thinkTimeEnabled: false },
-    rightParameters: { ppsEnabled: true, selectionEnabled: false, selectionLimit: 999, thinkTimeEnabled: false },
+test("static legacy matches keep malformed CC2 responses as series failures", async () => {
+  let calls = 0;
+  const handlers = createGuiRequestHandlers({ cc2: {
+    async propose({ state }) {
+      calls += 1;
+      if (calls === 2) throw new Error("CC2 returned malformed suggestion");
+      const piece = state.queue[0];
+      return { suggestion: { moves: [{ location: {
+        type: piece, orientation: "north", x: 4, y: piece === "I" ? 2 : 0,
+      }, spin: "none" }] } };
+    },
+    async closeSessions() {},
+  } });
+  await request(handlers, "POST", "/api/match/start", {
+    left: LEGACY_STATIC_ENGINE, right: "s2-simple", seed: 42,
+    leftParameters: { ppsEnabled: false, selectionEnabled: true, selectionLimit: 512, thinkTimeEnabled: false },
   });
-  assert.equal(fair.nextStepFrames, 60);
-  for (const side of ["left", "right"]) {
-    assert.equal(fair.botParameters[side].ppsEnabled, false);
-    assert.equal(fair.botParameters[side].selectionEnabled, true);
-    assert.equal(fair.botParameters[side].selectionLimit, 512);
-    assert.equal(fair.botParameters[side].thinkTimeEnabled, false);
-  }
+  await request(handlers, "POST", "/api/match/step");
+  const failed = await handlers.handle({ method: "POST", path: "/api/match/step", body: {} });
+  assert.equal(failed.status, 422);
+  assert.equal(failed.body.error, "CC2 returned malformed suggestion");
+});
+
+test("static champion match admission accepts the F14 core's SELECTION, THINK TIME and QUEUE DEPTH range", async () => {
+  const handlers = createGuiRequestHandlers();
+  const rejected = await handlers.handle({ method: "POST", path: "/api/match/start", body: {
+    left: "cc2-s2-champion",
+    right: "s2-simple",
+    leftParameters: { selectionEnabled: true, selectionLimit: 512, thinkTimeEnabled: false, queueDepth: 29 },
+  } });
+  assert.notEqual(rejected.status, 200);
+  assert.match(rejected.body.error, /queueDepth/);
+
+  const accepted = await request(handlers, "POST", "/api/match/start", {
+    left: "cc2-s2-champion",
+    right: "s2-simple",
+    leftParameters: { ppsEnabled: false, selectionEnabled: true, selectionLimit: 2048, thinkTimeEnabled: true, thinkMs: 300, queueDepth: 28 },
+  });
+  assert.equal(accepted.botParameters.left.selectionLimit, 2048);
+  assert.equal(accepted.botParameters.left.thinkTimeEnabled, true);
+  assert.equal(accepted.botParameters.left.queueDepth, 28);
 });
 
 test("static matches expose the selected placement over the pre-lock board", async () => {
@@ -311,7 +518,7 @@ test("static 1P keeps a human wall-clock lock while one shared bot step is in fl
   const seed = 42;
   await request(handlers, "POST", "/api/match/start", {
     left: "human",
-    right: "cc2-s2-champion",
+    right: LEGACY_STATIC_ENGINE,
     seed,
     rightParameters: { ppsEnabled: true, pps: 1 },
   });
@@ -336,6 +543,18 @@ test("static 1P keeps a human wall-clock lock while one shared bot step is in fl
   assert.equal(duplicated.status, 200, JSON.stringify(duplicated.body));
   assert.equal(stepped.body.clock.logicalFrame, 1002);
   assert.equal(proposalCalls, 1);
+});
+
+test("static 1P discards a stale searched-empty forfeit after a human lock", async () => {
+  await exerciseStaleOnePlayerProposal(() => Object.assign(new Error("CC2 returned no suggested move"), {
+    suggestionReceived: true,
+    requestToSuggestionMs: 0.25,
+    moveInfo: { selections: 512, nodes: 0, candidate_values: [], extra: "searched root" },
+  }));
+});
+
+test("static 1P discards a stale proposal failure after a human lock", async () => {
+  await exerciseStaleOnePlayerProposal(() => new Error("delayed proposal failed"));
 });
 
 test("static 1P lets a human lock pass optimistic resolution and retries the current state", async () => {
@@ -385,7 +604,7 @@ test("static 1P lets a human lock pass optimistic resolution and retries the cur
   const seed = 42;
   await request(handlers, "POST", "/api/match/start", {
     left: "human",
-    right: "cc2-s2-champion",
+    right: LEGACY_STATIC_ENGINE,
     seed,
     rightParameters: { ppsEnabled: true, pps: 1 },
   });
@@ -405,8 +624,8 @@ test("static 1P lets a human lock pass optimistic resolution and retries the cur
 
   const rightAfterHuman = firstHuman.body.bots.find(({ id }) => id === "right");
   assert.equal(resolveRequests[0].sessionKey, "right");
-  assert.equal(resolveRequests[0].type, "cc2-s2-champion");
-  assert.equal(resolveRequests[0].engine.engineId, "cc2-s2-champion");
+  assert.equal(resolveRequests[0].type, LEGACY_STATIC_ENGINE);
+  assert.equal(resolveRequests[0].engine.engineId, LEGACY_STATIC_ENGINE);
   assert.deepEqual(resolveRequests[0].decision.board.cells, rightAfterHuman.board.flat().map((cell) => cell ?? "_").join(""));
   assert.deepEqual(resolveRequests[0].decision.pieces.known.slice(0, 6), rightAfterHuman.next);
   assert.equal(resolveRequests[0].decision.lockTime.logicalFrame, firstHuman.body.clock.logicalFrame);
@@ -483,7 +702,7 @@ test("static 1P discards a stale failed optimistic resolution and retries locall
   const seed = 42;
   await request(handlers, "POST", "/api/match/start", {
     left: "human",
-    right: "cc2-s2-champion",
+    right: LEGACY_STATIC_ENGINE,
     seed,
     rightParameters: { ppsEnabled: true, pps: 1 },
   });
@@ -522,7 +741,7 @@ test("static resolution failure is atomic and closes CC2 sessions", async () => 
     async resolve() { throw new Error("resolution failed"); },
     async closeSessions(options) { closed.push(options); },
   } });
-  await request(handlers, "POST", "/api/match/start", { left: "cc2-s2-champion", right: "s2-simple" });
+  await request(handlers, "POST", "/api/match/start", { left: LEGACY_STATIC_ENGINE, right: "s2-simple" });
   closed.length = 0;
   const before = await request(handlers, "GET", "/api/match/round");
   const failed = await handlers.handle({ method: "POST", path: "/api/match/step", body: {} });
@@ -549,7 +768,7 @@ test("static resolution rejects a wrong worker fingerprint without committing", 
     },
     async closeSessions() {},
   } });
-  await request(handlers, "POST", "/api/match/start", { left: "cc2-s2-champion", right: "s2-simple" });
+  await request(handlers, "POST", "/api/match/start", { left: LEGACY_STATIC_ENGINE, right: "s2-simple" });
   const before = await request(handlers, "GET", "/api/match/round");
   const failed = await handlers.handle({ method: "POST", path: "/api/match/step", body: {} });
   assert.equal(failed.status, 422);
@@ -579,7 +798,7 @@ test("closing a match invalidates an in-flight resolution before commit", async 
     },
     async closeSessions() {},
   } });
-  await request(handlers, "POST", "/api/match/start", { left: "cc2-s2-champion", right: "s2-simple" });
+  await request(handlers, "POST", "/api/match/start", { left: LEGACY_STATIC_ENGINE, right: "s2-simple" });
   const stepping = handlers.handle({ method: "POST", path: "/api/match/step", body: {} });
   await startedGate;
   await request(handlers, "POST", "/api/match/close");
@@ -613,7 +832,7 @@ test("starting a new match invalidates an in-flight old-session resolution", asy
     },
     async closeSessions() {},
   } });
-  await request(handlers, "POST", "/api/match/start", { left: "cc2-s2-champion", right: "s2-simple" });
+  await request(handlers, "POST", "/api/match/start", { left: LEGACY_STATIC_ENGINE, right: "s2-simple" });
   const oldStep = handlers.handle({ method: "POST", path: "/api/match/step", body: {} });
   await startedGate;
   const replacement = await request(handlers, "POST", "/api/match/start", {
@@ -643,7 +862,7 @@ test("an old proposal rejection cannot close a replacement match runtime", async
     },
     async closeSessions(options) { closed.push(options); },
   } });
-  await request(handlers, "POST", "/api/match/start", { left: "cc2-s2-champion", right: "s2-simple" });
+  await request(handlers, "POST", "/api/match/start", { left: LEGACY_STATIC_ENGINE, right: "s2-simple" });
   const oldStep = handlers.handle({ method: "POST", path: "/api/match/step", body: {} });
   await started;
   await request(handlers, "POST", "/api/match/start", {
@@ -752,8 +971,8 @@ test("same-frame bots resolve one snapshot and commit only after all resolutions
     async closeSessions() {},
   } });
   await request(handlers, "POST", "/api/match/start", {
-    left: "cc2-s2-champion",
-    right: "cc2-s2-champion",
+    left: LEGACY_STATIC_ENGINE,
+    right: LEGACY_STATIC_ENGINE,
     seed: 55,
   });
   const before = await request(handlers, "GET", "/api/match/round");
@@ -790,7 +1009,7 @@ test("worker and main-thread resolution routes keep fixed-selection match semant
     };
     const handlers = createGuiRequestHandlers({ cc2 });
     await request(handlers, "POST", "/api/match/start", {
-      left: "cc2-s2-champion",
+      left: LEGACY_STATIC_ENGINE,
       right: "s2-simple",
       seed: 77,
       leftParameters: { ppsEnabled: false, selectionEnabled: true, selectionLimit: 512, thinkTimeEnabled: false },
@@ -824,7 +1043,7 @@ test("static bot-only match starts same-frame proposals in parallel", async () =
     },
     async closeSessions() {},
   } });
-  await request(handlers, "POST", "/api/match/start", { left: "cc2-s2-champion", right: "cc2-s2-champion" });
+  await request(handlers, "POST", "/api/match/start", { left: LEGACY_STATIC_ENGINE, right: LEGACY_STATIC_ENGINE });
   const stepping = handlers.handle({ method: "POST", path: "/api/match/step", body: {} });
   await startedGate;
   assert.equal(started, 2);
@@ -845,7 +1064,7 @@ test("static bot-only caps PPS-on think time but 1P keeps the configured budget"
   };
   const botOnly = createGuiRequestHandlers({ cc2 });
   await request(botOnly, "POST", "/api/match/start", {
-    left: "cc2-s2-champion", right: "s2-simple",
+    left: LEGACY_STATIC_ENGINE, right: "s2-simple",
     leftParameters: { ppsEnabled: true, pps: 4, thinkTimeEnabled: true, thinkMs: 250 },
     rightParameters: { pps: 4 },
   });
@@ -854,7 +1073,7 @@ test("static bot-only caps PPS-on think time but 1P keeps the configured budget"
 
   const onePlayer = createGuiRequestHandlers({ cc2, now: () => 0, wait: async () => {} });
   await request(onePlayer, "POST", "/api/match/start", {
-    left: "human", right: "cc2-s2-champion",
+    left: "human", right: LEGACY_STATIC_ENGINE,
     rightParameters: { ppsEnabled: true, pps: 4, thinkTimeEnabled: true, thinkMs: 250 },
   });
   await request(onePlayer, "POST", "/api/match/step", { lockFrame: 0 });
@@ -871,8 +1090,8 @@ test("fixed-selection bot-only rounds remain byte-identical for the same seed an
       async closeSessions() {},
     } });
     await request(handlers, "POST", "/api/match/start", {
-      left: "cc2-s2-champion",
-      right: "cc2-s2-champion",
+      left: LEGACY_STATIC_ENGINE,
+      right: LEGACY_STATIC_ENGINE,
       seed: 77,
       leftParameters: { ppsEnabled: false, selectionEnabled: true, selectionLimit: 512, thinkTimeEnabled: false },
       rightParameters: { ppsEnabled: false, selectionEnabled: true, selectionLimit: 512, thinkTimeEnabled: false },
@@ -881,44 +1100,6 @@ test("fixed-selection bot-only rounds remain byte-identical for the same seed an
     return request(handlers, "GET", "/api/match/round");
   };
   assert.equal(JSON.stringify(await run()), JSON.stringify(await run()));
-});
-
-test("static handler routes input-match start instead of returning not-found", async () => {
-  const handlers = createGuiRequestHandlers({ cc2: {
-    async closeSessions() {},
-  }, now: () => 0 });
-  const result = await handlers.handle({
-    method: "POST",
-    path: "/api/input-match/start",
-    body: {
-      left: "human",
-      right: "cc2-s2-f14",
-      seed: 42,
-      maxTurns: 1,
-      firstTo: 1,
-    },
-  });
-  assert.equal(result.status, 200, JSON.stringify(result.body));
-  assert.equal(result.body.sessionId, "input-1");
-});
-
-test("the 1P Reset key restarts every match state and rerolls RND", async () => {
-  const app = await readFile(new URL("../cc2-gui/app.mjs", import.meta.url), "utf8");
-  const keydown = app.slice(
-    app.indexOf("function handleHumanKeyDown"),
-    app.indexOf("function handleHumanKeyUp"),
-  );
-  assert.match(keydown, /requestHumanMatchRestart\(\)/);
-  assert.doesNotMatch(keydown, /matchStarting \|\| matchRoundFinalization/);
-
-  const restart = app.slice(
-    app.indexOf("async function activateHumanMatchReset"),
-    app.indexOf("function clearMatchArena"),
-  );
-  assert.match(restart, /if \(matchStartInFlight !== null\) await matchStartInFlight/);
-  assert.match(restart, /if \(matchRoundFinalization !== null\) await matchRoundFinalization/);
-  assert.match(restart, /excludedRandomSeed:[\s\S]*match-random-seed/);
-  assert.match(restart, /rerollRandomSeed: true/);
 });
 
 /* The 1P handicap opens the human side on a stacked board. The canary runs the

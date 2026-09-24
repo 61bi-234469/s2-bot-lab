@@ -5,6 +5,10 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::bot::{Bot, Statistics};
+use crate::f14_compat::{
+    driver::{F14Driver, F14RerankState},
+    transport::{self as f14, Profile},
+};
 
 struct Driver {
     bot: Bot,
@@ -14,6 +18,8 @@ struct Driver {
 
 thread_local! {
     static DRIVER: RefCell<Option<Driver>> = const { RefCell::new(None) };
+    static F14_DRIVER: RefCell<Option<F14Driver>> = const { RefCell::new(None) };
+    static RETAINED_F14: RefCell<Option<F14RerankState>> = const { RefCell::new(None) };
 }
 
 #[derive(Deserialize)]
@@ -27,11 +33,20 @@ enum Request {
         search_seed: String,
         state: crate::tbp::Start,
     },
+    F14Start {
+        profile: Profile,
+        request: Value,
+    },
+    F14Rerank {
+        request: Value,
+    },
     Work {
         selections: u32,
     },
     Suggest,
     SuggestNow,
+    F14Finish,
+    F14FinishEarly,
     Stop,
 }
 
@@ -68,6 +83,7 @@ pub unsafe extern "C" fn cc2_dealloc(pointer: *mut u8, length: usize) {
 fn handle_request(request: Request) -> Result<Value, &'static str> {
     match request {
         Request::Start { config, search_selection_limit, search_seed, state } => {
+            RETAINED_F14.with(|slot| *slot.borrow_mut() = None);
             let limit = match search_selection_limit {
                 Some(value) => {
                     let value = value.parse::<u64>().map_err(|_| "selection-limit")?;
@@ -83,50 +99,111 @@ fn handle_request(request: Request) -> Result<Value, &'static str> {
             };
             config.search_selection_limit = limit;
             config.search_seed = seed;
-            let bot = super::create_bot(state, Arc::new(config));
+            let bot = super::create_bot(state, Arc::new(config))
+                .map_err(|_| "s2-amount-only-start-admission")?;
+            F14_DRIVER.with(|slot| *slot.borrow_mut() = None);
             DRIVER.with(|slot| *slot.borrow_mut() = Some(Driver { bot, stats: Statistics::default(), limit }));
             Ok(Value::Null)
         }
-        Request::Work { selections } => DRIVER.with(|slot| {
-            if selections == 0 || selections > 1024 { return Err("work-selections"); }
-            let mut slot = slot.borrow_mut();
-            let driver = slot.as_mut().ok_or("no-active-bot")?;
-            let target = driver.stats.selections.saturating_add(selections as u64).min(driver.limit);
-            while driver.stats.selections < target {
-                let before = driver.stats.selections;
-                let stats = driver.bot.do_work();
-                driver.stats.accumulate(stats);
-                if driver.stats.selections == before {
-                    break;
+        Request::F14Start { profile, request } => {
+            RETAINED_F14.with(|slot| *slot.borrow_mut() = None);
+            let driver = match F14Driver::start(profile, request) {
+                Ok(driver) => driver,
+                Err(response) => {
+                    DRIVER.with(|slot| *slot.borrow_mut() = None);
+                    F14_DRIVER.with(|slot| *slot.borrow_mut() = None);
+                    return Ok(response);
                 }
+            };
+            DRIVER.with(|slot| *slot.borrow_mut() = None);
+            F14_DRIVER.with(|slot| *slot.borrow_mut() = Some(driver));
+            Ok(Value::Null)
+        }
+        Request::Work { selections } => {
+            if selections == 0 || selections > 1024 { return Err("work-selections"); }
+            if let Some(progress) = F14_DRIVER.with(|slot| {
+                let mut slot = slot.borrow_mut();
+                slot.as_mut().map(|driver| driver.work(selections))
+            }) {
+                return Ok(json!({
+                    "nodes": progress.nodes,
+                    "selections": progress.selections,
+                    "complete": progress.complete,
+                }));
             }
-            Ok(json!({ "nodes": driver.stats.nodes, "selections": driver.stats.selections, "complete": driver.stats.selections >= driver.limit }))
-        }),
+            DRIVER.with(|slot| {
+                let mut slot = slot.borrow_mut();
+                let driver = slot.as_mut().ok_or("no-active-bot")?;
+                let target = driver.stats.selections.saturating_add(selections as u64).min(driver.limit);
+                while driver.stats.selections < target {
+                    let before = driver.stats.selections;
+                    let stats = driver.bot.do_work().map_err(|_| "chain-overflow")?;
+                    driver.stats.accumulate(stats);
+                    if driver.stats.selections == before {
+                        break;
+                    }
+                }
+                Ok(json!({ "nodes": driver.stats.nodes, "selections": driver.stats.selections, "complete": driver.stats.selections >= driver.limit }))
+            })
+        }
         Request::Suggest => DRIVER.with(|slot| {
             let mut slot = slot.borrow_mut();
             let driver = slot.as_mut().ok_or("no-active-bot")?;
             while driver.stats.selections < driver.limit {
-                let stats = driver.bot.do_work();
+                let stats = driver.bot.do_work().map_err(|_| "chain-overflow")?;
                 driver.stats.accumulate(stats);
             }
-            Ok(suggestion(driver, "fixed selection budget complete"))
+            suggestion(driver, "fixed selection budget complete")
         }),
         Request::SuggestNow => DRIVER.with(|slot| {
             let mut slot = slot.borrow_mut();
             let driver = slot.as_mut().ok_or("no-active-bot")?;
-            Ok(suggestion(driver, "time budget complete"))
+            suggestion(driver, "time budget complete")
         }),
+        Request::F14Finish => F14_DRIVER.with(|slot| {
+            let driver = slot.borrow_mut().take().ok_or("no-active-bot")?;
+            let (response, retained) = driver.finish_with_retained();
+            RETAINED_F14.with(|slot| *slot.borrow_mut() = retained);
+            Ok(response)
+        }),
+        Request::F14FinishEarly => F14_DRIVER.with(|slot| {
+            let driver = slot.borrow_mut().take().ok_or("no-active-bot")?;
+            let (response, retained) = driver.finish_early_with_retained();
+            RETAINED_F14.with(|slot| *slot.borrow_mut() = retained);
+            Ok(response)
+        }),
+        Request::F14Rerank { request } => {
+            let retained = RETAINED_F14.with(|slot| slot.borrow().clone());
+            match retained {
+                Some(retained) => Ok(f14::rerank_retained(
+                    request,
+                    &retained.request,
+                    &retained.profile,
+                    &retained.outcome,
+                )),
+                None => Ok(f14::rerank_without_retained(request)),
+            }
+        }
         Request::Stop => {
             DRIVER.with(|slot| *slot.borrow_mut() = None);
+            F14_DRIVER.with(|slot| *slot.borrow_mut() = None);
+            RETAINED_F14.with(|slot| *slot.borrow_mut() = None);
             Ok(Value::Null)
         }
     }
 }
 
-fn suggestion(driver: &mut Driver, extra: &'static str) -> Value {
+fn suggestion(driver: &mut Driver, extra: &'static str) -> Result<Value, &'static str> {
     let candidates = driver.bot.suggest();
     let (moves, candidate_values): (Vec<_>, Vec<_>) = candidates.into_iter().unzip();
-    json!({
+    let extra = match driver.bot.amount_only_extra_json(
+        driver.stats.amount_top_out_omitted,
+        moves.is_empty() && driver.stats.amount_top_out_omitted > 0,
+    ) {
+        Some(json) => format!("{extra} {json}"),
+        None => extra.to_owned(),
+    };
+    Ok(json!({
         "moves": moves,
         "move_info": {
             "nodes": driver.stats.nodes,
@@ -134,7 +211,7 @@ fn suggestion(driver: &mut Driver, extra: &'static str) -> Value {
             "candidate_values": candidate_values,
             "extra": extra
         }
-    })
+    }))
 }
 
 fn encode(value: Value) -> *mut u8 {

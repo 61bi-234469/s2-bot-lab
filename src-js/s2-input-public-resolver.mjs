@@ -1,31 +1,28 @@
 import { inputDecisionFingerprint } from './input-decision-request.mjs';
 import { inputBotProfile } from './input-bot-contract.mjs';
-import { rankS2AmountOnlyPublicCandidates, projectS2AmountOnlyPublicLock } from './s2-amount-only-public-candidates.mjs';
+import { rankS2AmountOnlyPublicCandidates, projectS2AmountOnlyPublicCandidates, projectS2AmountOnlyPublicLock } from './s2-amount-only-public-candidates.mjs';
 import { QUALIFIED_STATIC_CC2_RESOLVER_POLICY } from './s2-amount-only-public-resolver.mjs';
 import { planInputTarget, INPUT_TARGET_CONTROLLER } from './triangle/input-target-planner.mjs';
 import { validateInputPublicMovement } from './triangle/input-public-movement.mjs';
 import { canonicalize } from '../scripts/cs1.mjs';
 import { sha256Hex } from './sha256.mjs';
 
-/** Opt-in product resolver: retain the qualified selector's first choice,
- * then try its other ranked candidates within one shared input-search budget.
- */
-export function resolveQualifiedInputSubmission(request, movement, {
-  maxNodes = 128, maxFrames = 60, maxTimeMs = 250, compactInputs = false,
-} = {}) {
-  const decisionFingerprint = inputDecisionFingerprint(request);
-  validateInputPublicMovement(movement);
-  const movementFingerprint = `sha256:${sha256Hex(canonicalize(movement))}`;
-  if (!Number.isSafeInteger(maxNodes) || maxNodes < 1 || maxNodes > 1024 ||
-      !Number.isSafeInteger(maxFrames) || maxFrames < 1 || maxFrames > 120 ||
-      !Number.isFinite(maxTimeMs) || maxTimeMs <= 0 || maxTimeMs > 1000) throw new Error('invalid input resolver budget');
+/** Pure placement-selection boundary for the qualified INPUT route. */
+export function orderQualifiedInputCandidates(request) {
   const options = { ...QUALIFIED_STATIC_CC2_RESOLVER_POLICY, allowCompleteReturnedPrefix: true };
-  const ranked = rankS2AmountOnlyPublicCandidates(request.decision, request.moves, options);
-  // Match selectS2AmountOnlyPublicCandidate's rescue rule using this ranking.
-  // Keep the frozen selector source unchanged; parity is covered by fixtures.
+  // Legacy F14 still uses its score and solvency rescue; already-decided
+  // orders need only the same legal projections and spin witnesses.
   const profile = inputBotProfile(request.type);
-  const nativeOrder = profile.selector === 'cc2-order/1';
-  const ordered = nativeOrder ? [...ranked.candidates].sort((a, b) => a.cc2Rank - b.cc2Rank) : ranked.candidates;
+  // `f14-core-order/1` moves arrive already in the F14 core's adoption order
+  // (its selected move first), so they are kept in request order like CC2's.
+  const coreOrder = profile.selector === 'f14-core-order/1';
+  const nativeOrder = profile.selector === 'cc2-order/1' || coreOrder;
+  const ranked = nativeOrder
+    ? projectS2AmountOnlyPublicCandidates(request.decision, request.moves, options)
+    : rankS2AmountOnlyPublicCandidates(request.decision, request.moves, options);
+  const ordered = ranked.candidates;
+  if (coreOrder && ordered[0]?.cc2Rank !== 0) throw new Error('F14 core selected move has no public projection');
+  if (nativeOrder) return { ranked, first: ordered[0], candidates: ordered, nativeOrder };
   const control = ordered[0];
   const solvent = ranked.candidates.find(candidate => candidate.solvency.solvent);
   const first = !nativeOrder && control.solvency.solvency < 0 && solvent !== undefined ? solvent : control;
@@ -36,6 +33,23 @@ export function resolveQualifiedInputSubmission(request, movement, {
   // score order within each remaining group.
   const candidates = nativeOrder ? ordered : [first, ...remaining.filter(candidate => candidate.solvency.solvent),
     ...remaining.filter(candidate => !candidate.solvency.solvent)];
+  return { ranked, first, candidates, nativeOrder };
+}
+
+/** Opt-in product resolver: retain the qualified selector's first choice,
+ * then try its other ranked candidates within one shared input-search budget.
+ */
+export function resolveQualifiedInputSubmission(request, movement, {
+  maxNodes = 128, maxFrames = 60, maxTimeMs = 250, compactInputs = false, timeProgression = true,
+  naturalGravity = true, reuse = null,
+} = {}) {
+  const decisionFingerprint = inputDecisionFingerprint(request);
+  validateInputPublicMovement(movement);
+  const movementFingerprint = `sha256:${sha256Hex(canonicalize(movement))}`;
+  if (!Number.isSafeInteger(maxNodes) || maxNodes < 1 || maxNodes > 1024 ||
+      !Number.isSafeInteger(maxFrames) || maxFrames < 1 || maxFrames > 120 ||
+      !Number.isFinite(maxTimeMs) || maxTimeMs <= 0 || maxTimeMs > 1000) throw new Error('invalid input resolver budget');
+  const { ranked, first, candidates } = orderQualifiedInputCandidates(request);
   // maxTimeMs bounds path search after ranking, not the whole synchronous
   // resolver call. Individual Engine ticks cannot be preempted.
   const startedAt = performance.now();
@@ -54,7 +68,8 @@ export function resolveQualifiedInputSubmission(request, movement, {
         Math.max(1, Math.floor(remainingNodes / (candidates.length - adoptionRank))));
     const candidateTime = Math.min(remainingTime, candidates.length > 1 && adoptionRank === 0 ? maxTimeMs * 3 / 4 : remainingTime);
     const plan = planInputTarget(request, movement, candidate, { maxNodes: candidateNodes, maxFrames, maxTimeMs: candidateTime,
-      compactInputs, allowEquivalentSpinWitness: true });
+      compactInputs, allowEquivalentSpinWitness: true, timeProgression, naturalGravity,
+      reusePlan: adoptionRank === 0 && reuse?.targetIdentity === candidate.identity ? reuse.plan : null });
     nodes += plan.nodes;
     attempts.push({ cc2Rank: candidate.cc2Rank, adoptionRank, status: plan.status,
       reason: plan.reason ?? null, nodes: plan.nodes });
@@ -67,7 +82,7 @@ export function resolveQualifiedInputSubmission(request, movement, {
       }
       return {
         status: 'planned', decisionFingerprint, movementFingerprint, controller: INPUT_TARGET_CONTROLLER,
-        placement, plan,
+        placement, plan, targetIdentity: candidate.identity,
         selection: { originalCc2Rank: first.cc2Rank, selectedCc2Rank: candidate.cc2Rank,
           adoptionRank, reason: adoptionRank === 0 ? 'preferred-reachable' : 'preferred-path-not-found', fallback }, attempts,
         fallback,

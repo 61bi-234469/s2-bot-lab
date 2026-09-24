@@ -13,13 +13,19 @@ development build is published under `preview/`. The development URL is marked `
 ## What is included
 
 - observed Season 2 ruleset simulator and canonical transition API
-- `s2-simple` final-placement bot with optional HOLD
-- browser-local bot-vs-bot and human-vs-bot play
+- browser-local bot-vs-bot and human-vs-bot play, including TTRM INPUT execution and `.ttrm` export
 - `.ttrm` replay import and playback; uploaded files are processed locally
-- deterministic browser-WASM Cold Clear 2: raw upstream, the chouhy fork, and six S2 development
-  snapshots (`S2`, `Gen017`, `F11`, `F12`, `F14`, and `F25`)
+- deterministic browser-WASM Cold Clear 2: raw upstream, the chouhy fork, the S2 `F14` development
+  snapshot, and the current S2 development champion (not release-qualified)
 
-The Pages build runs those eight Cold Clear 2 entries in browser module workers. It bundles three
+The bot selectors (single analysis and bot-vs-bot) offer these four bots plus a comparison entry,
+the same set as TTRM INPUT, and You (1P) on the left; the local Node server offers the same list.
+The comparison entry is the previous INPUT champion route: CC2 candidates ranked by the earlier F14
+amount-only selector, run on the current S2 engine. It is not a restoration of the earlier binary.
+The champion's defaults (512 selections, THINK TIME off, queue 14) are the champion itself;
+SELECTION, THINK TIME and QUEUE DEPTH can be changed like the other bots.
+The Pages build runs these Cold Clear 2 entries
+in browser module workers. It bundles three
 import-free WebAssembly engines and the matching S2 configurations, so the browser entries do not
 require a native executable or the local Node server. WebAssembly and module-worker support are
 required in the browser.

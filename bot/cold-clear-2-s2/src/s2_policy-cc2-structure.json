@@ -1,0 +1,15 @@
+{
+  "featureVersion": "s2-cc2-h-r-features/2",
+  "geometry": ["0", "-5", "-2.2", "0", "-0.2", "2", "2.6", "3.2", "3.2", "-0.6", "-0.45", "-10", "-45"],
+  "out": "1.2",
+  "cancel": "1",
+  "conversion": "28",
+  "tank": "-2.5",
+  "soft": "-0.03",
+  "wasteT": "-2.2",
+  "b2b": "0.7",
+  "pending": "-0.3",
+  "margin": "0.4",
+  "exploration": "0.6931471805599453",
+  "riskEnabled": true
+}

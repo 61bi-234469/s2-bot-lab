@@ -28,6 +28,18 @@ self.onmessage = async ({ data }) => {
         throw new Error(`CC2 resolution engine identity mismatch for ${payload.type}`);
       }
       self.postMessage({ id, ok: true, value: resolveQualifiedStaticCc2Submission(payload) });
+    } else if (type === "decideF14") {
+      if (session === null) throw new Error("CC2 worker session is not initialized");
+      if (payload.type !== engine || payload.engine?.botType !== engine || payload.engine?.engineId !== engine) {
+        throw new Error(`CC2 F14 engine identity mismatch for ${payload.type}`);
+      }
+      self.postMessage({ id, ok: true, value: await session.decideF14({ request: payload.request, profile: payload.profile }) });
+    } else if (type === "rerankF14") {
+      if (session === null) throw new Error("CC2 worker session is not initialized");
+      if (payload.type !== engine || payload.engine?.botType !== engine || payload.engine?.engineId !== engine) {
+        throw new Error(`CC2 F14 engine identity mismatch for ${payload.type}`);
+      }
+      self.postMessage({ id, ok: true, value: await session.rerankF14({ request: payload.request, profile: payload.profile }) });
     } else if (type === 'resolveInput') {
       if (!session || payload.request?.type !== engine || payload.request.engine?.engineId !== engine) throw new Error('input resolution identity mismatch');
       self.postMessage({ id, ok: true, value: resolveInputJob(payload) });

@@ -91,11 +91,15 @@ test("the persisted schema covers every mode, both sides and no duplicate contro
   assert.equal(new Set(ids).size, ids.length);
 });
 
-test("the 1P handicap toggle is stored and a foreign value falls back to the markup default", () => {
-  const stored = sanitizePreferences({ toggles: { "match-handicap-garbage": true } }, normalizeBotParameters);
-  assert.equal(stored.toggles["match-handicap-garbage"], true);
-  const disabled = sanitizePreferences({ toggles: { "match-handicap-garbage": false } }, normalizeBotParameters);
-  assert.equal(disabled.toggles["match-handicap-garbage"], false);
+test("the 1P match-rule controls keep their preference ids", () => {
+  const stored = sanitizePreferences({
+    controls: { "match-turn-order": "human-first", "match-stall-lock-pps": "2.5", "match-stall-lock-penalty": "forced-lock" },
+    toggles: { "match-handicap-garbage": true, "match-stall-lock": true, "match-turn-match": true },
+  }, normalizeBotParameters);
+  assert.deepEqual(stored.controls, {
+    "match-turn-order": "human-first", "match-stall-lock-pps": "2.5", "match-stall-lock-penalty": "forced-lock",
+  });
+  assert.deepEqual(stored.toggles, { "match-handicap-garbage": true, "match-stall-lock": true, "match-turn-match": true });
   const foreign = sanitizePreferences({ toggles: { "match-handicap-garbage": "28" } }, normalizeBotParameters);
   assert.equal("match-handicap-garbage" in foreign.toggles, false);
 });

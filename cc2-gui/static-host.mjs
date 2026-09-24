@@ -43,26 +43,7 @@ export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTim
         await closeEntry(sessionKey, entry);
         entry = undefined;
       }
-      if (entry === undefined) {
-        entry = {
-          engine,
-          inputCandidates,
-          selectionLimit,
-          workerSession: null,
-          idleTimer: null,
-        };
-        sessions.set(sessionKey, entry);
-        const initialized = entry;
-        entry.initializing = createWorkerSession({ WorkerType, engine, selectionLimit }).then(async workerSession => {
-          initialized.workerSession = workerSession;
-          if (sessions.get(sessionKey) !== initialized) {
-            await workerSession.close();
-            throw new Error('CC2 worker session was replaced during initialization');
-          }
-          return workerSession;
-        });
-        void entry.initializing.catch(() => {});
-      }
+      if (entry === undefined) entry = createSessionEntry(sessionKey, engine, inputCandidates, selectionLimit);
       clearIdleClose(entry);
       try {
         await entry.initializing;
@@ -89,6 +70,75 @@ export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTim
       try {
         if (entry.workerSession === null) await entry.initializing;
         const result = await entry.workerSession.resolve(request);
+        if (sessions.get(sessionKey) !== entry) throw new Error("CC2 worker session was replaced");
+        scheduleIdleClose(sessionKey, entry);
+        return result;
+      } catch (error) {
+        await closeEntry(sessionKey, entry);
+        throw error;
+      }
+    },
+
+    async decideF14(payload) {
+      const { sessionKey, type, engine } = payload ?? {};
+      if (typeof sessionKey !== "string" || sessionKey.length === 0) throw new Error("CC2 sessionKey is required");
+      if (engine?.botType !== type || engine?.engineId !== type) {
+        throw new Error(`CC2 F14 engine identity mismatch for ${type}`);
+      }
+      let entry = sessions.get(sessionKey);
+      // Like propose: a key reused for another bot (the analysis deck switching
+      // to the champion) gets a fresh worker instead of an identity error.
+      if (entry !== undefined && (entry.engine !== type || entry.inputCandidates || entry.selectionLimit !== null)) {
+        await closeEntry(sessionKey, entry);
+        entry = undefined;
+      }
+      if (entry === undefined) entry = createSessionEntry(sessionKey, type, false, null);
+      if (entry.engine !== type) {
+        throw new Error(`CC2 F14 engine identity mismatch for ${type}`);
+      }
+      clearIdleClose(entry);
+      try {
+        if (entry.workerSession === null) await entry.initializing;
+        const result = await entry.workerSession.decideF14(payload);
+        if (sessions.get(sessionKey) !== entry) throw new Error("CC2 worker session was replaced");
+        scheduleIdleClose(sessionKey, entry);
+        return result;
+      } catch (error) {
+        await closeEntry(sessionKey, entry);
+        throw error;
+      }
+    },
+
+    // A predicted next request searched on the live worker; its result stays
+    // retained there for rerankF14. A failure only loses the head start.
+    async speculateF14(payload) {
+      const { sessionKey, type, engine } = payload ?? {};
+      if (engine?.botType !== type || engine?.engineId !== type) {
+        throw new Error(`CC2 F14 engine identity mismatch for ${type}`);
+      }
+      const entry = sessions.get(sessionKey);
+      if (entry === undefined || entry.engine !== type || entry.inputCandidates || entry.selectionLimit !== null) {
+        throw new Error("CC2 F14 speculation is unavailable");
+      }
+      if (entry.workerSession === null) await entry.initializing;
+      return entry.workerSession.decideF14(payload);
+    },
+
+    async rerankF14(payload) {
+      const { sessionKey, type, engine } = payload ?? {};
+      if (typeof sessionKey !== "string" || sessionKey.length === 0) throw new Error("CC2 sessionKey is required");
+      if (engine?.botType !== type || engine?.engineId !== type) {
+        throw new Error(`CC2 F14 engine identity mismatch for ${type}`);
+      }
+      const entry = sessions.get(sessionKey);
+      if (entry === undefined) throw new Error("CC2 F14 rerank is unavailable: session not initialized");
+      if (entry.engine !== type || entry.inputCandidates || entry.selectionLimit !== null) {
+        throw new Error(`CC2 F14 engine identity mismatch for ${type}`);
+      }
+      clearIdleClose(entry);
+      try {
+        if (entry.workerSession === null) await entry.initializing;
+        const result = await entry.workerSession.rerankF14(payload);
         if (sessions.get(sessionKey) !== entry) throw new Error("CC2 worker session was replaced");
         scheduleIdleClose(sessionKey, entry);
         return result;
@@ -128,6 +178,28 @@ export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTim
   function clearIdleClose(entry) {
     if (entry.idleTimer !== null) clearTimeout(entry.idleTimer);
     entry.idleTimer = null;
+  }
+
+  function createSessionEntry(sessionKey, engine, inputCandidates, selectionLimit) {
+    const entry = {
+      engine,
+      inputCandidates,
+      selectionLimit,
+      workerSession: null,
+      idleTimer: null,
+    };
+    sessions.set(sessionKey, entry);
+    const initialized = entry;
+    entry.initializing = createWorkerSession({ WorkerType, engine, selectionLimit }).then(async workerSession => {
+      initialized.workerSession = workerSession;
+      if (sessions.get(sessionKey) !== initialized) {
+        await workerSession.close();
+        throw new Error('CC2 worker session was replaced during initialization');
+      }
+      return workerSession;
+    });
+    void entry.initializing.catch(() => {});
+    return entry;
   }
 
   async function closeEntry(sessionKey, entry) {
@@ -175,9 +247,9 @@ async function createWorkerSession({ WorkerType, engine, selectionLimit }) {
     pending.set(id, { resolve, reject });
     worker.postMessage({ id, type, payload });
   });
-  const configUrl = engine === "cc2-s2-champion"
+  const configUrl = ["cc2-s2-champion", "cc2-s2-champion-legacy"].includes(engine)
     ? "./cc2-s2-spawn-integrity-substrate-v2.json"
-    : engine === "cc2-s2" || !engine.startsWith("cc2-s2")
+    : !engine.startsWith("cc2-s2")
       ? null
       : "./cc2-s2-spin-value-aligned.json";
   try {
@@ -189,6 +261,8 @@ async function createWorkerSession({ WorkerType, engine, selectionLimit }) {
   return Object.freeze({
     suggest: ({ state, thinkMs }) => request("suggest", { state, thinkMs }),
     resolve: (payload) => request("resolve", payload),
+    decideF14: (payload) => request("decideF14", payload),
+    rerankF14: (payload) => request("rerankF14", payload),
     resolveInput: (payload) => request('resolveInput', payload),
     async close() {
       if (closed) return;

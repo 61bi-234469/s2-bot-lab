@@ -29,16 +29,12 @@ import {
   fairComparisonBotParameters,
   normalizeBotParameters,
 } from "/shared/bot-parameters.mjs";
-import {
-  canonicalPlacementToGuiMove,
-  simpleAnalysisToVerification,
-} from "./analysis-proposal.mjs";
+import { canonicalPlacementToGuiMove } from "./analysis-proposal.mjs";
 import {
   CANDIDATE_COUNT_LIMIT,
   markCandidateSelection,
   moveIdentity,
   renderCandidateList,
-  simpleAnalysisCandidateRows,
 } from "./analysis-candidates.mjs";
 import {
   HUMAN_ACTIONS,
@@ -94,6 +90,10 @@ import {
 
 const elements = Object.fromEntries([...document.querySelectorAll("[id]")].map((node) => [node.id, node]));
 const BOT_SIDES = Object.freeze(["left", "right"]);
+/* Before a match the metrics read as a round that has not started, rather than
+   being absent: the grid below each field keeps its height, so the arena does
+   not jump when the first view arrives or after RESET. */
+const EMPTY_MATCH_METRICS = calculatePlayerMetrics({ pieces: 0, attack: 0, garbageCleared: 0, elapsedFrames: 0 });
 const INPUT_EXECUTION_PROFILE = "s2-input-execution/1";
 const INPUT_MATCH_ENDPOINT = "/api/input-match";
 const INPUT_SUPPORTED_TYPES = new Set(["human", ...Object.keys(INPUT_BOT_PROFILES)]);
@@ -267,14 +267,31 @@ elements["match-stall-lock"].addEventListener("change", () => {
 });
 elements["match-handicap-garbage"].addEventListener("change", () => {
   renderExecutionScopeNotes();
+  renderBotSettingsSummary("left");
   renderMatchSaveButton();
 });
-/* One delegated listener rather than one per control: every setting in this row
-   shows up on the disclosure's closed bar, so each of them has to refresh it. */
+/* A turn match runs on either execution path, so the switch only has to keep
+   the controls it does rule out — the pace budget and the `.ttrm` export — in
+   step with itself. */
+elements["match-turn-match"].addEventListener("change", () => {
+  syncTurnMatchControl();
+  syncStallLockControl();
+  syncHumanMatchControls();
+  renderBotSettingsSummary("left");
+  renderMatchSaveButton();
+  if (lastMatchView === null) renderEmptyMatchFields();
+  savePreferences();
+});
+/* The disclosure owns the path and pacing summary. The 1P rule controls live in
+   the human dialog, whose picker summary needs the same immediate refresh. */
 elements["match-settings"].addEventListener("input", () => renderExecutionScopeNotes());
+elements["human-match-rules"].addEventListener("input", syncHumanMatchRuleSummary);
+elements["human-match-rules"].addEventListener("change", syncHumanMatchRuleSummary);
 elements["match-fair-comparison"].addEventListener("change", syncFairComparisonControls);
 elements["match-ttrm-compatible"].addEventListener("change", () => {
   clampInputQueueDepths();
+  syncTurnMatchControl();
+  syncStallLockControl();
   syncHumanMatchControls();
   syncFairComparisonControls();
   renderMatchSaveButton();
@@ -309,6 +326,7 @@ document.addEventListener("visibilitychange", () => {
 });
 syncMaxTurnsControl();
 syncRandomSeedControl();
+syncTurnMatchControl();
 syncStallLockControl();
 syncHumanMatchControls();
 syncFairComparisonControls();
@@ -405,7 +423,12 @@ async function loadBotCapabilities() {
     if (!response.ok || !Array.isArray(capabilities.bots)) throw new Error("bot capability response is invalid");
   } catch (error) {
     capabilities = {
-      bots: [{ id: "s2-simple", label: "S2 placement bot", available: true }],
+      bots: [{
+        id: "bot-list",
+        label: "Bot list",
+        available: false,
+        reason: error instanceof Error ? error.message : String(error),
+      }],
     };
   }
   b2bCharging = capabilities.ruleset?.b2bCharging ?? false;
@@ -426,22 +449,37 @@ async function loadBotCapabilities() {
     const select = elements[selectId];
     for (const option of select.options) {
       const bot = byId.get(option.value);
-      if (!bot) continue;
+      if (!bot) {
+        option.disabled = true;
+        option.dataset.unavailable = "true";
+        option.dataset.reason = "この実行環境では利用できません";
+        option.title = option.dataset.reason;
+        continue;
+      }
       /* Whether the build has the bot at all is kept on the option, because the
          execution path also greys options and the two reasons must not
          overwrite each other. */
       option.dataset.unavailable = String(bot.available === false);
       option.dataset.reason = bot.reason ?? "";
+      /* INPUT can run a bot through a different executable than final
+         placement, so a host may report its availability separately. */
+      if (typeof bot.inputAvailable === "boolean") {
+        option.dataset.inputUnavailable = String(!bot.inputAvailable);
+        option.dataset.inputReason = bot.inputReason ?? "";
+      }
       option.disabled = bot.available === false;
-      option.textContent = bot.available === false ? `${bot.label} · unavailable` : bot.label;
+      option.textContent = bot.available === false && bot.inputAvailable !== true ? `${bot.label} · unavailable` : bot.label;
       option.title = bot.reason ?? "";
     }
+  }
+  syncInputBotOptions();
+  for (const selectId of ["analysis-bot", "left-bot", "right-bot"]) {
+    const select = elements[selectId];
     if (select.selectedOptions[0]?.disabled) {
       select.value = [...select.options].find((option) => !option.disabled)?.value ?? "";
     }
   }
-  syncInputBotOptions();
-  const unavailable = [...byId.values()].filter((bot) => bot.available === false);
+  const unavailable = [...byId.values()].filter((bot) => bot.available === false && bot.inputAvailable !== true);
   if (unavailable.length > 0) {
     elements["match-bot-note"].hidden = false;
     elements["match-bot-note"].textContent = `現在使えないBot: ${unavailable.map((bot) => `${bot.label}（${bot.reason}）`).join("、")}`;
@@ -467,10 +505,14 @@ function openBotSettings(side) {
   elements["bot-settings-description"].textContent = `${capability.description ?? ""}${fairNote}`;
   setBotSettingsValidation("");
   if (botType === "human") {
-    elements["bot-settings-fields"].replaceChildren(...humanSettingsFields());
+    elements["bot-settings-fields"].hidden = true;
+    elements["human-settings-fields"].hidden = false;
+    elements["human-handling-fields"].replaceChildren(...humanSettingsFields());
     elements["bot-settings-dialog"].showModal();
     return;
   }
+  elements["bot-settings-fields"].hidden = false;
+  elements["human-settings-fields"].hidden = true;
   elements["bot-settings-fields"].replaceChildren(...botSettingsFields(capability, values));
   syncBotSettingsForm(capability);
   elements["bot-settings-dialog"].showModal();
@@ -552,7 +594,7 @@ function botParameterRow(parameter, values, { nested = false, describe = true, s
     input.type = "number";
     input.min = parameter.minimum;
     input.max = parameter.maximum;
-    if (parameter.key === "queueDepth" && inputModeSelected()) input.max = 15;
+    if (parameter.key === "queueDepth" && inputModeSelected()) input.max = Math.min(15, parameter.maximum);
     input.step = parameter.step;
     input.value = values[parameter.key];
   }
@@ -680,7 +722,7 @@ function renderSearchBudgetSummary(form, selection, thinkTime) {
     : `有効 > ${limits[0] ?? "なし"}`;
 }
 
-/* The 1P settings are laid out like the `input` and `keys` tabs of the reference
+/* The 1P handling settings are laid out like the `input` and `keys` tabs of the reference
    fork: the handling values first, then one rebindable row per action. A key row
    captures `KeyboardEvent.code`, so a binding follows the physical key rather
    than whatever the current keyboard layout prints on it. */
@@ -773,9 +815,22 @@ function captureKeyBinding(event) {
   event.currentTarget.value = formatKeyCode(event.code);
 }
 
+/* The dialog's one form now holds both panels and the live 1P match rules, so
+   whole-form validation would let a hidden panel's field, or MINIMUM PACE,
+   block a handling save. Only the panel being saved is checked. */
+function reportPanelValidity(panelId) {
+  for (const control of elements[panelId].querySelectorAll("input, select")) {
+    if (!control.checkValidity()) {
+      control.reportValidity();
+      return false;
+    }
+  }
+  return true;
+}
+
 function saveHumanSettings() {
   const form = elements["bot-settings-form"];
-  if (!form.reportValidity()) return false;
+  if (!reportPanelValidity("human-handling-fields")) return false;
   const handling = Object.fromEntries(HUMAN_HANDLING_FIELDS.map((field) => {
     const input = form.elements.namedItem(`human-handling-${field.key}`);
     if (field.type === "boolean") return [field.key, input.checked];
@@ -808,7 +863,7 @@ function saveBotSettings(event) {
   const capability = botCapabilities.get(botType) ?? BOT_PARAMETER_DEFINITIONS[botType];
   const values = botParameters[side][botType];
   const form = elements["bot-settings-form"];
-  if (!form.reportValidity()) return;
+  if (!reportPanelValidity("bot-settings-fields")) return;
   const selection = form.elements.namedItem("selectionEnabled");
   const thinkTime = form.elements.namedItem("thinkTimeEnabled");
   if (selection instanceof HTMLInputElement && thinkTime instanceof HTMLInputElement
@@ -835,16 +890,22 @@ function saveBotSettings(event) {
 
 function renderBotSettingsSummary(side) {
   const botType = elements[`${side}-bot`].value;
+  const summary = elements[`${side}-bot-settings-summary`];
   const capability = botCapabilities.get(botType) ?? BOT_PARAMETER_DEFINITIONS[botType];
   const configuredValues = botParameters[side][botType];
   const values = fairComparisonEnabled()
     ? fairComparisonBotParameters(botType, configuredValues)
     : configuredValues;
   if (botType === "human") {
-    elements[`${side}-bot-settings-summary`].textContent = describeHumanControls(humanControls);
+    const handlingSummary = describeHumanControls(humanControls);
+    const ruleSummary = side === "left"
+      ? `TURN ${humanTurnMatchSummary()} · HANDI ${humanHandicapSummary()} · STALL ${humanStallSummary()}`
+      : "";
+    summary.textContent = [handlingSummary, ruleSummary]
+      .filter(Boolean).join(" · ");
     return;
   }
-  elements[`${side}-bot-settings-summary`].textContent = capability.parameters.filter((parameter) => {
+  summary.textContent = capability.parameters.filter((parameter) => {
     // A limit whose toggle is off does not bound anything, and listing it beside
     // that OFF was the same contradiction the dialog used to show.
     if (parameter.controlledBy === undefined) return true;
@@ -857,6 +918,27 @@ function renderBotSettingsSummary(side) {
     const source = fairComparisonEnabled() ? " (FAIR)" : "";
     return `${parameter.label} ${value}${parameter.suffix ? ` ${parameter.suffix}` : ""}${overriddenPps ? source : ""}`;
   }).join(" · ");
+}
+
+function humanTurnMatchSummary() {
+  if (!elements["match-turn-match"].checked) return "OFF";
+  return ({ simultaneous: "同時", "human-first": "1P先行", "bot-first": "bot先行" })[elements["match-turn-order"].value];
+}
+
+function humanHandicapSummary() {
+  return elements["match-handicap-garbage"].checked ? "ON" : "OFF";
+}
+
+function humanStallSummary() {
+  if (elements["match-turn-match"].checked) return "—";
+  if (!elements["match-stall-lock"].checked) return "OFF";
+  const penalty = elements["match-stall-lock-penalty"].value === "penalty-line" ? "LINE" : "LOCK";
+  return `${elements["match-stall-lock-pps"].value} PPS ${penalty}`;
+}
+
+function syncHumanMatchRuleSummary() {
+  renderExecutionScopeNotes();
+  renderBotSettingsSummary("left");
 }
 
 async function think() {
@@ -878,23 +960,19 @@ async function think() {
   try {
     const suggestionStartedAt = performance.now();
     const simpleRequest = requestSimpleAnalysis(s2Snapshot, 5);
-    const suggestionRequest = engine === "s2-simple" ? null : requestSuggestion(engine, cc2Snapshot);
-    const [s2, response] = await Promise.all([simpleRequest, suggestionRequest]);
-    const body = response === null ? null : await response.json();
+    const [s2, response] = await Promise.all([simpleRequest, requestSuggestion(engine, cc2Snapshot, s2Snapshot)]);
+    const body = await response.json();
     if (generation !== analysisGeneration) return;
-    if (response !== null && !response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
+    if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
     const suggestionElapsedMs = Math.max(1, performance.now() - suggestionStartedAt);
     pendingThinkElapsedMs = suggestionElapsedMs;
 
     let verification;
-    if (engine === "s2-simple") {
-      verification = simpleAnalysisToVerification(s2);
-      pendingMove = canonicalPlacementToGuiMove(
-        s2.moves[0].placement,
-        verification.transition.lockResult.spin,
-      );
+    pendingMove = body.suggestion.moves[0];
+    if (botCapabilities.get(engine)?.fixedDecision) {
+      verification = body.verification;
+      if (verification?.transition?.legality?.legal !== true) throw new Error("F14 native decision verification missing");
     } else {
-      pendingMove = body.suggestion.moves[0];
       const verificationResponse = await fetch("/api/apply-s2", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -926,15 +1004,11 @@ async function think() {
     const lock = verification.transition.lockResult;
     const attack = verification.transition.attackStages.outgoingBeforeCancel;
     const clear = clearLabel(lock.spin, lock.lines, lock.perfectClear) || "NO CLEAR";
-    const cc2Diagnostic = engine === "s2-simple" ? "" : ` · CC2 label ${pendingMove.spin}`;
-    if (engine === "s2-simple") {
-      elements["nodes-value"].textContent = compact(s2.generatedMoves);
-      elements["nps-value"].textContent = "—";
-    } else {
-      const info = body.suggestion.move_info;
-      elements["nodes-value"].textContent = compact(info.nodes);
-      elements["nps-value"].textContent = Number.isFinite(info.nps) ? compact(Math.round(info.nps)) : "—";
-    }
+    const cc2Diagnostic = ` · CC2 label ${pendingMove.spin}`;
+    // An F14 core decision reports its search in nativeDecision, not move_info.
+    const info = body.suggestion.move_info ?? { nodes: body.nativeDecision?.search?.nodes };
+    elements["nodes-value"].textContent = Number.isFinite(info.nodes) ? compact(info.nodes) : "—";
+    elements["nps-value"].textContent = Number.isFinite(info.nps) ? compact(Math.round(info.nps)) : "—";
     elements["suggestion-move"].textContent = formatMove(pendingMove);
     elements["suggestion-detail"].textContent = `S2: ${clear} · ${attack} attack${cc2Diagnostic}`;
     setStatus("ready", "SUGGESTED");
@@ -945,8 +1019,7 @@ async function think() {
     if (autoplay) setTimeout(applyPending, 180);
   } catch (error) {
     if (generation !== analysisGeneration) return;
-    autoplay = false;
-    elements["auto-button"].setAttribute("aria-pressed", "false");
+    stopAutoplay();
     elements["suggestion-detail"].textContent = error instanceof Error ? error.message : String(error);
     setStatus("error", "ERROR");
   } finally {
@@ -982,7 +1055,7 @@ async function applyPending() {
     renderAnalysisBusy();
     if (autoplay && !game.toppedOut) setTimeout(think, 220);
   } catch (error) {
-    autoplay = false;
+    stopAutoplay();
     elements["suggestion-detail"].textContent = error instanceof Error ? error.message : String(error);
     setStatus("error", "DESYNC");
   }
@@ -991,8 +1064,14 @@ async function applyPending() {
 function toggleAutoplay() {
   autoplay = !autoplay;
   elements["auto-button"].setAttribute("aria-pressed", String(autoplay));
-  elements["auto-button"].textContent = autoplay ? "停止" : "自動再生";
+  setAnalysisActionLabel("auto-button", autoplay ? "STOP" : "AUTOPLAY", autoplay ? "停止" : "自動再生");
   if (autoplay && !thinking) pendingMove === null ? think() : applyPending();
+}
+
+function setAnalysisActionLabel(id, label, japanese) {
+  const button = elements[id];
+  button.querySelector(".button-label").textContent = label;
+  button.querySelector("small").textContent = japanese;
 }
 
 /* Switching modes hides a panel, so whichever loop the leaving mode was running
@@ -1035,7 +1114,7 @@ function handleModeTabKeydown(event) {
 function stopAutoplay() {
   autoplay = false;
   elements["auto-button"].setAttribute("aria-pressed", "false");
-  elements["auto-button"].textContent = "自動再生";
+  setAnalysisActionLabel("auto-button", "AUTOPLAY", "自動再生");
 }
 
 function reset() {
@@ -1057,7 +1136,7 @@ function clearAnalysisProposal() {
   pendingVerification = null;
   pendingThinkElapsedMs = 0;
   elements["suggestion-move"].textContent = "—";
-  elements["suggestion-detail"].textContent = "「考える」で探索を開始";
+  elements["suggestion-detail"].textContent = "「THINK」で探索を開始";
   elements["nodes-value"].textContent = "—";
   elements["nps-value"].textContent = "—";
   resetComparison();
@@ -1073,6 +1152,16 @@ function renderAnalysisEngineIdentity() {
   const label = capability?.label ?? elements["analysis-bot"].selectedOptions[0]?.textContent ?? botType;
   elements["suggestion-engine-label"].textContent = `${label.toUpperCase()} SUGGESTION`;
   elements["comparison-engine-label"].textContent = `${label.toUpperCase()} · S2 VERIFIED`;
+  const fixed = capability?.fixedDecision === true;
+  elements["think-ms"].disabled = fixed;
+  elements["think-ms"].title = fixed ? "championの単体解析は既定設定（512 selections）で判断します。対戦時の設定は SETTINGS で変更できます" : "";
+  const count = elements["candidate-count"];
+  if (fixed && count.value !== "1") {
+    count.dataset.previousCount = count.value;
+    if (![...count.options].some(option => option.value === "1")) count.add(new Option("確定 1 手", "1"));
+    count.value = "1";
+  } else if (!fixed && count.value === "1") count.value = count.dataset.previousCount ?? "5";
+  count.disabled = fixed;
 }
 
 /* 考える and 候補 ask the same proposer about the same position, so only one of
@@ -1124,9 +1213,7 @@ async function loadCandidates() {
   try {
     const startedAt = performance.now();
     const reference = await requestSimpleAnalysis(s2Snapshot, count);
-    const rows = engine === "s2-simple"
-      ? simpleAnalysisCandidateRows(reference, count)
-      : await requestCc2CandidateRows(engine, cc2Snapshot, s2Snapshot, count);
+    const rows = await requestCc2CandidateRows(engine, cc2Snapshot, s2Snapshot, count);
     if (generation !== analysisGeneration) return;
     candidateElapsedMs = Math.max(1, performance.now() - startedAt);
     candidateReference = reference;
@@ -1155,9 +1242,13 @@ async function loadCandidates() {
 }
 
 async function requestCc2CandidateRows(engine, cc2State, s2State, count) {
-  const response = await requestSuggestion(engine, cc2State);
+  const response = await requestSuggestion(engine, cc2State, s2State);
   const body = await response.json();
   if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
+  if (botCapabilities.get(engine)?.fixedDecision) {
+    if (body.verification?.transition?.legality?.legal !== true) throw new Error("F14 native decision verification missing");
+    return [{ move: body.suggestion.moves[0], verification: body.verification }];
+  }
   return Promise.all(body.suggestion.moves.slice(0, count)
     .map((move) => verifyCandidate(engine, s2State, move)));
 }
@@ -1275,7 +1366,7 @@ async function requestSimpleAnalysis(state, n) {
   return analysis;
 }
 
-function requestSuggestion(engine, cc2State) {
+function requestSuggestion(engine, cc2State, s2State = null) {
   return fetch("/api/suggest", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -1283,12 +1374,12 @@ function requestSuggestion(engine, cc2State) {
       engine,
       parameters: {
         ...defaultBotParameters(engine),
-        selectionEnabled: false,
-        thinkTimeEnabled: true,
+        selectionEnabled: botCapabilities.get(engine)?.fixedDecision === true,
+        thinkTimeEnabled: botCapabilities.get(engine)?.fixedDecision !== true,
         thinkMs: Number(elements["think-ms"].value),
       },
       thinkMs: Number(elements["think-ms"].value),
-      state: cc2State,
+      state: botCapabilities.get(engine)?.fixedDecision ? s2State : cc2State,
     }),
   });
 }
@@ -1336,6 +1427,7 @@ async function performStartMatch({ excludedRandomSeed = null } = {}) {
     matchAutoplay = false;
     matchClock = setMatchClockRunning(matchClock, false, performance.now());
     matchSeries = null;
+    renderMatchSummary();
     setMatchSettingsDisabled(false);
     renderMatchRunButton();
   }
@@ -1464,7 +1556,7 @@ function spawnHumanPiece() {
 
 function humanCanAct() {
   return human !== null && human.active !== null && !human.pending && matchRunning &&
-    matchAutoplay && !matchCountingDown();
+    matchAutoplay && !matchCountingDown() && humanTurnDue();
 }
 
 function humanMoveBy(dx) {
@@ -1615,7 +1707,9 @@ function applyStallLock() {
 
 async function humanHardDrop() {
   if (inputHumanActive()) {
-    enqueueInputTap("hardDrop");
+    // The referee withholds an out-of-turn hard drop anyway; not sending it
+    // keeps the consumed input log free of presses that were never played.
+    if (humanTurnDue()) enqueueInputTap("hardDrop");
     return;
   }
   if (!humanCanAct()) return;
@@ -1648,6 +1742,9 @@ async function submitHumanLock(landed, { penaltyLock = false } = {}) {
     const penaltyTopOut = adoptHumanView(body, { penaltyLock });
     if (body.outcome.complete) finishSeriesGame(body);
     else if (penaltyTopOut) await submitHumanPenaltyTopOut();
+    // A turn match has no standing opponent schedule: the turn this lock just
+    // handed over is what asks the opponent to play.
+    else if (turnMatchActive()) scheduleHumanMatchBotStep(body);
   } catch (error) {
     if (generation === matchGeneration) handleMatchError(error);
   }
@@ -1856,8 +1953,10 @@ function createMatchSeries({ excludedRandomSeed = null } = {}) {
         : readBoundedInteger("match-max-turns", 1, 10_000),
       firstTo: readBoundedInteger("match-count", 1, 100),
       preLockPreview: elements["match-pre-lock-preview"].checked,
+      timeProgression: timeProgressionSetting(),
       stallLock: stallLockSettings(),
       handicap: handicapSettings(),
+      turnMatch: turnMatchSettings(),
     },
     completed: 0,
     leftWins: 0,
@@ -1892,7 +1991,9 @@ async function startSeriesGame() {
       rightParameters: config.rightParameters,
       fairComparison: config.fairComparison,
       ...(inputMode ? { ttrmCompatible: true, humanControls: structuredClone(humanControls),
+        timeProgression: config.timeProgression !== false,
         stallLock: structuredClone(config.stallLock ?? { enabled: false, pps: null, penalty: null }) } : {}),
+      turnMatch: structuredClone(config.turnMatch ?? { enabled: false }),
       handicap: structuredClone(config.handicap ?? { enabled: false }),
       seed,
       maxTurns: config.maxTurns,
@@ -1915,7 +2016,10 @@ async function startSeriesGame() {
   matchRunning = true;
   // A round a person is on opens behind a countdown, which is the one stretch of
   // a started round where nothing may advance yet.
-  const opensWithCountdown = body.humanSide !== null && matchAutoplay;
+  // The countdown exists so a real-time round starts on GO rather than on the
+  // moment the server answered. A turn match has no clock to start, and its
+  // first turn waits for whoever owns it.
+  const opensWithCountdown = body.humanSide !== null && matchAutoplay && !turnMatchActive();
   if (inputMode) {
     inputMatchState = {
       sessionId: body.sessionId,
@@ -2039,6 +2143,13 @@ function renderStartCountdown(label) {
 function scheduleHumanMatchBotStep(view) {
   cancelHumanMatchBotStep();
   if (human === null || !matchRunning || !matchAutoplay) return;
+  /* A turn match steps the opponent only while the person is not the due side.
+     Their own turn is advanced by their hard drop, never by a timer. */
+  if (turnMatchActive()) {
+    if (view.dueBotIds.includes(human.side)) return;
+    humanBotStepTimer = setTimeout(stepMatch, 0);
+    return;
+  }
   if (!Number.isFinite(view.nextStepFrames)) return;
   // Start thinking immediately. The handler holds an early answer until its
   // scheduled frame and records a late answer at its actual completion frame.
@@ -2242,7 +2353,9 @@ async function stepMatch() {
   const previousMetricElapsedMs = matchPlaybackElapsedMs;
   try {
     const nowMs = performance.now();
-    const lockFrame = human === null ? null : Math.floor(readMatchClock(matchClock, nowMs) * 60 / 1000);
+    const lockFrame = human === null || turnMatchActive()
+      ? null
+      : Math.floor(readMatchClock(matchClock, nowMs) * 60 / 1000);
     const response = await fetch("/api/match/step", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -2655,15 +2768,20 @@ function renderMatchRunButton() {
   button.textContent = { start: "START MATCH", running: "PAUSE", paused: "RESUME" }[state];
   button.setAttribute("aria-pressed", String(state === "running"));
   button.disabled = matchStarting || matchRoundFinalization !== null;
+  renderTurnIndicator();
 }
 
 function renderMatchSummary() {
   if (matchSeries === null) {
+    elements["match-summary"].dataset.state = "empty";
     elements["match-summary"].textContent = "NO SERIES RESULTS";
     renderMatchSaveButton();
     return;
   }
   const average = matchSeries.completed === 0 ? 0 : matchSeries.totalTurns / matchSeries.completed;
+  // A series that has not completed a round has nothing to accent yet: the
+  // line lists its shape, but the result colour waits for the first result.
+  elements["match-summary"].dataset.state = matchSeries.completed === 0 ? "pending" : "result";
   elements["match-summary"].textContent = `FT${matchSeries.config.firstTo} · PLAYED ${matchSeries.completed} · LEFT ${matchSeries.leftWins} · RIGHT ${matchSeries.rightWins} · DRAW ${matchSeries.draws} · AVG ${average.toFixed(1)} TURNS`;
   renderMatchSaveButton();
 }
@@ -2695,6 +2813,9 @@ function renderMatchSaveButton() {
   if (format === "ttrm") {
     const started = matchSeries !== null && inputModeActive();
     const stallReplayDisabled = started && matchSeries.config.stallLock.enabled === true;
+    const turnReplayDisabled = started
+      ? matchSeries.config.turnMatch?.enabled === true
+      : turnMatchSelected() && selectedHumanSide() !== null;
     // Before a series starts the toggles are the only claim there is; a started
     // series answers for the rounds it was actually started with.
     const handicapReplayDisabled = started
@@ -2703,6 +2824,7 @@ function renderMatchSaveButton() {
     const ready = (matchSeries?.rounds ?? []).some((round) => round.executedTtrm?.text);
     setMatchExportButton(button,
       busy !== "" ? busy
+        : turnReplayDisabled ? "ターン勝負のINPUT対局は重力をOFFにして実行するため .ttrm に保存できません"
         : stallReplayDisabled ? "STALL PENALTYを使用したINPUT対局は .ttrm に保存できません"
         : handicapReplayDisabled ? "1Pハンデを使用したINPUT対局は .ttrm に保存できません"
         : !ready ? "保存できる完了ラウンドがまだありません。TTRM INPUT はround終了後に保存できます"
@@ -2784,6 +2906,7 @@ function renderEmptyMatchFields() {
     field.classList.toggle("input-spawn-field", inputModeSelected());
     const board = Array.from({ length: 40 }, () => Array(10).fill(null));
     renderMatchField(field, board, [], null, { rows: inputModeSelected() ? 23 : 20 });
+    renderMatchMetrics(side, EMPTY_MATCH_METRICS, 0);
   }
 }
 
@@ -2872,12 +2995,13 @@ function matchSeriesWinner() {
 function setMatchSettingsDisabled(disabled) {
   for (const id of [
     "left-bot", "right-bot", "left-bot-settings", "right-bot-settings",
-    "match-fair-comparison", "match-pre-lock-preview", "match-ttrm-compatible", "match-seed", "match-max-turns", "match-unlimited-turns", "match-count",
-    "match-stall-lock", "match-handicap-garbage",
+    "match-fair-comparison", "match-pre-lock-preview", "match-ttrm-compatible", "match-time-progression", "match-seed", "match-max-turns", "match-unlimited-turns", "match-count",
+    "match-stall-lock", "match-handicap-garbage", "match-turn-match", "match-turn-order",
   ]) elements[id].disabled = disabled;
   elements["match-max-turns"].disabled = disabled || elements["match-unlimited-turns"].checked;
   syncRandomSeedControl(disabled);
   syncStallLockControl(disabled);
+  syncTurnMatchControl(disabled);
   syncHumanMatchControls(disabled);
 }
 
@@ -2893,12 +3017,20 @@ function syncHumanMatchControls(matchSettingsDisabled = false) {
   elements["match-fair-comparison"].disabled = matchSettingsDisabled || playing || inputMode;
   elements["match-pre-lock-preview"].disabled = matchSettingsDisabled || inputMode;
   elements["match-pre-lock-preview"].title = inputMode ? "TTRM INPUTでは実ミノとゴーストを表示するため、PRE-LOCK PREVIEWは使いません" : "";
+  /* The escalating rules are applied by the input path's referee Engine; the
+     legacy final-placement path runs neither natural gravity nor that Engine,
+     so the switch has nothing to act on there. */
+  elements["match-time-progression"].disabled = matchSettingsDisabled || !inputMode;
+  elements["match-time-progression"].title = inputMode
+    ? "観測S2ルールでは、120秒経過後に落下速度が、180秒経過後に火力（ガベージ倍率）が上がり続けます。OFFにするとどちらも開始時の値のままで対局します。"
+    : "従来モードはこのEngineを使わないため、この設定は適用されません";
   elements["match-step"].title = inputMode
     ? "TTRM INPUT は固定の実入力プロファイルで1フレームずつ進みます"
     : playing
       ? "1P対戦では自分のハードドロップが手番を進めます"
       : "";
   syncInputBotOptions();
+  syncTurnMatchControl(matchSettingsDisabled);
   renderExecutionScopeNotes();
 }
 
@@ -2910,66 +3042,94 @@ function syncInputBotOptions() {
   const inputMode = inputModeSelected() || (matchRunning && inputModeActive());
   for (const side of BOT_SIDES) {
     for (const option of elements[`${side}-bot`].options) {
-      const unavailable = option.dataset.unavailable === "true";
+      const inputRoute = inputMode && option.dataset.inputUnavailable !== undefined;
+      const unavailable = (inputRoute ? option.dataset.inputUnavailable : option.dataset.unavailable) === "true";
       const inadmissible = inputMode && !inputBotAdmitted(side, option.value);
       option.disabled = unavailable || inadmissible;
       option.title = inadmissible && !unavailable
         ? "TTRM INPUT では使えません（実入力の対応Botではありません）"
-        : option.dataset.reason ?? "";
+        : (inputRoute ? option.dataset.inputReason : option.dataset.reason) ?? "";
     }
   }
 }
 
 /* Which execution path a setting belongs to used to be visible only as a greyed
    control, which reads as "not available yet" rather than "not part of this
-   path". Each scoped group now states its path in words, and the legacy group
-   keeps saying so while it is active rather than only once it is inert.
+   path". The shared row states the path in words, and the legacy dependent rows
+   keep saying so while they are active rather than only once they are inert.
 
    The whole row ships closed behind one disclosure, so its bar also carries the
    values it is hiding: a folded row must not take its state with it, and the
-   execution path is the one setting that decides what the export writes. */
+   execution path is the one setting that decides what the export writes. The
+   1P rule notes are rendered in the human settings dialog instead. */
 function renderExecutionScopeNotes() {
   const inputMode = inputModeSelected() || (matchRunning && inputModeActive());
   const playing = selectedHumanSide() !== null;
   const handicapActive = elements["match-handicap-garbage"].checked && playing;
   elements["match-execution-note"].textContent = inputMode
-    ? elements["match-stall-lock"].checked
+    ? elements["match-turn-match"].checked && playing
+      ? "TTRM INPUT：ターン勝負はEngineの重力をOFFにして実行するため、この対局は .ttrm 保存対象外です。"
+      : elements["match-stall-lock"].checked
       ? "TTRM INPUT：STALL PENALTYを適用します。この設定の対局は .ttrm 保存対象外です。"
       : handicapActive
         ? "TTRM INPUT：1Pハンデの初期地形は入力ログから再現できないため、この対局は .ttrm 保存対象外です。"
         : "TTRM INPUT：実入力を60Hzで消費し、EXPORT は .ttrm を保存します。"
     : "従来モード：最終配置で進行し、EXPORT は .json を保存します。";
+  /* The switch states the rule it removes and, because the export is what this
+     group is about, that removing it still leaves an exportable round: the
+     value travels in the file's own options. */
+  elements["match-time-progression-note"].textContent = inputMode
+    ? elements["match-time-progression"].checked
+      ? "TIME PROGRESSION ON：観測S2ルール通り、120秒経過後は落下速度が、180秒経過後は火力（ガベージ倍率）が上がり続けます。"
+      : "TIME PROGRESSION OFF：落下速度も火力も開始時の値のまま対局します。この設定は .ttrm のオプションに記録され、保存は通常どおり行えます。観測S2ルールの対局ではないため、強度の根拠には使えません。"
+    : "TIME PROGRESSION は TTRM INPUT の対局にだけ適用します。従来モードでは使いません。";
   elements["match-legacy-settings"].dataset.inactive = String(inputMode);
   elements["match-legacy-note"].textContent = inputMode
     ? "TTRM INPUT 中は使いません（実ミノとゴーストを表示し、FAIR COMPARISON も適用しません）。"
     : playing
       ? "You (1P) 参加中は FAIR COMPARISON を使いません。"
       : "TTRM INPUT では適用されません。";
-  /* One 1P group, so the "only with You (1P)" condition is stated once at its
-     foot instead of inside each control's own note. Each note then always
-     describes what its own switch does, including the export it rules out. */
-  elements["match-handicap-settings"].dataset.inactive = String(!playing);
   elements["match-handicap-note"].textContent = inputMode
     ? "ONの間、1P側だけ28マスのランダムガベージ（空洞なし・完成ラインなし）から開始します。Bot側は空の盤面です。地形は局ごとのSEEDから決まります。この設定の対局は .ttrm 保存対象外です。"
     : "ONの間、1P側だけ28マスのランダムガベージ（空洞なし・完成ラインなし）から開始します。Bot側は空の盤面です。地形は局ごとのSEEDから決まります。";
   const penaltyLineNote = inputMode
-    ? "ONの間、指定PPSを下回ると最下段へ消去不能ラインを1段追加します。通常接地5回ごとに1段除去し、攻撃・B2B・RENに影響しません。STALL有効のINPUT対局は .ttrm 保存対象外です。"
-    : "ONの間、指定PPSを下回ると最下段へ消去不能ラインを1段追加します。通常接地5回ごとに1段除去し、攻撃・B2B・RENに影響しません。";
+    ? "ONの間、指定PPSを下回ると最下段へ消去不能ラインを1段追加します。通常接地5回ごとに1段除去し、攻撃・B2B・COMBOに影響しません。STALL有効のINPUT対局は .ttrm 保存対象外です。"
+    : "ONの間、指定PPSを下回ると最下段へ消去不能ラインを1段追加します。通常接地5回ごとに1段除去し、攻撃・B2B・COMBOに影響しません。";
   const forcedLockNote = inputMode
     ? "ONの間、指定PPSを下回る前にスポーン位置へ強制接地します。HOLDしても手番の時間は延びません。STALL有効のINPUT対局は .ttrm 保存対象外です。"
     : "ONの間、指定PPSを下回る前にスポーン位置へ強制接地します。HOLDしても手番の時間は延びません。";
   elements["match-stall-lock-note"].textContent =
     elements["match-stall-lock-penalty"].value === "penalty-line" ? penaltyLineNote : forcedLockNote;
-  elements["match-handicap-scope-note"].textContent = playing
-    ? "どちらも 1P（You）側にだけ適用します。Bot側の盤面と手番は変わりません。"
-    : "LEFT BOT に You (1P) を選んだときだけ使います。この対局には適用しません。";
+  renderTurnMatchNote(inputMode);
   elements["match-settings-state"].textContent = matchSettingsStateText(inputMode);
 }
 
-/* The execution path leads because it decides what the export writes. The two
-   legacy switches are named only while that path is the one being run: under
-   TTRM INPUT they are not off, they are not part of the match at all, and
-   printing "FAIR OFF" for them on the closed bar would claim otherwise. */
+/* The turn match note states what the switch removes, so the rule is readable
+   without starting a round: the real-time schedule, the STALL PENALTY budget
+   that measured it, the natural gravity that TTRM INPUT's referee Engine
+   otherwise runs, and on that path the `.ttrm` export the round then loses. */
+function renderTurnMatchNote(inputMode) {
+  const order = elements["match-turn-order"].value;
+  const orderNote = order === "human-first"
+    ? "1Pが先に1手置き、その盤面を見てBotが置きます。"
+    : order === "bot-first"
+      ? "Botが先に1手置き、その盤面を見て 1P が置きます。"
+      : inputMode
+        ? "互いに1手ずつ置き、手数差が1を超えないよう進行します（同一瞬間の確定ではありません）。"
+        : "同じターン開始局面から互いに1手ずつ選び、両方を同時に確定します。";
+  /* A turn removes natural gravity on whichever path runs it, so each path
+     states what that costs it rather than leaving one of them silent. */
+  const routeNote = inputMode
+    ? "TTRM INPUT ではEngineの重力をOFFにして実行し、この対局は .ttrm 保存対象外です。"
+    : "従来モードはもともと重力落下がない経路で、EXPORT は通常どおり .json を保存できます。";
+  elements["match-turn-note"].textContent = elements["match-turn-match"].checked
+      ? `ONの間、${orderNote}持ち時間はなく、ミノの重力落下もありません。STALL PENALTY は使いません。${routeNote}`
+      : "OFFの間、互いが自分のペースで同時に進行する実時間対局です。";
+}
+
+/* The execution path leads because it decides what the export writes. The 1P
+   rules now live in the human dialog, so the closed bar only reports shared path
+   and execution settings. */
 function matchSettingsStateText(inputMode) {
   const parts = [
     inputMode ? "TTRM INPUT · .ttrm" : "従来モード · .json",
@@ -2977,16 +3137,9 @@ function matchSettingsStateText(inputMode) {
     `MAX ${elements["match-unlimited-turns"].checked ? "∞" : elements["match-max-turns"].value}`,
     `FT${elements["match-count"].value}`,
   ];
-  const penalty = elements["match-stall-lock-penalty"].value === "penalty-line" ? "LINE" : "LOCK";
-  const stall = elements["match-stall-lock"].checked ? `${elements["match-stall-lock-pps"].value} PPS ${penalty}` : "OFF";
-  // A setting kept ON with nobody playing is neither on nor off for this match:
-  // "—" says it is not applicable rather than claiming it was turned off.
-  const handicap = !elements["match-handicap-garbage"].checked ? "OFF"
-    : selectedHumanSide() === null ? "—" : "ON";
-  if (inputMode) return [...parts, `HANDI ${handicap}`, `STALL ${stall}`].join(" · ");
+  if (inputMode) return [...parts, `TIME ${onOff(elements["match-time-progression"])}`].join(" · ");
   return [...parts, `FAIR ${onOff(elements["match-fair-comparison"])}`,
-    `GHOST ${onOff(elements["match-pre-lock-preview"])}`, `HANDI ${handicap}`,
-    `STALL ${stall}`].join(" · ");
+    `GHOST ${onOff(elements["match-pre-lock-preview"])}`].join(" · ");
 }
 
 function onOff(checkbox) {
@@ -3000,16 +3153,24 @@ function syncMaxTurnsControl() {
 /* The pace field is meaningless while the switch above it is off, so it follows
    that switch the way MAX TURNS follows its own infinity toggle. */
 function syncStallLockControl(matchSettingsDisabled = false) {
-  elements["match-stall-lock-pps"].disabled =
-    matchSettingsDisabled || !elements["match-stall-lock"].checked;
-  elements["match-stall-lock-penalty"].disabled =
-    matchSettingsDisabled || !elements["match-stall-lock"].checked;
+  const inert = matchSettingsDisabled || !elements["match-stall-lock"].checked || turnMatchSelected();
+  elements["match-stall-lock-pps"].disabled = inert;
+  elements["match-stall-lock-penalty"].disabled = inert;
+  elements["match-stall-lock"].disabled = matchSettingsDisabled || turnMatchSelected();
+}
+
+/* The order field is meaningless while the switch above it is off. */
+function syncTurnMatchControl(matchSettingsDisabled = false) {
+  elements["match-turn-match"].disabled = matchSettingsDisabled;
+  elements["match-turn-order"].disabled = matchSettingsDisabled || !elements["match-turn-match"].checked;
 }
 
 /* Read once, when a series starts: a pace changed mid-round would not be the
-   threshold the pieces already on that board were played under. */
+   threshold the pieces already on that board were played under. A turn match
+   has no clock for a pace to be measured against, so the budget is not part of
+   one rather than being measured against a clock that never runs. */
 function stallLockSettings() {
-  const enabled = elements["match-stall-lock"].checked;
+  const enabled = elements["match-stall-lock"].checked && !turnMatchSelected();
   const penalty = elements["match-stall-lock-penalty"].value;
   if (enabled && !STALL_LOCK_PENALTIES.has(penalty)) throw new Error("unsupported STALL PENALTY option");
   return {
@@ -3021,11 +3182,96 @@ function stallLockSettings() {
   };
 }
 
+/* Read once, when a series starts, like the other match settings. Only the
+   input path runs the referee Engine, so the legacy path reports the canonical
+   rules rather than a switch it never applied. */
+function timeProgressionSetting() {
+  return !inputModeSelected() || elements["match-time-progression"].checked;
+}
+
 /* Read once, when a series starts, like the other match settings. A person who
    is not playing has nothing to be handicapped: the request is then not
    applicable rather than refused, and the server normalizes it the same way. */
 function handicapSettings() {
   return { enabled: elements["match-handicap-garbage"].checked && selectedHumanSide() !== null };
+}
+
+/* Whether the settings row currently asks for a turn match. It is a 1P rule on
+   both execution paths: the legacy route has no natural gravity to begin with,
+   and TTRM INPUT switches the referee Engine's own gravity off for the round,
+   which is what lets a piece wait for its turn there too. */
+function turnMatchSelected() {
+  return elements["match-turn-match"].checked;
+}
+
+/* Read once, when a series starts, like the other match settings. */
+function turnMatchSettings() {
+  return {
+    enabled: turnMatchSelected() && selectedHumanSide() !== null,
+    order: elements["match-turn-order"].value,
+  };
+}
+
+/* Whether the round being played is a turn match. The started series answers,
+   never the settings row, so changing the switch mid-series cannot change how
+   the pieces already on the board were played. */
+function turnMatchActive() {
+  return matchSeries?.config?.turnMatch?.enabled === true;
+}
+
+/* A turn match hands the board back and forth: the piece on screen can only be
+   dropped on the person's own turn. Every other round is theirs continuously. */
+function humanTurnDue() {
+  if (!turnMatchActive()) return true;
+  // TTRM INPUT keeps the piece in the referee Engine and has no local player
+  // record, so the side comes from the view on that path.
+  const side = human?.side ?? lastMatchView?.humanSide ?? null;
+  return side !== null && lastMatchView?.dueBotIds?.includes(side) === true;
+}
+
+/* The person's side of a turn match shows whose turn it is; out of turn their
+   hard drop does nothing, and this is what tells them so. Nothing is shown
+   outside a running turn match. */
+function renderTurnIndicator() {
+  const view = lastMatchView;
+  const side = human?.side ?? view?.humanSide ?? null;
+  const state = !turnMatchActive() || !matchRunning || view === null || side === null ||
+    view.outcome?.complete === true
+    ? null
+    : humanTurnDue() ? "human" : "bot";
+  for (const id of BOT_SIDES) {
+    const own = state !== null && id === side;
+    const label = elements[`match-${id}-turn`];
+    label.hidden = !own;
+    if (!own) {
+      delete label.dataset.state;
+      continue;
+    }
+    // Every INPUT frame repaints; rewriting an unchanged live region would
+    // announce it again.
+    const text = state === "human" ? "YOUR TURN" : matchAutoplay ? "BOT THINKING" : "BOT TURN";
+    if (label.textContent !== text) label.textContent = text;
+    label.dataset.state = state;
+  }
+  renderToppedOutFields(view);
+}
+
+/* A board that topped out is dimmed for as long as its round stays on screen,
+   in every match. The legacy view flags each side; an INPUT view names only the
+   winner of a top-out, so every other side is the one that topped out. */
+function renderToppedOutFields(view) {
+  const toppedOut = new Set();
+  if (view?.outcome?.reason === "top-out") {
+    const flagged = view.bots.filter((bot) => bot.toppedOut === true);
+    for (const bot of flagged.length > 0 ? flagged : view.bots.filter((bot) => bot.id !== view.outcome.winnerBotId)) {
+      toppedOut.add(bot.id);
+    }
+  }
+  for (const id of BOT_SIDES) {
+    const field = elements[`match-${id}-field`];
+    if (toppedOut.has(id)) field.dataset.toppedOut = "true";
+    else delete field.dataset.toppedOut;
+  }
 }
 
 function syncRandomSeedControl(matchSettingsDisabled = false) {
@@ -3093,7 +3339,10 @@ function acceptMatchView(view) {
      started: that clock is what their own lock frames are read from, so it must
      not be pulled back to the last confirmed lock or held at the opponent's
      next one. Bot-only matches stay on the step-by-step projection. */
-  if (!(inputModeActive() || human !== null) && Number.isFinite(view.metricElapsedMs)) {
+  /* A turn match has no free-running clock either: its shared frame advances
+     one turn at a time, so it reads like a bot-only round rather than like the
+     real-time 1P round whose lock frames come from wall time. */
+  if (!(inputModeActive() || (human !== null && !turnMatchActive())) && Number.isFinite(view.metricElapsedMs)) {
     const nextElapsedMs = Number.isFinite(view.nextStepFrames) && view.nextStepFrames > 0
       ? view.metricElapsedMs + view.nextStepFrames * 1000 / 60
       : view.metricElapsedMs;
@@ -3173,6 +3422,7 @@ function paintMatchView(view) {
     renderGarbageGauge(elements[`match-${side}-gauge`], bot.garbage.packets, `${side} bot`);
     renderMatchMetrics(side, bot.metrics, bot.stats.turns);
   }
+  renderTurnIndicator();
   renderMatchSaveButton();
 }
 
@@ -3236,9 +3486,9 @@ function render() {
   renderClearInfo("hold", game.s2.b2b, game.combo, game.lastClear);
 }
 
-// B2B, REN and the latest clear name sit under the HOLD box, as in the
+// B2B, COMBO and the latest clear name sit under the HOLD box, as in the
 // `fumen-mobile-fork` replay screen. Both counters stay muted until the chain is
-// live, so a running B2B or REN is what draws the eye.
+// live, so a running B2B or COMBO is what draws the eye.
 function renderClearInfo(prefix, b2b, ren, clear) {
   const b2bNode = elements[`${prefix}-b2b`];
   renderChainCounter(b2bNode, "B2B", shownB2b(b2b), b2b > 0);
@@ -3330,14 +3580,6 @@ function renderComparison(raw, comparison) {
   elements["s2-best-move"].textContent = formatCanonicalPlacement(best.placement);
   elements["s2-score"].textContent = `${best.score.toFixed(2)} · ${comparison.status}`;
   elements["score-gap"].textContent = `${gap >= 0 ? "+" : ""}${gap.toFixed(2)}`;
-}
-
-function renderUnavailableComparison(raw, s2) {
-  elements["raw-score"].textContent = raw.comparison.score.toFixed(2);
-  elements["raw-comparison-status"].textContent = raw.status;
-  elements["s2-best-move"].textContent = "この局面では比較できません";
-  elements["s2-score"].textContent = s2.degraded?.join(", ") ?? s2.status;
-  elements["score-gap"].textContent = "—";
 }
 
 function resetComparison() {

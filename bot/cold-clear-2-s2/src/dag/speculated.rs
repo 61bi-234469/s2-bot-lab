@@ -6,7 +6,9 @@ use enum_map::EnumMap;
 use enumset::EnumSet;
 use rand::Rng;
 
-use crate::data::{GameState, Piece, Placement};
+use crate::data::Piece;
+use super::{State, Action, Link};
+use super::domain::Domain;
 use crate::map::StateMap;
 
 use super::{
@@ -15,11 +17,11 @@ use super::{
 
 #[derive(Default)]
 pub(super) struct Layer<'bump, E: Evaluation> {
-    pub states: StateMap<Node<'bump, E>>,
+    pub states: StateMap<Node<'bump, E>, ahash::RandomState, State<E>>,
 }
 
 pub(super) struct Node<'bump, E: Evaluation> {
-    pub parents: &'bump [(u64, Placement, Piece)],
+    pub parents: &'bump [(u64, Action<E>, Piece)],
     pub eval: E,
     pub children: Option<PackedChildren<'bump, E>>,
     pub expanding: AtomicBool,
@@ -28,17 +30,17 @@ pub(super) struct Node<'bump, E: Evaluation> {
 }
 
 impl<'bump, E: Evaluation> Layer<'bump, E> {
-    pub fn initialize_root(&self, root: &GameState) {
+    pub fn initialize_root(&self, root: &State<E>) {
         let _ = self.states.get_or_insert_with(root, || Node {
             parents: &[],
             eval: E::default(),
             children: None,
             expanding: AtomicBool::new(false),
-            bag: root.bag,
+            bag: E::Domain::bag(root),
         });
     }
 
-    pub fn suggest(&self, state: &GameState, limit: usize) -> Vec<(Placement, f32)> {
+    pub fn suggest(&self, state: &State<E>, limit: usize) -> Vec<(Action<E>, f32)> {
         puffin::profile_function!();
         let node = self.states.get(state).unwrap();
         let children = match &node.children {
@@ -47,7 +49,7 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
         };
 
         let mut candidates: Vec<&_> = vec![];
-        for piece in state.bag {
+        for piece in E::Domain::bag(state) {
             candidates.extend(children[piece].first());
         }
         candidates.sort_by(|a, b| a.cached_eval.partial_cmp(&b.cached_eval).unwrap().reverse());
@@ -61,10 +63,10 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
 
     pub fn select<R: Rng + ?Sized>(
         &self,
-        game_state: &GameState,
+        game_state: &State<E>,
         exploration: f64,
         rng: &mut R,
-    ) -> SelectResult {
+    ) -> SelectResult<E> {
         puffin::profile_function!();
         let node = self
             .states
@@ -82,10 +84,9 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
             Some(children) => children,
         };
 
-        let next = game_state
-            .bag
+        let next = E::Domain::bag(game_state)
             .iter()
-            .nth(rng.gen_range(0..game_state.bag.len()))
+            .nth(rng.gen_range(0..E::Domain::bag(game_state).len()))
             .unwrap();
 
         if children[next].is_empty() {
@@ -94,7 +95,7 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
 
         let s: f64 = rng.gen();
         let i = ((-s.ln() / exploration) % children[next].len() as f64) as usize;
-        SelectResult::Advance(next, children[next][i].mv)
+        SelectResult::Advance(next, children[next][i].mv, children[next][i].target, i)
     }
 
     pub fn get_eval(&self, raw: u64) -> E {
@@ -107,7 +108,7 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
         child: &ChildData<E>,
         parent: u64,
         speculation_piece: Piece,
-    ) -> E {
+    ) -> (E, Link<E>, bool) {
         let mut node = self
             .states
             .get_or_insert_with(&child.resulting_state, || Node {
@@ -115,7 +116,7 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
                 eval: child.eval,
                 children: None,
                 expanding: AtomicBool::new(false),
-                bag: child.resulting_state.bag,
+                bag: E::Domain::bag(&child.resulting_state),
             });
         node.parents = bump.alloc_slice_fill_with(node.parents.len() + 1, |i| {
             node.parents
@@ -123,16 +124,16 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
                 .copied()
                 .unwrap_or((parent, child.mv, speculation_piece))
         });
-        node.eval
+        (node.eval, E::Domain::link(self.states.index(&child.resulting_state)), false)
     }
 
     pub fn expand(
         &self,
         herd: &'bump Herd,
         next_layer: &LayerCommon<E>,
-        parent_state: GameState,
+        parent_state: State<E>,
         children: EnumMap<Piece, Vec<ChildData<E>>>,
-    ) -> Vec<BackpropUpdate> {
+    ) -> Vec<BackpropUpdate<E>> {
         puffin::profile_function!();
         let mut childs_data = vec![];
         let mut childs_indices = [0; 8];
@@ -150,8 +151,11 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
                     parent_index,
                     speculation_piece,
                 );
-                for (child, eval) in children[speculation_piece].iter().zip(evals.into_iter()) {
+                for (child, (eval, target, _)) in children[speculation_piece].iter().zip(evals.into_iter()) {
                     childs_data.push(Child {
+                        closed: false,
+                        target,
+                        root_priority: false,
                         mv: child.mv,
                         cached_eval: eval + child.reward,
                         reward: child.reward,
@@ -195,9 +199,9 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
 
     pub fn backprop(
         &self,
-        to_update: Vec<BackpropUpdate>,
+        to_update: Vec<BackpropUpdate<E>>,
         next_layer: &LayerCommon<E>,
-    ) -> Vec<BackpropUpdate> {
+    ) -> Vec<BackpropUpdate<E>> {
         puffin::profile_function!();
         let mut new_updates = vec![];
 

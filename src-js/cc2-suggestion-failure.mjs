@@ -28,42 +28,85 @@ export function isNoSuggestedMoveError(error) {
   return error instanceof Error && error.message.endsWith(NO_SUGGESTED_MOVE_MESSAGE);
 }
 
-/** Classifies an authenticated Pages/WASM empty suggestion at the GUI boundary. */
-export function classifyGuiProposalError({ error, locksPlayed, latencyMs = null, diagnostics = {}, engineType = null }) {
+/**
+ * Classifies a Pages/WASM proposal failure at the GUI boundary.
+ *
+ * The browser worker has stronger evidence than the native compatibility
+ * adapter when it reports an empty suggestion: it can prove that the empty
+ * response came back from a completed search. Keep that admission local to
+ * the GUI path so the experiment classifier retains its latency guard.
+ *
+ * @param {{ error: unknown, locksPlayed: number, latencyMs?: number|null,
+ *   diagnostics?: object, engineType?: string }} failure
+ * @returns {object} canonical proposal result
+ */
+export function classifyGuiProposalError({
+  error,
+  locksPlayed,
+  latencyMs = null,
+  diagnostics = {},
+  engineType = null,
+}) {
   const message = proposalMessage(error);
   if (!message.endsWith(NO_SUGGESTED_MOVE_MESSAGE)) {
     return classifyProposalError({ error, locksPlayed, latencyMs, diagnostics });
   }
-  const measuredLatency = Number.isFinite(error?.requestToSuggestionMs) ? error.requestToSuggestionMs : latencyMs;
+
+  const measuredLatency = Number.isFinite(error?.requestToSuggestionMs)
+    ? error.requestToSuggestionMs
+    : latencyMs;
   const evidence = proposalEvidence(error, diagnostics);
   if (!isVerifiedGuiEmptySuggestion(error, engineType)) {
     return failedProposal({
       code: error?.moveInfo?.selections === 0 && error?.moveInfo?.extra === "no active bot"
-        ? "inactive-bot-empty-suggestion" : "invalid-gui-empty-suggestion-evidence",
-      message: evidence.message, diagnostics: evidence, latencyMs: measuredLatency,
+        ? "inactive-bot-empty-suggestion"
+        : "invalid-gui-empty-suggestion-evidence",
+      message: evidence.message,
+      diagnostics: evidence,
+      latencyMs: measuredLatency,
     });
   }
   if (!Number.isSafeInteger(locksPlayed) || locksPlayed < 1) {
-    return failedProposal({ code: "no-legal-move-before-first-lock", message: evidence.message, diagnostics: evidence, latencyMs: measuredLatency });
+    return failedProposal({
+      code: "no-legal-move-before-first-lock",
+      message: evidence.message,
+      diagnostics: evidence,
+      latencyMs: measuredLatency,
+    });
   }
-  return terminalProposal({ diagnostics: { ...evidence, noMoveBasis: "verified-gui-empty-suggestion" }, latencyMs: measuredLatency });
+
+  // Do not pass this through classifyProposalError: a real WASM search can
+  // complete below the native 1 ms transport floor. Keep the measured timing
+  // in the result rather than clamping or replacing it.
+  return terminalProposal({
+    diagnostics: { ...evidence, noMoveBasis: "verified-gui-empty-suggestion" },
+    latencyMs: measuredLatency,
+  });
 }
 
 function isVerifiedGuiEmptySuggestion(error, engineType) {
-  if (!(error instanceof Error) || error.message !== NO_SUGGESTED_MOVE_MESSAGE || error.suggestionReceived !== true) return false;
+  if (!(error instanceof Error) || error.message !== NO_SUGGESTED_MOVE_MESSAGE ||
+      error.suggestionReceived !== true) return false;
   const info = error.moveInfo;
-  if (info === null || typeof info !== "object" || Array.isArray(info) ||
-      !Number.isSafeInteger(info.selections) || info.selections <= 0 ||
-      !Number.isSafeInteger(info.nodes) || info.nodes < 0 ||
-      typeof info.extra !== "string" || info.extra.includes("no active bot")) return false;
+  if (info === null || typeof info !== "object" || Array.isArray(info)) return false;
+  if (!Number.isSafeInteger(info.selections) || info.selections <= 0) return false;
+  if (!Number.isSafeInteger(info.nodes) || info.nodes < 0) return false;
+  if (typeof info.extra !== "string" || info.extra.includes("no active bot")) return false;
   if (engineType === "cc2-raw" || engineType === "cc2-chouhy") {
-    return info.candidate_values === undefined || (Array.isArray(info.candidate_values) && info.candidate_values.length === 0);
+    return info.candidate_values === undefined ||
+      (Array.isArray(info.candidate_values) && info.candidate_values.length === 0);
   }
   return Array.isArray(info.candidate_values) && info.candidate_values.length === 0;
 }
 
 function proposalEvidence(error, diagnostics) {
-  return { ...diagnostics, message: proposalMessage(error), ...(error?.moveInfo !== undefined ? { moveInfo: structuredClone(error.moveInfo) } : {}) };
+  const evidence = {
+    ...diagnostics,
+    message: proposalMessage(error),
+    ...(error?.moveInfo !== undefined ? { moveInfo: structuredClone(error.moveInfo) } : {}),
+  };
+  if (error?.protocolTrace !== undefined) evidence.protocolTrace = structuredClone(error.protocolTrace);
+  return evidence;
 }
 
 function proposalMessage(error) {
@@ -89,11 +132,13 @@ function proposalMessage(error) {
 export function classifyEmptySuggestion({ error, locksPlayed, elapsedMs }) {
   const result = classifyProposalError({ error, locksPlayed, latencyMs: elapsedMs });
   if (result.status === "terminal") return { type: "forfeit" };
-  const reason = result.failure.code === "no-legal-move-before-first-lock"
-    ? "before-first-lock"
-    : result.failure.code === "no-legal-move-below-latency-floor"
-      ? "below-latency-floor"
-      : "not-empty-suggestion";
+  const reason = result.failure.code === "inactive-bot-empty-suggestion"
+    ? "inactive-bot"
+    : result.failure.code === "no-legal-move-before-first-lock"
+      ? "before-first-lock"
+      : result.failure.code === "no-legal-move-below-latency-floor"
+        ? "below-latency-floor"
+        : "not-empty-suggestion";
   return { type: "failure", reason };
 }
 

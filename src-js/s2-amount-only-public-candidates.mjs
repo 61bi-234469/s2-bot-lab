@@ -1,4 +1,5 @@
 import { Board, Mino, Tetromino, kickData, legal } from "@haelp/teto/engine";
+import {noteStrategicCall} from './s2-strategic-audit.mjs';
 
 import { canonicalize } from "../scripts/cs1.mjs";
 import { resolveDynamicValue } from "./dynamic-values.mjs";
@@ -35,6 +36,8 @@ const HARD_DROP = Object.freeze({ lastInputWasRotation: false, kickIndex: null, 
  * full-state evaluator, garbage adapter, or transition dependency.
  */
 export function selectS2AmountOnlyPublicCandidate(decision, moves, options = {}) {
+  noteStrategicCall('legacyF14SelectionCalls');
+  noteStrategicCall('legacyF14RescueCalls');
   const ranked = rankS2AmountOnlyPublicCandidates(decision, moves, options);
   const control = ranked.candidates[0];
   const solvent = ranked.candidates.find((candidate) => candidate.solvency.solvent);
@@ -60,6 +63,29 @@ export function rankS2AmountOnlyPublicCandidates(decision, moves, {
   allowCompleteReturnedPrefix = false,
 } = {}) {
   assertOptions({ candidateLimit, rankPenalty, adjustmentScale, allowCompleteReturnedPrefix });
+  const { state, candidates: projected } = projectS2AmountOnlyPublicCandidates(decision, moves,
+    { candidateLimit, allowCompleteReturnedPrefix });
+  const model = createTuningModel(weightProfileId, weights);
+  const candidates = projected.map(candidate => {
+    const { cc2Rank, placement, projection } = candidate;
+    const conversion = evaluatePublicConversion(state, placement, projection, decision.incoming);
+    const features = publicFeatures(projection);
+    const s2Score = scoreEvaluationFeatures(features, model);
+    const solvency = assessS2AmountOnlySolvency(projection);
+    return { ...candidate, conversion, features, s2Score, solvency,
+      selectionScore: s2Score + adjustmentScale * conversion.units - cc2Rank * rankPenalty };
+  });
+  candidates.sort((left, right) => right.selectionScore - left.selectionScore || left.cc2Rank - right.cc2Rank ||
+    left.identity.localeCompare(right.identity, "en"));
+  return Object.freeze({ state, candidates: Object.freeze(candidates) });
+}
+
+/** Legal projections in supplied order, without evaluating an already-decided
+ * bot's policy again. INPUT shares this boundary with the legacy selector. */
+export function projectS2AmountOnlyPublicCandidates(decision, moves, {
+  candidateLimit = 16, allowCompleteReturnedPrefix = false,
+} = {}) {
+  assertOptions({ candidateLimit, rankPenalty: 25, adjustmentScale: 28, allowCompleteReturnedPrefix });
   const state = publicStateFromDecision(decision);
   if (!Array.isArray(moves) || moves.length === 0 || (!allowCompleteReturnedPrefix && moves.length < candidateLimit)) {
     throw new Error("amount-only public selector requires a complete CC2 candidate prefix");
@@ -70,33 +96,21 @@ export function rankS2AmountOnlyPublicCandidates(decision, moves, {
     throw new Error("amount-only public selector prefix contains duplicate identities");
   }
   const witnesses = createPublicSpinWitnesses(state);
-  const model = createTuningModel(weightProfileId, weights);
   const candidates = [];
   for (const [cc2Rank, move] of prefix.entries()) {
     const requested = cc2MoveToPublicPlacement(state, move);
     const placement = witnesses.get(finalPoseKey(requested)) ?? requested;
     const projection = projectS2AmountOnlyPublicLock(state, placement, decision.incoming);
     if (projection === null) continue;
-    const conversion = evaluatePublicConversion(state, placement, projection, decision.incoming);
-    const features = publicFeatures(projection);
-    const s2Score = scoreEvaluationFeatures(features, model);
-    const solvency = assessS2AmountOnlySolvency(projection);
     candidates.push({
       cc2Rank,
       identity: identities[cc2Rank],
       move,
       placement,
       projection,
-      conversion,
-      features,
-      s2Score,
-      solvency,
-      selectionScore: s2Score + adjustmentScale * conversion.units - cc2Rank * rankPenalty,
     });
   }
   if (candidates.length === 0) throw new Error("amount-only public selector has no legal candidate");
-  candidates.sort((left, right) => right.selectionScore - left.selectionScore || left.cc2Rank - right.cc2Rank ||
-    left.identity.localeCompare(right.identity, "en"));
   return Object.freeze({ state, candidates: Object.freeze(candidates) });
 }
 
@@ -207,6 +221,10 @@ function createPublicSpinWitnesses(state) {
     if (old === undefined || spinRank(locked.spin) > spinRank(old.spin)) witnesses.set(key, { ...candidate, spin: locked.spin });
   }
   return new Map([...witnesses].map(([key, candidate]) => [key, withoutSpin(candidate)]));
+}
+
+export function listS2AmountOnlyPublicReachablePlacements(state, rules = resolveS2AmountOnlyPublicRules(state.rulesetId)) {
+  return [...generatePublicReachablePlacements(state, rules)];
 }
 
 function* generatePublicReachablePlacements(state, rules) {
@@ -333,7 +351,14 @@ function highestInBoundsY(board, placement) {
 }
 function enqueue(queue, seen, placement) {
   const evidence = placement.rotationEvidence;
-  const id = `${placement.x}:${placement.y}:${placement.rotation}:${evidence.lastInputWasRotation ? 1 : 0}:${isFinOrTst(evidence) ? 1 : 0}`;
+  // Legal poses on the canonical 10x40 board have x in [-3, 9].
+  // Pack exactly the former five key fields; traversal and witness order stay
+  // unchanged. Keep a string fallback for callers outside that geometry.
+  const id = Number.isInteger(placement.x) && placement.x >= -3 && placement.x <= 9 &&
+      Number.isInteger(placement.y) && placement.y >= -3 && placement.y <= 39
+    ? (((placement.y + 4) * 16 + placement.x + 4) * 4 + ROTATIONS[placement.rotation]) * 4 +
+      (evidence.lastInputWasRotation ? 2 : 0) + (isFinOrTst(evidence) ? 1 : 0)
+    : `${placement.x}:${placement.y}:${placement.rotation}:${evidence.lastInputWasRotation ? 1 : 0}:${isFinOrTst(evidence) ? 1 : 0}`;
   if (!seen.has(id)) { seen.add(id); queue.push(placement); }
 }
 function detectPublicSpin(piece, board, placement, rules) {

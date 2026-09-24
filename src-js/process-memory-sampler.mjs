@@ -10,18 +10,24 @@ const POWERSHELL_SAMPLER = (property) => [
   "}",
 ].join("\n");
 
-export function createProcessMemorySampler({ timeoutMs = 2_000, metric = "peak-working-set" } = {}) {
+export function createProcessMemorySampler({
+  timeoutMs = 2_000,
+  metric = "peak-working-set",
+  spawnProcess = spawn,
+  platform = process.platform,
+} = {}) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("sampler timeoutMs must be positive");
   const property = {
     "peak-working-set": "PeakWorkingSet64",
     "working-set": "WorkingSet64",
   }[metric];
   if (property === undefined) throw new Error("sampler metric must be peak-working-set or working-set");
-  if (process.platform !== "win32") {
+  if (typeof spawnProcess !== "function") throw new Error("sampler spawnProcess must be a function");
+  if (platform !== "win32") {
     return Object.freeze({ sample: async () => null, close: async () => {} });
   }
 
-  const child = spawn(
+  const child = spawnProcess(
     "powershell.exe",
     ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", POWERSHELL_SAMPLER(property)],
     { stdio: ["pipe", "pipe", "ignore"], windowsHide: true },
@@ -31,6 +37,10 @@ export function createProcessMemorySampler({ timeoutMs = 2_000, metric = "peak-w
   let sequence = 0;
   let closed = false;
   const pending = new Map();
+  let childExited = false;
+  let childSpawned = false;
+  let resolveChildExit;
+  const childExit = new Promise((resolve) => { resolveChildExit = resolve; });
 
   child.stdout.on("data", (chunk) => {
     buffer += chunk;
@@ -56,10 +66,29 @@ export function createProcessMemorySampler({ timeoutMs = 2_000, metric = "peak-w
     }
     pending.clear();
   };
-  child.once("error", failPending);
-  child.once("exit", failPending);
+  const observeChildExit = () => {
+    childExited = true;
+    failPending();
+    resolveChildExit();
+  };
+  child.once("spawn", () => { childSpawned = true; });
+  child.on("error", () => {
+    if (!childSpawned) {
+      // No process was created, so there is no owned child whose exit could be
+      // observed. This is the only error that can certify terminal ownership.
+      observeChildExit();
+      return;
+    }
+    // ChildProcess also emits `error` when a kill request fails.  That is not
+    // proof that a successfully spawned process exited; disable sampling but
+    // keep close() waiting for the real exit event.
+    failPending();
+  });
+  child.once("exit", observeChildExit);
 
   return Object.freeze({
+    pid:child.pid,
+    hasExited(){return childExited;},
     sample(pid) {
       if (closed || !Number.isSafeInteger(pid) || pid <= 0) return Promise.resolve(null);
       const id = String(++sequence);
@@ -80,19 +109,15 @@ export function createProcessMemorySampler({ timeoutMs = 2_000, metric = "peak-w
       });
     },
     async close() {
-      if (closed) return;
+      if (childExited) return;
       closed = true;
-      child.stdin.end("quit\n");
-      await new Promise((resolve) => {
-        const timer = setTimeout(() => {
-          child.kill();
-          resolve();
-        }, timeoutMs);
-        child.once("exit", () => {
-          clearTimeout(timer);
-          resolve();
-        });
-      });
+      try { child.stdin.end("quit\n"); } catch { child.kill(); }
+      if (!await waitForSamplerExit(childExit, () => childExited, timeoutMs)) {
+        try { child.kill(); } catch { /* exit wait below fails closed */ }
+        if (!await waitForSamplerExit(childExit, () => childExited, timeoutMs)) {
+          throw new Error(`process memory sampler did not exit within ${timeoutMs} ms after termination`);
+        }
+      }
       failPending();
     },
     terminate() {
@@ -102,4 +127,16 @@ export function createProcessMemorySampler({ timeoutMs = 2_000, metric = "peak-w
       failPending();
     },
   });
+}
+
+async function waitForSamplerExit(childExit, isExited, timeoutMs) {
+  if (isExited()) return true;
+  let timer = null;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(false), timeoutMs);
+  });
+  const exited = childExit.then(() => true);
+  const result = await Promise.race([exited, timeout]);
+  if (timer !== null) clearTimeout(timer);
+  return result;
 }

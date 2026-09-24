@@ -32,6 +32,26 @@ const ROTATION = Object.freeze({
   south: "reverse",
   west: "left",
 });
+const CC2_PIECE_LOCATION_ORIGINS = Object.freeze({
+  I: Object.freeze({
+    north: Object.freeze([-1, -2]),
+    east: Object.freeze([-2, -2]),
+    south: Object.freeze([-2, -1]),
+    west: Object.freeze([-1, -1]),
+  }),
+  O: Object.freeze({
+    north: Object.freeze([0, 0]),
+    east: Object.freeze([0, -1]),
+    south: Object.freeze([-1, -1]),
+    west: Object.freeze([-1, 0]),
+  }),
+  JLSTZ: Object.freeze({
+    north: Object.freeze([-1, -1]),
+    east: Object.freeze([-1, -1]),
+    south: Object.freeze([-1, -1]),
+    west: Object.freeze([-1, -1]),
+  }),
+});
 const RUNTIME_CONTINUATION_BY_RESULT = new WeakMap();
 const CC2_ARENA_WITNESS_SELECTION_POLICY =
   "shortest-duration-then-controller-canonical-order/1";
@@ -482,28 +502,31 @@ export function cc2MoveToCanonicalPlacement(guiState, move) {
   };
 }
 
+/**
+ * Returns the canonical placement-box origin for one native CC2 location.
+ *
+ * This is the sole owner of the native-to-canonical origin relation. Consumers
+ * that convert native deltas (including the direct-180 table generator) must
+ * use this API instead of maintaining a second I/O origin table.
+ */
+export function cc2PieceLocationOrigin(piece, orientation) {
+  const family = piece === "I" || piece === "O"
+    ? piece
+    : ["T", "L", "J", "S", "Z"].includes(piece)
+      ? "JLSTZ"
+      : null;
+  if (family === null) throw new Error(`unsupported CC2 piece ${piece}`);
+  const origin = CC2_PIECE_LOCATION_ORIGINS[family][orientation];
+  if (origin === undefined) throw new Error(`unsupported CC2 orientation ${orientation}`);
+  return [...origin];
+}
+
 function canonicalOrigin(piece, orientation, x, y) {
   if (!Number.isSafeInteger(x) || !Number.isSafeInteger(y)) {
     throw new Error("CC2 placement coordinates must be integers");
   }
-  if (piece === "I") {
-    return ({
-      north: [x - 1, y - 2],
-      east: [x - 2, y - 2],
-      south: [x - 2, y - 1],
-      west: [x - 1, y - 1],
-    })[orientation];
-  }
-  if (piece === "O") {
-    return ({
-      north: [x, y],
-      east: [x, y - 1],
-      south: [x - 1, y - 1],
-      west: [x - 1, y],
-    })[orientation];
-  }
-  if (["T", "L", "J", "S", "Z"].includes(piece)) return [x - 1, y - 1];
-  throw new Error(`unsupported CC2 piece ${piece}`);
+  const [originX, originY] = cc2PieceLocationOrigin(piece, orientation);
+  return [x + originX, y + originY];
 }
 
 function manifestSummary() {

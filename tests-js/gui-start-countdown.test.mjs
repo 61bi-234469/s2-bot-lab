@@ -73,8 +73,10 @@ function harness({ humanSide = 'left', inputMode = false } = {}) {
         maxTurns: null,
         firstTo: 1,
         stallLock: { enabled: false, pps: null, penalty: null },
+        turnMatch: { enabled: false, order: 'simultaneous' },
       },
     },
+    lastMatchView: null,
     matchSeriesWinner: () => null,
     createMatchClock: () => ({ running: false }),
     readMatchClock: () => 0,
@@ -133,7 +135,8 @@ function harness({ humanSide = 'left', inputMode = false } = {}) {
   });
   extract(context, 'START_COUNTDOWN_LABELS', 'START_COUNTDOWN_STEP_MS', 'renderStartCountdown',
     'releaseStartCountdown', 'cancelStartCountdown', 'matchCountingDown', 'advanceStartCountdown',
-    'runStartCountdown', 'humanCanAct', 'humanInputEnabled', 'isKeyboardEditingTarget',
+    'runStartCountdown', 'turnMatchActive', 'humanTurnDue', 'humanCanAct',
+    'humanInputEnabled', 'isKeyboardEditingTarget',
     'startHumanAction', 'handleHumanKeyDown', 'handleHumanKeyUp', 'applyCountdownInputs',
     'activateHumanMatchReset', 'startSeriesGame');
   return context;

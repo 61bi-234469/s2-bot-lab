@@ -109,7 +109,7 @@ function resolverView(result) {
   };
 }
 
-for (const type of ['cc2-raw', 'cc2-chouhy', 'cc2-s2-f14', 'cc2-s2-champion'])
+for (const type of ['cc2-raw', 'cc2-chouhy', 'cc2-s2-f14', 'cc2-s2-champion', 'cc2-s2-champion-legacy'])
 test(`${type}: hidden incoming packet identity and sender clock do not affect public resolver execution`, () => {
   const left = createProfileSession({ iid: 1, gameid: 2, senderFrame: 7, size: 1 });
   const right = createProfileSession({ iid: 91, gameid: 99, senderFrame: 47, size: 2 });
@@ -159,6 +159,7 @@ const PUBLIC_MODULES = [
   "src-js/s2-amount-only-search-advance.mjs",
   "src-js/s2-conversion-qualified-ren-finisher-classification.mjs",
   "src-js/s2-input-public-resolver.mjs",
+  "src-js/s2-strategic-audit.mjs",
   "src-js/sha256.mjs",
   "src-js/triangle/chain-adapter.mjs",
   "src-js/triangle/input-public-movement.mjs",

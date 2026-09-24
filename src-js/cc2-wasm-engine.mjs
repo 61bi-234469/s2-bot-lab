@@ -79,11 +79,38 @@ export async function createCc2WasmSession({ wasmBytes, config = null, selection
       }
       return { suggestion, peakMemoryBytes: exports.memory.buffer.byteLength };
     },
+    async decideF14({ request, profile }) {
+      const startedAt = performance.now();
+      const started = invoke({ op: "f14_start", profile, request });
+      // Invalid admission is returned as the native-shaped decision response
+      // from f14_start, so callers can preserve the native error contract.
+      if (started?.type === "f14_decision") return started;
+      let progress = invoke({ op: "work", selections: 8 });
+      // A time budget is clocked here, like CC2's THINK TIME: work until the
+      // deadline, then rank what the search has (the WASM module has no clock).
+      if (profile?.budget?.mode === "time") {
+        const deadline = startedAt + profile.budget.maxMillis;
+        while (!progress.complete && performance.now() < deadline) progress = invoke({ op: "work", selections: 8 });
+      } else {
+        while (!progress.complete) progress = invoke({ op: "work", selections: 8 });
+      }
+      const response = invoke({ op: progress.complete ? "f14_finish" : "f14_finish_early" });
+      return validateF14Response(response);
+    },
+    async rerankF14({ request, profile: _profile }) {
+      const response = invoke({ op: "f14_rerank", request });
+      return validateF14Response(response);
+    },
     async close() {
       if (!closed) invoke({ op: "stop" });
       closed = true;
     },
   });
+}
+
+function validateF14Response(response) {
+  if (response?.type !== "f14_decision") throw new Error("CC2 WASM returned malformed F14 decision");
+  return response;
 }
 
 function normalizeSelectionLimit(value) {

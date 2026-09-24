@@ -287,6 +287,7 @@ function generateEngineFramePlacements(state, movementRules, options, continuati
   const maxNodes = options.maxNodes ?? DEFAULT_ENGINE_FRAME_BUDGET.maxNodes;
   const maxSnapshotBytes = options.maxSnapshotBytes ?? DEFAULT_ENGINE_FRAME_BUDGET.maxSnapshotBytes;
   const captureContinuations = options.captureContinuations ?? false;
+  const captureWitnessRoutes = options.captureWitnessRoutes ?? false;
   const knownQueue = options.knownQueue ?? state.pieces.known.length;
   const testOnlyFreshEngineRestore = options.testOnlyFreshEngineRestore ?? false;
   const testOnlyEngineHardDrop = options.testOnlyEngineHardDrop ?? false;
@@ -301,6 +302,9 @@ function generateEngineFramePlacements(state, movementRules, options, continuati
   }
   if (typeof testOnlyEngineHardDrop !== "boolean") {
     throw new Error("testOnlyEngineHardDrop must be boolean");
+  }
+  if (typeof captureWitnessRoutes !== "boolean") {
+    throw new Error("captureWitnessRoutes must be boolean");
   }
   if (yieldControl !== null && typeof yieldControl !== "function") {
     throw new Error("yieldControl must be null or a function");
@@ -321,7 +325,11 @@ function generateEngineFramePlacements(state, movementRules, options, continuati
   let nodes = 0;
   let snapshotBytes = 0;
   const heldAlphabet = heldEdgesForHandling(state.movement.handling);
+  const frontier = [];
+  let frontierCursor = 0;
   for (const usedHold of state.pieces.holdAvailable ? [false, true] : [false]) {
+    frontier.length = 0;
+    frontierCursor = 0;
     const initial = continuationSnapshot === null
       ? createSourceEngine(state, usedHold, knownQueue)
       : createContinuationSourceEngine(state, continuationSnapshot, usedHold, knownQueue);
@@ -338,20 +346,58 @@ function generateEngineFramePlacements(state, movementRules, options, continuati
       ? restoreEngine(state, snapshot)
       : restoreEngineMovement(restoreTarget, snapshot, immutableSnapshot, movementFalling);
     accountSnapshot(initialSnapshot);
-    const queue = [{ snapshot: initialSnapshot, witness: initial.witness, evidence: noRotation(), idleFrames: 0, heldEdges: 0 }];
-    const visited = new Set([nodeIdentity(initial.engine, initial.evidence)]);
+    const initialIdentity = nodeIdentity(initial.engine, initial.evidence, 0, 0);
+    const initialRouteRank = {
+      softDrops: 0,
+      inputKey: stableInputBytes([]),
+    };
+    const initialNode = {
+      snapshot: initialSnapshot,
+      witness: initial.witness,
+      evidence: noRotation(),
+      trace: captureWitnessRoutes ? createWitnessTrace(initial.engine) : null,
+      idleFrames: 0,
+      heldEdges: 0,
+      identity: initialIdentity,
+      routeRank: initialRouteRank,
+    };
+    const visited = captureWitnessRoutes
+      ? new Map([[initialIdentity, initialRouteRank]])
+      : new Set([initialIdentity]);
+    pushFrontier(initialNode);
 
-    for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    let cursor = 0;
+    let node;
+    while ((node = popFrontier()) !== undefined) {
+      cursor += 1;
       if (yieldControl !== null && cursor % ENGINE_FRAME_SCHEDULER_YIELD_NODES === 0) yieldControl();
-      const node = queue[cursor];
+      if (captureWitnessRoutes) {
+        const currentRank = visited.get(node.identity);
+        if (currentRank === undefined || compareRoutePrefixes(node.routeRank, currentRank) !== 0) continue;
+      }
       const engine = restoreNode(node.snapshot);
       const hardDrop = captureContinuations || testOnlyEngineHardDrop
         ? step(engine, "hardDrop", node.evidence)
         : projectHardDrop(engine, node.evidence);
       if (hardDrop.lock !== null) {
-        const placement = placementFromLock(state, hardDrop.lock, usedHold, [...node.witness, "hardDrop"], hardDrop.evidence);
+        const trace = captureWitnessRoutes
+          ? advanceWitnessTrace(node.trace, "hardDrop", hardDrop.motion)
+          : null;
+        const placement = placementFromLock(
+          state,
+          hardDrop.lock,
+          usedHold,
+          [...node.witness, "hardDrop"],
+          hardDrop.evidence,
+          trace,
+        );
         if (filter({ placement })) {
-          const identity = placementIdentity(state, placement, captureContinuations ? engine : null);
+          const identity = placementIdentity(
+            state,
+            placement,
+            captureContinuations ? engine : null,
+            captureWitnessRoutes ? trace : null,
+          );
           if (!placementIds.has(identity)) {
             placementIds.add(identity);
             rememberContinuation(placement, engine);
@@ -368,15 +414,24 @@ function generateEngineFramePlacements(state, movementRules, options, continuati
         const branch = restoreNode(node.snapshot);
         const next = step(branch, input, node.evidence);
         if (next.lock !== null) {
+          const trace = captureWitnessRoutes
+            ? advanceWitnessTrace(node.trace, input, next.motion)
+            : null;
           const placement = placementFromLock(
             state,
             next.lock,
             usedHold,
             [...node.witness, input],
             next.evidence,
+            trace,
           );
           if (filter({ placement })) {
-            const identity = placementIdentity(state, placement, captureContinuations ? branch : null);
+            const identity = placementIdentity(
+              state,
+              placement,
+              captureContinuations ? branch : null,
+              captureWitnessRoutes ? trace : null,
+            );
             if (!placementIds.has(identity)) {
               placementIds.add(identity);
               rememberContinuation(placement, branch);
@@ -385,19 +440,40 @@ function generateEngineFramePlacements(state, movementRules, options, continuati
           }
           continue;
         }
-        const identity = nodeIdentity(branch, next.evidence);
-        if (visited.has(identity)) continue;
-        visited.add(identity);
+        const trace = captureWitnessRoutes
+          ? advanceWitnessTrace(node.trace, input, next.motion)
+          : null;
+        const idleFrames = node.idleFrames + Number(input === "noop");
+        const heldEdges = node.heldEdges + Number(HELD_EDGES.includes(input));
+        const identity = nodeIdentity(branch, next.evidence, idleFrames, heldEdges);
+        if (captureWitnessRoutes) {
+          const routeRank = {
+            softDrops: trace.softDrops,
+            inputKey: stableInputBytes([...node.witness, input]),
+          };
+          const previous = visited.get(identity);
+          if (previous !== undefined && compareRoutePrefixes(routeRank, previous) >= 0) continue;
+          visited.set(identity, routeRank);
+        } else {
+          if (visited.has(identity)) continue;
+          visited.add(identity);
+        }
         const snapshot = testOnlyFreshEngineRestore
           ? branch.snapshot()
           : engineMovementSnapshot(branch);
         accountSnapshot(snapshot);
-        queue.push({
+        pushFrontier({
           snapshot,
           witness: [...node.witness, input],
           evidence: next.evidence,
-          idleFrames: node.idleFrames + Number(input === "noop"),
-          heldEdges: node.heldEdges + Number(HELD_EDGES.includes(input)),
+          trace,
+          idleFrames,
+          heldEdges,
+          identity,
+          routeRank: captureWitnessRoutes ? {
+            softDrops: trace.softDrops,
+            inputKey: stableInputBytes([...node.witness, input]),
+          } : null,
         });
       }
     }
@@ -425,6 +501,48 @@ function generateEngineFramePlacements(state, movementRules, options, continuati
       error.code = "unsupported-budget";
       throw error;
     }
+  }
+
+  function pushFrontier(node) {
+    if (!captureWitnessRoutes) {
+      frontier.push(node);
+      return;
+    }
+    let index = frontier.length;
+    frontier.push(node);
+    while (index > 0) {
+      const parent = Math.floor((index - 1) / 2);
+      if (compareRoutePrefixes(frontier[parent].routeRank, node.routeRank) <= 0) break;
+      frontier[index] = frontier[parent];
+      index = parent;
+    }
+    frontier[index] = node;
+  }
+
+  function popFrontier() {
+    if (!captureWitnessRoutes) {
+      if (frontierCursor >= frontier.length) return undefined;
+      return frontier[frontierCursor++];
+    }
+    if (frontier.length === 0) return undefined;
+    const first = frontier[0];
+    const last = frontier.pop();
+    if (frontier.length > 0) {
+      let index = 0;
+      while (true) {
+        const left = index * 2 + 1;
+        if (left >= frontier.length) break;
+        const right = left + 1;
+        const child = right < frontier.length &&
+          compareRoutePrefixes(frontier[right].routeRank, frontier[left].routeRank) < 0
+          ? right : left;
+        if (compareRoutePrefixes(frontier[child].routeRank, last.routeRank) >= 0) break;
+        frontier[index] = frontier[child];
+        index = child;
+      }
+      frontier[index] = last;
+    }
+    return first;
   }
 
   function rememberContinuation(placement, engine) {
@@ -456,7 +574,9 @@ function generateEngineFramePlacements(state, movementRules, options, continuati
 // row as Engine.hardDrop; an actual downward move clears spin evidence under
 // every non-"stupid" spin policy, matching Engine's internal fall loop.
 function projectHardDrop(engine, previousEvidence) {
+  const before = engine.falling.snapshot();
   const moved = engine.falling.softDrop(engine.board.state);
+  const after = engine.falling.snapshot();
   const spin = moved && engine.gameOptions.spinBonuses !== "stupid"
     ? null
     : engine.lastSpin;
@@ -469,6 +589,13 @@ function projectHardDrop(engine, previousEvidence) {
       spin,
     },
     evidence: spin === null ? noRotation() : previousEvidence,
+    motion: {
+      before,
+      after,
+      input: "hardDrop",
+      rotation: null,
+      softDropHeld: false,
+    },
   };
 }
 
@@ -937,6 +1064,7 @@ function engineOptions(o, handling, knownQueue = 31) {
 function step(engine, input, previousEvidence) {
   let lock = null;
   const startedAtFrame = engine.frame;
+  const before = engine.falling.snapshot();
   engine.events.once("falling.lock.pre", () => {
     const eventLock = engine.frame === startedAtFrame;
     lock = {
@@ -959,11 +1087,26 @@ function step(engine, input, previousEvidence) {
       ? [keyEvent(engine.frame, "keydown", input), keyEvent(engine.frame, "keyup", input)]
       : [keyEvent(engine.frame, "keydown", input), keyEvent(engine.frame, "keyup", input)];
   engine.tick(frames);
+  const after = lock?.falling ?? engine.falling.snapshot();
   let evidence = previousEvidence;
-  if (predicted !== null) evidence = predicted;
+  if (predicted !== null) evidence = predicted.evidence;
   if (engine.lastSpin === null && lock === null) evidence = noRotation();
   if (lock !== null) DIRTY_MOVEMENT_ENGINES.add(engine);
-  return { lock, evidence };
+  return {
+    lock,
+    evidence,
+    motion: {
+      before,
+      after,
+      input,
+      rotation: predicted === null ? null : {
+        from: predicted.fromPose,
+        to: predicted.toPose,
+        evidence: predicted.evidence,
+      },
+      softDropHeld: engine.input?.keys?.softDrop === true,
+    },
+  };
 }
 
 function heldEdge(input) {
@@ -1009,24 +1152,38 @@ function predictedRotation(engine, input) {
     to,
     engine.board.state,
   );
+  const fromPose = enginePoseFromSnapshot(engine.falling.snapshot());
   if (kick === true) {
     return {
+      evidence: {
       lastInputWasRotation: true,
       kickIndex: 0,
       kickId: "00",
       kickOffset: [0, 0],
+      },
+      fromPose,
+      toPose: { ...fromPose, rotation: ROTATION_NAMES[to] },
     };
   }
   if (typeof kick !== "object" || kick === null) return null;
   return {
-    lastInputWasRotation: true,
-    kickIndex: kick.index,
-    kickId: kick.id,
-    kickOffset: [kick.kick[0], kick.kick[1]],
+    evidence: {
+      lastInputWasRotation: true,
+      kickIndex: kick.index,
+      kickId: kick.id,
+      kickOffset: [kick.kick[0], kick.kick[1]],
+    },
+    fromPose,
+    toPose: {
+      ...fromPose,
+      rotation: ROTATION_NAMES[to],
+      x: fromPose.x + kick.kick[0],
+      y: fromPose.y + kick.kick[1],
+    },
   };
 }
 
-function placementFromLock(state, lock, usedHold, witness, evidence) {
+function placementFromLock(state, lock, usedHold, witness, evidence, trace = null) {
   const piece = Object.keys(PIECE_TO_MINO).find((key) => PIECE_TO_MINO[key] === lock.falling.symbol);
   const rotation = ROTATION_NAMES[lock.falling.rotation];
   const placement = {
@@ -1052,10 +1209,16 @@ function placementFromLock(state, lock, usedHold, witness, evidence) {
     value: lock.cells,
     enumerable: false,
   });
+  if (trace !== null) {
+    Object.defineProperty(placement, "engineFrameFullWitnessTrace", {
+      value: structuredClone(trace),
+      enumerable: false,
+    });
+  }
   return placement;
 }
 
-function placementIdentity(state, placement, continuationEngine = null) {
+function placementIdentity(state, placement, continuationEngine = null, trace = null) {
   const board = canonicalBoardToTriangle(state.board);
   const cells = createPlacedTetromino(board, placement).absoluteBlocks
     .map(([x, y]) => `${x},${y}`).sort().join("|");
@@ -1070,10 +1233,16 @@ function placementIdentity(state, placement, continuationEngine = null) {
     evidence.kickOffset?.join(",") ?? "",
   ];
   if (continuationEngine !== null) identity.push(nodeIdentity(continuationEngine, noRotation()));
+  if (trace !== null) {
+    identity.push(
+      trace.softDrops,
+      Buffer.from(JSON.stringify(placement.movementEvidence.inputs), "utf8").toString("hex"),
+    );
+  }
   return identity.join(":");
 }
 
-function nodeIdentity(engine, evidence) {
+function nodeIdentity(engine, evidence, idleFrames = 0, heldEdges = 0) {
   const f = engine.falling.snapshot();
   return JSON.stringify([
     engine.frame, f.location, f.rotation, f.locking, f.lockResets, f.rotResets,
@@ -1082,7 +1251,126 @@ function nodeIdentity(engine, evidence) {
     engine.input?.keys, engine.input?.lShift, engine.input?.rShift,
     engine.input?.lastShift, engine.input?.firstInputTime, engine.state,
     evidence.lastInputWasRotation, evidence.kickId, evidence.kickOffset,
+    idleFrames, heldEdges,
   ]);
+}
+
+function createWitnessTrace(engine) {
+  return {
+    sourcePose: enginePoseFromSnapshot(engine.falling.snapshot()),
+    softDrops: 0,
+    rotationFrom: null,
+    rotationTo: null,
+    rotationEvidence: noRotation(),
+  };
+}
+
+function advanceWitnessTrace(trace, input, motion) {
+  if (trace === null || !motion?.before || !motion.after) {
+    const error = new Error("unsupported-witness: engine-frame trace is incomplete");
+    error.code = "unsupported-witness";
+    throw error;
+  }
+  const before = motion.before;
+  const after = motion.after;
+  if (!Number.isInteger(before.highestY) || !Number.isInteger(after.highestY)) {
+    const error = new Error("unsupported-witness: Engine highestY is not an integer row tracker");
+    error.code = "unsupported-witness";
+    throw error;
+  }
+  if (after.highestY > before.highestY) {
+    const error = new Error("unsupported-witness: Engine highestY moved upward");
+    error.code = "unsupported-witness";
+    throw error;
+  }
+  const acceptedKickY = motion.rotation?.evidence?.kickOffset?.[1] ?? 0;
+  if (!Number.isFinite(acceptedKickY)) {
+    const error = new Error("unsupported-witness: accepted rotation kick offset is malformed");
+    error.code = "unsupported-witness";
+    throw error;
+  }
+  // `highestY` is the Engine's deepest-row watermark, so it cannot count a
+  // descent after an upward kick back to an already visited row. Remove the
+  // accepted rotation kick from the before/after positions and count each
+  // non-terminal tick's integer row boundaries instead. This preserves real
+  // gravity/soft-drop descent while excluding the kick displacement itself.
+  const postInputY = before.location[1] + acceptedKickY;
+  if (!Number.isFinite(postInputY) || !Number.isFinite(after.location[1])) {
+    const error = new Error("unsupported-witness: Engine falling location is malformed");
+    error.code = "unsupported-witness";
+    throw error;
+  }
+  const rowDelta = input === "hardDrop"
+    ? 0
+    : Math.max(0, Math.floor(postInputY) - Math.floor(after.location[1]));
+  // Native movegen records the accumulated cost before the terminal landing
+  // operation. A hard drop therefore locks the piece but contributes no new
+  // soft-drop rows; all earlier gravity/soft-drop rows were already observed
+  // on non-terminal ticks.
+  const softDrops = trace.softDrops + (input === "hardDrop" ? 0 : rowDelta);
+  if (!Number.isSafeInteger(softDrops) || softDrops > 0xffffffff) {
+    const error = new Error("unsupported-witness: soft-drop row budget exceeded");
+    error.code = "unsupported-witness";
+    throw error;
+  }
+
+  const beforePose = enginePoseFromSnapshot(before);
+  const afterPose = enginePoseFromSnapshot(after);
+  const poseChanged = !sameEnginePose(beforePose, afterPose);
+  let rotationFrom = trace.rotationFrom;
+  let rotationTo = trace.rotationTo;
+  let rotationEvidence = trace.rotationEvidence;
+  if (motion.rotation !== null) {
+    if (sameEnginePose(afterPose, motion.rotation.to)) {
+      rotationFrom = structuredClone(motion.rotation.from);
+      rotationTo = structuredClone(motion.rotation.to);
+      rotationEvidence = structuredClone(motion.rotation.evidence);
+    } else {
+      rotationFrom = null;
+      rotationTo = null;
+      rotationEvidence = noRotation();
+    }
+  } else if (poseChanged) {
+    rotationFrom = null;
+    rotationTo = null;
+    rotationEvidence = noRotation();
+  }
+  return {
+    sourcePose: trace.sourcePose,
+    softDrops,
+    rotationFrom,
+    rotationTo,
+    rotationEvidence,
+  };
+}
+
+function enginePoseFromSnapshot(snapshot) {
+  const piece = Object.keys(PIECE_TO_MINO).find((key) => PIECE_TO_MINO[key] === snapshot.symbol);
+  if (piece === undefined || !Array.isArray(snapshot.location) || snapshot.location.length !== 2) {
+    const error = new Error("unsupported-witness: Engine pose snapshot is malformed");
+    error.code = "unsupported-witness";
+    throw error;
+  }
+  return {
+    piece,
+    rotation: ROTATION_NAMES[snapshot.rotation],
+    x: snapshot.location[0],
+    y: Math.floor(snapshot.location[1]) - BOX_SIZE[piece] + 1,
+  };
+}
+
+function sameEnginePose(left, right) {
+  return left?.piece === right?.piece && left?.rotation === right?.rotation &&
+    left?.x === right?.x && left?.y === right?.y;
+}
+
+function stableInputBytes(inputs) {
+  return JSON.stringify(inputs);
+}
+
+function compareRoutePrefixes(left, right) {
+  return left.softDrops - right.softDrops ||
+    Buffer.compare(Buffer.from(left.inputKey, "utf8"), Buffer.from(right.inputKey, "utf8"));
 }
 
 const DYNAMIC_TRACKER_CACHE = createDynamicTrackerCache();
@@ -1175,4 +1463,3 @@ function assertSupportedHandling(handling) {
     throw new Error("engine-frame controller requires IRS and IHS off");
   }
 }
-

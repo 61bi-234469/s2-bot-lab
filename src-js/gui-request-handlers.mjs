@@ -21,8 +21,10 @@ import {
   applyHandicapToLegacyStart,
   normalizeHandicapGarbage,
 } from "./gui-1p-handicap-garbage.mjs";
+import { normalizeTurnMatch, turnMatchControllerOptions } from "./gui-turn-match.mjs";
 import { guiStateToCc2NativeStart } from "./cc2-s2-native-start.mjs";
-import { resolveStaticCc2Proposal } from "./static-cc2-proposal.mjs";
+import { createPublicCompatProfile } from "./public-compat-request.mjs";
+import { assertChampionParameters, createChampionRequest, resolveChampionDecision } from "./champion-parameters.mjs";
 import { resolveGuiStaticSubmission as resolveQualifiedStaticCc2Submission } from "./gui-static-public-resolver.mjs";
 import { createGuiStaticDecisionRequest as createS2AmountOnlyDecisionRequest, isGuiStaticType as isAdr062QualifiedStaticType } from "./s2-amount-only-decision-state.mjs";
 import { applyTransition } from "./transition.mjs";
@@ -46,22 +48,13 @@ import { placementGeometry } from "./triangle/placement-geometry.mjs";
 import { lockedPieceCells, toS2GuiState, createGame, extendSeededQueue,
   QUEUE_MODE_LEGACY_LCG } from "../cc2-gui/game.mjs";
 
-const SIMPLE_BOT = Object.freeze({
-  id: "s2-simple",
-  label: "S2 placement bot",
-  available: true,
-  ...botParameterCapability("s2-simple"),
-});
 const HUMAN_BOT = Object.freeze({ id: "human", label: "You (1P)", available: true, ...botParameterCapability("human") });
+// The GUI offers exactly the bots TTRM INPUT admits; the local server offers the same set.
 const CC2_LABELS = Object.freeze({
   "cc2-raw": "Raw CC2 — MinusKelvin upstream (deterministic port)",
   "cc2-chouhy": "CC2 — chouhy fork b20a92b (deterministic port)",
-  "cc2-s2": "CC2 S2 — development hybrid",
-  "cc2-s2-gen017": "CC2 S2 — Gen 017 aligned",
-  "cc2-s2-f11": "CC2 S2 — F11 REN quality",
-  "cc2-s2-f12": "CC2 S2 — F12 REN finisher",
   "cc2-s2-f14": "CC2 S2 — F14 post-tank rescue",
-  "cc2-s2-f25": "CC2 S2 — F25 B2B retention",
+  "cc2-s2-champion-legacy": "CC2 S2 — previous INPUT champion (comparison)",
   "cc2-s2-champion": "CC2 S2 — current development champion (not release-qualified)",
 });
 /**
@@ -75,6 +68,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
   });
   let session = null;
   let sessionGeneration = 0;
+  let publicRequestSequence = 0;
   const inputMatches = createGuiInputMatchHandlers({ runtime: cc2Runtime, now });
 
   return Object.freeze({
@@ -85,7 +79,6 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
         ruleset: { id: RULESET_IDS.s2Observed, b2bCharging: resolvePlacementRules(RULESET_IDS.s2Observed).b2bCharging },
         bots: [
           ...Object.entries(CC2_LABELS).map(([id, label]) => cc2Runtime === null ? unavailable(id, label) : ({ id, label, available: true, ...staticCc2Capability(id) })),
-          SIMPLE_BOT,
           HUMAN_BOT,
         ],
       });
@@ -102,6 +95,18 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
         if (!isAdr062QualifiedStaticType(engine)) return fail(422, { error: "ADR-062-qualified resolver required" });
         try {
           const parameters = normalizeBotParameters(engine, body.parameters);
+          if (engine === "cc2-s2-champion") {
+            assertChampionParameters(parameters);
+            const state = guiStateToCanonical(body.state);
+            const decision = await decidePublicChampion("analysis", state, body.state, parameters);
+            return ok({
+              engine: publicEngine(engine),
+              info: { name: "Cold Clear 2 S2", version: "F14 public profile B WASM" },
+              suggestion: { moves: [decision.response.selectedMove] },
+              nativeDecision: decision.response,
+              verification: { ...decision.resolved.verification, move: decision.response.selectedMove },
+            });
+          }
           return ok({ ...(await cc2Runtime.propose({
             sessionKey: "analysis",
             engine,
@@ -113,30 +118,11 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       }
       if (method === "POST" && path === "/api/apply-s2") {
         if (body.engine === "s2-simple") return ok(applyHumanFinalPlacementUnderObservedS2(guiStateToCanonical(body.state), body.move));
+        if (body.engine === "cc2-s2-champion") return fail(422, { error: "F14 native compatibility publishes a verified final decision through /api/suggest; external reranking is unsupported" });
         try {
           const engine = requireCc2Type(body.engine);
-          if (!isAdr062QualifiedStaticType(engine)) throw new Error("ADR-062-qualified resolver required");
-          const state = guiStateToCanonical(body.state);
-          const resolved = resolveQualifiedStaticCc2Submission(createS2AmountOnlyDecisionRequest({
-            sessionKey: "analysis", state, moves: body.moves ?? [body.move], type: engine,
-            engine: publicEngine(engine),
-          }));
-          const transition = applyTransition(state, { kind: "placement", placement: resolved.placement }, state.rulesetId);
-          if (transition.legality?.legal !== true) {
-            return fail(422, { status: "unsupported", reasons: [transition.legality?.reason ?? "illegal"], transition: null });
-          }
-          // Referee-only evaluation after selection: never feed the canonical
-          // transition or its score back into the amount-only resolver.
-          const features = extractEvaluationFeatures(transition);
-          return ok({ status: "degraded", transition,
-            move: canonicalPlacementToGuiMove(resolved.placement, transition.lockResult.spin),
-            comparison: {
-            status: "degraded", reasons: ["movement-model-unavailable"],
-            engineId: engine, positionFingerprint: fullStateKey(state), rulesetId: state.rulesetId,
-            evaluator: evaluatorModelIdentity(), scoreSemantics: EVALUATION_SCORE_SEMANTICS,
-            features, score: scoreEvaluationFeatures(features),
-            witness: { placement: resolved.placement },
-          } });
+          return applyQualifiedCc2Suggestion({ type: engine, engine: publicEngine(engine),
+            state: guiStateToCanonical(body.state), moves: body.moves ?? [body.move] });
         } catch (error) { return fail(422, { error: messageOf(error) }); }
       }
       if (method === "POST" && path === "/api/s2/transition") {
@@ -177,6 +163,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       const config = normalizeBotMatchOptions(body);
       if (humanSide !== null && config.fairComparison) throw new Error("fair comparison cannot include a human player");
       const handicap = normalizeHandicapGarbage(body.handicap, { humanSide });
+      const turnMatch = normalizeTurnMatch(body.turnMatch, { humanSide });
       const botParameters = {
         left: config.fairComparison
           ? fairComparisonBotParameters(left, body.leftParameters)
@@ -185,6 +172,14 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
           ? fairComparisonBotParameters(right, body.rightParameters)
           : normalizeBotParameters(right, body.rightParameters),
       };
+      for (const [side, type] of [["left", left], ["right", right]]) {
+        if (type !== "cc2-s2-champion") continue;
+        try {
+          assertChampionParameters(botParameters[side]);
+        } catch (error) {
+          return fail(422, { error: messageOf(error) });
+        }
+      }
       const previousSession = session;
       const generation = ++sessionGeneration;
       if (previousSession !== null) previousSession.invalidated = true;
@@ -203,19 +198,24 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       const startState = (botId) => structuredClone(
         handicapStart !== null && botId === humanSide ? handicapStart.state : initial,
       );
+      const turnOptions = turnMatchControllerOptions(turnMatch, humanSide);
       const match = createBotMatch({
         bots: [
           { id: "left", gameId: 1, state: startState("left") },
           { id: "right", gameId: 2, state: startState("right") },
         ],
-        mode: "paced",
-        ppsByBotId: {
-          left: left === "human" ? null : staticPacedRate(left, botParameters.left, config.fairComparison, humanSide !== null),
-          right: right === "human" ? null : staticPacedRate(right, botParameters.right, config.fairComparison, humanSide !== null),
-        },
+        // A turn match has no rate for either side: the controller's own
+        // alternating/simultaneous schedule owns every lock frame.
+        ...(turnOptions ?? {
+          mode: "paced",
+          ppsByBotId: {
+            left: left === "human" ? null : staticPacedRate(left, botParameters.left, config.fairComparison, humanSide !== null),
+            right: right === "human" ? null : staticPacedRate(right, botParameters.right, config.fairComparison, humanSide !== null),
+          },
+        }),
       });
       session = {
-        types: { left, right }, humanSide, botParameters, config, ttrmCompatible, queueModel, invalidated: false,
+        types: { left, right }, humanSide, botParameters, config, ttrmCompatible, queueModel, invalidated: false, turnMatch,
         handicap: handicapStart?.record ?? { id: HANDICAP_GARBAGE_ID, enabled: false },
         mutations: createLiveMatchMutationQueue(), inFlightStep: null,
         queueSeeds: { left: scenario.bagSeed, right: scenario.bagSeed }, match, recording: createMatchRecording({
@@ -224,7 +224,8 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
             gamemode: "s2-bot-match", ts: new Date().toISOString(), version: 1, parseMs: 0,
             match: { seed: config.seed, fairComparison: config.fairComparison,
               maxTurns: config.maxTurns, firstTo: 1, ttrmCompatible, queueModel,
-              declaredPpsByBotId: structuredClone(match.pace.ppsByBotId),
+              declaredPpsByBotId: match.pace === null ? null : structuredClone(match.pace.ppsByBotId),
+              turnMatch: { id: turnMatch.id, enabled: turnMatch.enabled, order: turnMatch.order },
               // Series-level meta keeps only what every game shares. The
               // per-game seed and terrain live in each round record.
               handicap: { id: HANDICAP_GARBAGE_ID, enabled: handicap.enabled },
@@ -235,18 +236,22 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     } catch (error) { return fail(400, { error: messageOf(error) }); }
   }
 
-  async function stepMatch(body = {}) {
+  async function stepMatch(body = {}, turnPlacement = null) {
     if (session === null) return fail(409, { error: "match-not-started" });
-    if (session.inFlightStep !== null) return session.inFlightStep;
+    // A simultaneous turn is carried by the 1P lock. Joining an in-flight turn
+    // would drop that placement silently, so the second one is refused instead.
+    if (session.inFlightStep !== null) {
+      return turnPlacement === null ? session.inFlightStep : fail(409, { error: "turn-in-progress" });
+    }
     const activeSession = session;
-    const work = runStepMatch(activeSession, body).finally(() => {
+    const work = runStepMatch(activeSession, body, turnPlacement).finally(() => {
       if (activeSession.inFlightStep === work) activeSession.inFlightStep = null;
     });
     activeSession.inFlightStep = work;
     return work;
   }
 
-  async function runStepMatch(activeSession, body) {
+  async function runStepMatch(activeSession, body, turnPlacement = null) {
     const prepared = await activeSession.mutations.run(() => {
       if (session !== activeSession || activeSession.invalidated) return null;
       const view = matchView(activeSession);
@@ -261,11 +266,16 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     });
     if (prepared === null) return fail(409, { error: "match-replaced" });
     if (prepared.complete !== undefined) return fail(409, { error: "match-complete", outcome: prepared.complete });
-    if (prepared.bots.every((bot) => activeSession.types[bot.id] === "human")) {
+    // In a paced round a 1P side is externally paced and is never due here. A
+    // turn match schedules both sides, so the person's own half of the turn
+    // arrives as `turnPlacement` and its absence is what stops the turn.
+    if (prepared.bots.some((bot) => activeSession.types[bot.id] === "human") && turnPlacement === null) {
       return fail(409, { error: "human-lock-required" });
     }
 
-    const requestedWallFrame = activeSession.humanSide === null
+    // A turn match has no wall clock to be late against: every lock frame comes
+    // from the controller's own turn schedule.
+    const requestedWallFrame = activeSession.humanSide === null || activeSession.turnMatch.enabled
       ? null
       : validWallFrame(body?.lockFrame, activeSession.match.clock.logicalFrame);
     const startedAt = now();
@@ -292,9 +302,12 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       if (delayMs > 0) await wait(delayMs);
     }
 
-    // A searched empty static response ends one game. Reject malformed or
-    // first-lock evidence, and discard results that became stale after a
-    // human lock without closing the current match.
+    // Keep the static/WASM transport on the same fail-closed boundary as the
+    // native server. A received, searched empty answer after a played lock is
+    // one game's bot loss; a first-lock, malformed, or otherwise failed
+    // response remains a series-stopping proposal failure. Handle this before
+    // human optimistic resolution because a no-move proposal has no placement
+    // to resolve.
     const failed = proposals.find((proposal) => proposal.proposalResult?.status === "failure");
     if (failed !== undefined) {
       return await activeSession.mutations.run(async () => {
@@ -327,7 +340,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     try {
       let optimisticMatch = null;
       let optimisticSubmissions = null;
-      if (activeSession.humanSide !== null) {
+      if (activeSession.humanSide !== null && !activeSession.turnMatch.enabled) {
         const captured = await activeSession.mutations.run(() => {
           if (session !== activeSession || activeSession.invalidated) {
             return { response: fail(409, { error: "match-replaced" }) };
@@ -363,6 +376,10 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
           submissions = await Promise.all(proposals.map((proposal) =>
             resolveStaticProposal(activeSession, before, proposal, { forceLocal })));
         }
+        // The person's half of a simultaneous turn is evaluated against the
+        // same snapshot the bot searched from, inside the boundary that
+        // commits both, so neither side saw the other's placement.
+        if (turnPlacement !== null) submissions = [...submissions, humanTurnSubmission(activeSession, before, turnPlacement)];
         if (session !== activeSession || activeSession.invalidated) return fail(409, { error: "match-replaced" });
         const resolvedView = matchView(activeSession);
         if (resolvedView.outcome.complete) return fail(409, { error: "match-complete", outcome: resolvedView.outcome });
@@ -395,6 +412,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     if (session === null) return fail(409, { error: "match-not-started" });
     const activeSession = session;
     if (activeSession.humanSide === null) return fail(409, { error: "no-human-player" });
+    if (activeSession.turnMatch.enabled) return turnMatchHumanLock(activeSession, body);
     if (!Number.isSafeInteger(body.lockFrame) || body.lockFrame < 0) return fail(400, { error: "lockFrame must be a non-negative safe integer" });
     try {
       return await activeSession.mutations.run(() => {
@@ -427,6 +445,49 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     } catch (error) {
       return fail(422, { error: messageOf(error) });
     }
+  }
+
+  /**
+   * The 1P half of one turn. A turn match ignores the browser's wall frame: the
+   * controller's own turn schedule owns every lock frame, and a placement
+   * offered outside the person's turn is refused rather than reordered.
+   *
+   * A simultaneous turn cannot be committed alone, so it is carried through the
+   * ordinary step pipeline, which searches the opponent from the same snapshot
+   * and commits both halves inside one mutation boundary.
+   */
+  async function turnMatchHumanLock(activeSession, body) {
+    const dueBotIds = botMatchNextStep(activeSession.match).botIds;
+    if (!dueBotIds.includes(activeSession.humanSide)) return fail(409, { error: "not-your-turn" });
+    if (dueBotIds.length > 1) return stepMatch({}, body.placement);
+    try {
+      return await activeSession.mutations.run(() => {
+        if (session !== activeSession || activeSession.invalidated) return fail(409, { error: "match-replaced" });
+        const currentView = matchView(activeSession);
+        if (currentView.outcome.complete) return fail(409, { error: "match-complete", outcome: currentView.outcome });
+        refillQueues(activeSession);
+        const before = activeSession.match;
+        const submission = humanTurnSubmission(activeSession, before, body.placement);
+        const after = advanceBotMatch(before, [submission]);
+        appendMatchLocks(activeSession.recording, before, after, [submission]);
+        activeSession.match = after;
+        activeSession.lastSubmissions = [submission];
+        finalize(activeSession);
+        const view = matchView(activeSession);
+        if (view.outcome.complete) cc2Runtime?.closeSessions({ sessionKeys: ["left", "right"] });
+        return ok(view);
+      });
+    } catch (error) {
+      return fail(422, { error: messageOf(error) });
+    }
+  }
+
+  /** The person's placement, re-evaluated by the referee against `match`. */
+  function humanTurnSubmission(activeSession, match, placement) {
+    const bot = match.bots.find((candidate) => candidate.id === activeSession.humanSide);
+    const result = applyHumanFinalPlacementUnderObservedS2(bot.state, placement);
+    if (result.transition === null) throw new Error(result.reasons.join(", "));
+    return submissionFor(match, bot, result.comparison.witness.placement, result.transition, result.comparison.score);
   }
 
   async function humanPenaltyTopOut(body) {
@@ -473,15 +534,16 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     const parameters = activeSession.botParameters[bot.id];
     const gui = botMatchToGuiState(preparedMatch, bot.id);
     const state = guiStateToCc2NativeStart(gui, { queueLimit: parameters.queueDepth });
+    const canonicalState = guiStateToCanonical(gui);
     const startedAt = now();
     let proposal;
     try {
-      proposal = await cc2Runtime.propose({
-        sessionKey: bot.id,
-        engine: type,
-        state,
-        ...cc2MatchSearchBudget(activeSession, bot.id, dueCount),
-      });
+      if (type === "cc2-s2-champion") {
+        const decision = await decidePublicChampion(bot.id, canonicalState, gui, parameters);
+        return { botId: bot.id, type, moves: [decision.response.selectedMove], publicDecision: decision };
+      }
+      proposal = await cc2Runtime.propose({ sessionKey: bot.id, engine: type, state,
+        ...cc2MatchSearchBudget(activeSession, bot.id, dueCount) });
     } catch (error) {
       const classification = classifyGuiProposalError({
         error,
@@ -491,7 +553,12 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
         engineType: type,
       });
       if (classification.status === "terminal") {
-        return { botId: bot.id, type: "forfeit", reason: "no-suggested-move", proposalResult: classification };
+        return {
+          botId: bot.id,
+          type: "forfeit",
+          reason: "no-suggested-move",
+          proposalResult: classification,
+        };
       }
       return { botId: bot.id, type: "failure", proposalResult: classification };
     }
@@ -509,6 +576,15 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       const best = analysis.moves[0];
       if (!best) throw new Error(`${bot.id} has no legal final placement`);
       return submissionFor(match, bot, best.placement, best.transition, best.score);
+    }
+    if (type === "cc2-s2-champion") {
+      const gui = botMatchToGuiState(match, bot.id);
+      const state = guiStateToCanonical(gui);
+      const decision = !forceLocal && proposal.publicDecision !== undefined
+        ? proposal.publicDecision
+        : await decidePublicChampion(bot.id, state, gui, activeSession.botParameters[bot.id]);
+      return submissionFor(match, bot, decision.resolved.placement, decision.resolved.transition,
+        decision.resolved.score, fullStateKey(bot.state));
     }
     const engine = publicEngine(type);
     if (!isAdr062QualifiedStaticType(type)) throw new Error("ADR-062-qualified resolver required");
@@ -542,6 +618,23 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       resolved.score,
       fullStateKey(bot.state),
     );
+  }
+
+  async function decidePublicChampion(sessionKey, state, gui, parameters) {
+    if (typeof cc2Runtime?.decideF14 !== "function") throw new Error("CC2 F14 WASM decision is unavailable");
+    const request = createChampionRequest(state, parameters, {
+      requestId: `f14-wasm-${++publicRequestSequence}`,
+      generation: 1,
+    });
+    const response = await cc2Runtime.decideF14({
+      sessionKey,
+      type: "cc2-s2-champion",
+      engine: publicEngine("cc2-s2-champion"),
+      request,
+      profile: request.execution,
+    });
+    const resolved = resolveChampionDecision({ state, gui, request, response, parameters });
+    return { request, response, resolved };
   }
 
   function cc2MatchSearchBudget(activeSession, botId, dueCount) {
@@ -612,12 +705,17 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     });
     const outcome = activeSession.forcedOutcome ??
       matchOutcome(bots, activeSession.match.turnNumber, activeSession.config.maxTurns);
+    const nextStep = outcome.complete ? null : botMatchNextStep(activeSession.match);
     return { status: outcome.complete ? "complete" : "active", turnNumber: activeSession.match.turnNumber, humanSide: activeSession.humanSide,
       mode: activeSession.match.mode, clock: activeSession.match.clock, config: activeSession.config, botParameters: activeSession.botParameters, outcome,
-      handicap: structuredClone(activeSession.handicap),
-      pacing: { authority: activeSession.humanSide === null ? "synthetic" : "realtime-1p", declaredPpsByBotId: structuredClone(activeSession.match.pace.ppsByBotId) },
+      handicap: structuredClone(activeSession.handicap), turnMatch: structuredClone(activeSession.turnMatch),
+      pacing: { authority: activeSession.humanSide === null ? "synthetic" : activeSession.turnMatch.enabled ? "turn" : "realtime-1p",
+        declaredPpsByBotId: activeSession.match.pace === null ? null : structuredClone(activeSession.match.pace.ppsByBotId) },
       deliveries: activeSession.match.lastStep?.deliveries ?? [], metricElapsedMs: activeSession.match.clock.logicalFrame * 1000 / 60,
-      nextStepFrames: outcome.complete ? null : botMatchNextStep(activeSession.match).frames, bots, replayMeta: activeSession.recording?.meta ?? null };
+      // Which side owes the next placement. A turn match is driven from it: the
+      // browser steps the opponent only while the person is not the due side.
+      dueBotIds: nextStep === null ? [] : [...nextStep.botIds],
+      nextStepFrames: nextStep?.frames ?? null, bots, replayMeta: activeSession.recording?.meta ?? null };
   }
 
   function finalize(activeSession) {
@@ -645,13 +743,50 @@ function isCanonicalPlacement(placement) {
     Number.isSafeInteger(placement.x) && Number.isSafeInteger(placement.y);
 }
 
+/**
+ * Verifies one CC2 analysis suggestion through the qualified amount-only
+ * resolver. Both hosts answer `/api/apply-s2` with this one function.
+ */
+export function applyQualifiedCc2Suggestion({ type, engine, state, moves }) {
+  if (!isAdr062QualifiedStaticType(type)) throw new Error("ADR-062-qualified resolver required");
+  const resolved = resolveQualifiedStaticCc2Submission(createS2AmountOnlyDecisionRequest({
+    sessionKey: "analysis", state, moves, type, engine,
+  }));
+  const transition = applyTransition(state, { kind: "placement", placement: resolved.placement }, state.rulesetId);
+  if (transition.legality?.legal !== true) {
+    return fail(422, { status: "unsupported", reasons: [transition.legality?.reason ?? "illegal"], transition: null });
+  }
+  // Referee-only evaluation after selection: never feed the canonical
+  // transition or its score back into the amount-only resolver.
+  const features = extractEvaluationFeatures(transition);
+  return ok({ status: "degraded", transition,
+    move: canonicalPlacementToGuiMove(resolved.placement, transition.lockResult.spin),
+    comparison: {
+      status: "degraded", reasons: ["movement-model-unavailable"],
+      engineId: type, positionFingerprint: fullStateKey(state), rulesetId: state.rulesetId,
+      evaluator: evaluatorModelIdentity(), scoreSemantics: EVALUATION_SCORE_SEMANTICS,
+      features, score: scoreEvaluationFeatures(features),
+      witness: { placement: resolved.placement },
+    } });
+}
+
 function ok(body) { return { status: 200, body }; }
 function fail(status, body) { return { status, body }; }
 function messageOf(error) { return error instanceof Error ? error.message : String(error); }
 function validWallFrame(value, fallback) { return Number.isSafeInteger(value) && value >= 0 ? value : fallback; }
 function defaultWait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 function unavailable(id, label) { return { id, label, available: false, reason: "requires the local server", parameters: [] }; }
-function staticCc2Capability(id) { const capability = botParameterCapability(id); capability.description += " 公開WASM版でもTHINK TIMEを利用できます。有効時は端末性能・ブラウザ・実行時負荷によって探索量と選択手が変化します。"; return capability; }
+function staticCc2Capability(id) {
+  const capability = botParameterCapability(id);
+  if (id === "cc2-s2-champion") {
+    capability.fixedDecision = true;
+    capability.execution = createPublicCompatProfile();
+    capability.description += " F14 profile B（WASM）で判断します。SELECTION・THINK TIME・QUEUE DEPTH を変えると、現チャンピオンとは別の設定で動きます。";
+    return capability;
+  }
+  capability.description += " 蜈ｬ髢妓ASM迚医〒繧５HINK TIME繧貞茜逕ｨ縺ｧ縺阪∪縺吶よ怏蜉ｹ譎ゅ・遶ｯ譛ｫ諤ｧ閭ｽ繝ｻ繝悶Λ繧ｦ繧ｶ繝ｻ螳溯｡梧凾雋闕ｷ縺ｫ繧医▲縺ｦ謗｢邏｢驥上→驕ｸ謚樊焔縺悟､牙喧縺励∪縺吶・";
+  return capability;
+}
 function cc2SearchBudget(parameters) { return {
   selectionLimit: parameters.selectionEnabled ? parameters.selectionLimit : null,
   thinkMs: parameters.thinkTimeEnabled ? parameters.thinkMs : null,
@@ -665,8 +800,9 @@ function staticWasmVersion(parameters) {
   return "time-budgeted-wasm";
 }
 function staticBotType(value) {
+  if (value.startsWith("cc2-") && !(value in CC2_LABELS)) throw new Error(`unsupported CC2 engine ${value}`);
   if (value !== "s2-simple" && value !== "human" && !(value in CC2_LABELS)) throw new Error(`unsupported static bot ${value}`);
   return value;
 }
 function requireCc2Type(value) { if (!(value in CC2_LABELS)) throw new Error(`unsupported CC2 engine ${value}`); return value; }
-function publicEngine(id) { return { botType: id, engineId: id, label: CC2_LABELS[id], repository: id === "cc2-raw" ? "https://github.com/MinusKelvin/cold-clear-2" : id === "cc2-chouhy" ? "https://github.com/chouhy/cold-clear-2" : "https://github.com/61bi-234469/s2-analysis-engine", commit: id === "cc2-raw" ? "ed8b19327b6bd1410ddd873d8611485bd45d8fae" : id === "cc2-chouhy" ? "b20a92b0ed3230dd910d0674f7a09c552a34dd46" : "ed8b193+local-s2-reranker", comparisonSource: `${id}-final-placement` }; }
+function publicEngine(id) { return { botType: id, engineId: id, label: CC2_LABELS[id], repository: id === "cc2-raw" ? "https://github.com/MinusKelvin/cold-clear-2" : id === "cc2-chouhy" ? "https://github.com/chouhy/cold-clear-2" : "https://github.com/61bi-234469/s2-bot-lab", commit: id === "cc2-raw" ? "ed8b19327b6bd1410ddd873d8611485bd45d8fae" : id === "cc2-chouhy" ? "b20a92b0ed3230dd910d0674f7a09c552a34dd46" : "ed8b193+local-s2-reranker", comparisonSource: `${id}-final-placement` }; }

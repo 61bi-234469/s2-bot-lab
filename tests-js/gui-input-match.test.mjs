@@ -12,6 +12,8 @@ import { Engine, Tetromino } from '@haelp/teto/engine';
 import { guiStateToCc2NativeStart } from '../src-js/cc2-s2-native-start.mjs';
 import { decisionStateToSyntheticGui } from '../src-js/s2-amount-only-decision-state.mjs';
 import { handicapColumnHeights } from '../src-js/gui-1p-handicap-garbage.mjs';
+import { listS2AmountOnlyPublicReachablePlacements } from '../src-js/s2-amount-only-public-candidates.mjs';
+import { createPublicCompatProfile } from '../src-js/public-compat-request.mjs';
 
 const tap = (frame, key) => ['keydown', 'keyup'].map(type => ({ frame, type, data: { key, subframe: 0 } }));
 const config = { left: 'human', right: 'cc2-s2-f14', seed: 42, maxTurns: null };
@@ -21,7 +23,7 @@ const searchedEmpty = () => Object.assign(new Error('CC2 returned no suggested m
 });
 
 test('only raw/chouhy input connections request a native candidate prefix', async () => {
-  for (const type of ['cc2-raw', 'cc2-chouhy', 'cc2-s2-f14', 'cc2-s2-champion']) {
+  for (const type of ['cc2-raw', 'cc2-chouhy', 'cc2-s2-f14']) {
     let state;
     const handlers = createGuiInputMatchHandlers({ runtime: {
       propose: async request => { state = request.state; return new Promise(() => {}); }, closeSessions: async () => {},
@@ -29,6 +31,133 @@ test('only raw/chouhy input connections request a native candidate prefix', asyn
     const start = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: { ...config, right: type } });
     await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: { sessionId: start.body.sessionId, frame: 1 } });
     assert.equal(state.input_candidates, ['cc2-raw', 'cc2-chouhy'].includes(type) ? true : undefined);
+  }
+});
+
+function fakeCoreDecision(request, selectedCc2Rank) {
+  const placements = listS2AmountOnlyPublicReachablePlacements(request.selector)
+    .filter(placement => !placement.usedHold && placement.rotation === 'spawn').slice(0, 4);
+  const identities = placements.map(placement => canonicalize(canonicalPlacementToGuiMove(placement)));
+  return { status: 'move', reason: 'selection-budget', selectedIdentity: identities[selectedCc2Rank],
+    selectedMove: JSON.parse(identities[selectedCc2Rank]), selectedPlacement: placements[selectedCc2Rank],
+    ranking: { returnedIdentities: identities, identities: [identities[selectedCc2Rank], ...identities.filter((_, rank) => rank !== selectedCc2Rank)], selectedCc2Rank,
+      candidates: identities.map((_, cc2Rank) => ({ cc2Rank, solvent: true, selectionScore: -cc2Rank })) } };
+}
+
+test('champion INPUT asks the F14 profile-B core and locks its selected move', async () => {
+  let proposals = 0;
+  let decided;
+  let core;
+  let resolved;
+  const handlers = createGuiInputMatchHandlers({ runtime: {
+    propose: () => { proposals++; return new Promise(() => {}); },
+    decideF14: async payload => { decided = payload; core = fakeCoreDecision(payload.request, 3); return core; },
+    resolveInput: async payload => (resolved = resolveInputJob(payload)),
+    closeSessions: async () => {},
+  } });
+  const start = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: { ...config, right: 'cc2-s2-champion' } });
+  assert.equal(start.status, 200, JSON.stringify(start.body));
+  for (let frame = 1; frame <= 4 && resolved === undefined; frame++) {
+    await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: { sessionId: start.body.sessionId, frame } });
+    for (let i = 0; i < 5; i++) await flush();
+  }
+  assert.equal(proposals, 0, 'the champion never asks a CC2 proposal process');
+  assert.deepEqual(decided.profile, createPublicCompatProfile());
+  assert.equal(decided.request.execution.profileId, 'f14-amount-only-compat-b/1');
+  assert.equal(resolved.status, 'planned', JSON.stringify(resolved));
+  assert.equal(resolved.selection.adoptionRank, 0);
+  const pose = placement => [placement.piece, placement.rotation, placement.x, placement.y, placement.usedHold];
+  assert.deepEqual(pose(resolved.placement), pose(core.selectedPlacement));
+});
+
+for (const rerankMismatch of [false, true])
+for (const sameTarget of [false, true])
+test(`champion INPUT ${rerankMismatch ? 'falls back on rerank mismatch' : 'reranks incoming-only changes'}; same target ${sameTarget}`, async t => {
+  const tick = Engine.prototype.tick;
+  let receiver;
+  t.mock.method(Engine.prototype, 'tick', function(events) {
+    if (events.some(event => event.type === 'ige' && event.data.type === 'target' && event.data.data.targets[0] === 1)) receiver = this;
+    const extra = [];
+    if (this === receiver && this.frame === 0) extra.push({ frame: 0, type: 'ige', data: {
+      type: 'interaction', data: { type: 'garbage', amt: 4, size: 1, iid: 1, gameid: 1, ackiid: 0 },
+    } }, { frame: 0, type: 'ige', data: {
+      type: 'interaction', data: { type: 'garbage', amt: 2, size: 1, iid: 2, gameid: 1, ackiid: 0 },
+    } });
+    if (this === receiver && this.frame === 1) extra.push({ frame: 1, type: 'ige', data: {
+      type: 'interaction_confirm', data: { type: 'garbage', iid: 1, gameid: 1, frame: 0 },
+    } });
+    return tick.call(this, [...events, ...extra]);
+  });
+  const decisions = [];
+  const reranks = [];
+  const resolutions = [];
+  const handlers = createGuiInputMatchHandlers({ now: () => 0, runtime: {
+    propose: () => assert.fail('the champion never asks a CC2 proposal process'),
+    decideF14: async payload => {
+      const result = fakeCoreDecision(payload.request, decisions.length === 0 ? 0 : 1);
+      decisions.push({ payload, result });
+      return result;
+    },
+    rerankF14: async payload => {
+      reranks.push(payload);
+      if (rerankMismatch) throw new Error('rerank-mismatch');
+      return fakeCoreDecision(payload.request, sameTarget ? 0 : 2);
+    },
+    resolveInput: async payload => {
+      resolutions.push(structuredClone(payload));
+      // The paced first plan crosses garbage maturity; it must be reranked
+      // before deciding whether its input route can be reused.
+      return resolveInputJob(payload);
+    },
+    closeSessions: async () => {},
+  } });
+  const { body: started } = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
+    left: 'human', right: 'cc2-s2-champion', seed: 42, maxTurns: null,
+  } });
+  let view = started;
+  const planned = () => resolutions.some(payload => payload.request.decision.incoming.dueThisLockRows > 0);
+  for (let frame = 1; frame <= 400 && !planned(); frame++) {
+    const result = await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: { sessionId: started.sessionId, frame } });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    view = result.body;
+    await flush();
+  }
+  const diagnosticStep = await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: {
+    sessionId: started.sessionId, frame: view.clock.logicalFrame + 1,
+  } });
+  assert.equal(diagnosticStep.status, 200, JSON.stringify(diagnosticStep.body));
+  view = diagnosticStep.body;
+  assert.equal(decisions.length, rerankMismatch ? 2 : 1);
+  assert.equal(reranks.length, 1);
+  assert.ok(reranks[0].request.selector.incoming.dueThisLockRows > 0);
+  const expected = rerankMismatch ? decisions[1].result : fakeCoreDecision(reranks[0].request, sameTarget ? 0 : 2);
+  const lastPlan = resolveInputJob(resolutions.at(-1));
+  assert.equal(lastPlan.status, 'planned', JSON.stringify(lastPlan));
+  assert.equal(lastPlan.selection.adoptionRank, 0);
+  const pose = placement => [placement.piece, placement.rotation, placement.x, placement.y, placement.usedHold];
+  assert.deepEqual(pose(lastPlan.placement), pose(expected.selectedPlacement));
+  assert.equal(view.bots[1].inputExecution.championReranks, rerankMismatch ? 0 : 1);
+  assert.equal(view.bots[1].inputExecution.inputPlanReuses, !rerankMismatch && sameTarget ? 1 : 0);
+  await handlers.handle({ method: 'POST', path: '/api/input-match/close', body: { sessionId: started.sessionId } });
+});
+
+test('champion INPUT treats a core with no legal placement as no controller input', async () => {
+  for (const empty of [{ status: 'root-no-move', reason: 'no-legal-placement' }, { status: 'error', reason: 'empty-candidates' }]) {
+    const handlers = createGuiInputMatchHandlers({ runtime: {
+      propose: () => assert.fail('the champion never asks a CC2 proposal process'),
+      decideF14: async () => empty,
+      resolveInput: () => assert.fail('an empty decision must not fabricate a target'),
+      closeSessions: async () => {},
+    } });
+    const start = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: { ...config, right: 'cc2-s2-champion' } });
+    let view;
+    for (let frame = 1; frame <= 3; frame++) {
+      const stepped = await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: { sessionId: start.body.sessionId, frame } });
+      assert.equal(stepped.status, 200, JSON.stringify(stepped.body));
+      view = stepped.body;
+      for (let i = 0; i < 5; i++) await flush();
+    }
+    assert.equal(view.bots[1].inputExecution.noInputResponses, 1, empty.status);
   }
 });
 
@@ -214,10 +343,12 @@ test('input GUI preserves native B2B payload, bounds THINK TIME and accumulates 
 test('live handler adopts a forecast plan only at its exact boundary; late result does not teleport a lock', async () => {
   for (const delayed of [false, true]) {
     let finish;
+    const leads = [];
     let proposalCount = 0;
     const handlers = createGuiInputMatchHandlers({ now: () => 0, runtime: {
       propose: async ({ state }) => { proposalCount++; return { suggestion: { moves: [spawnMove(state)] } }; },
       resolveInput: async payload => {
+        leads.push(payload.startFrame - payload.movement.frame);
         const result = resolveInputJob(payload);
         assert.equal(result.status, 'planned', JSON.stringify(result));
         if (delayed) await new Promise(resolve => { finish = resolve; });
@@ -235,6 +366,7 @@ test('live handler adopts a forecast plan only at its exact boundary; late resul
     assert.equal(result.body.bots[1].inputExecution.plannedLocks, delayed ? 0 : 1);
     assert.equal(result.body.bots[1].inputExecution.naturalLocks, 0);
     if (delayed) {
+      assert.ok(leads[1] >= 80, `late response must account for observed logical progress: ${leads}`);
       assert.equal(proposalCount, 1);
       assert.equal(result.body.bots[1].inputExecution.lateResponses, 1);
       assert.equal(result.body.bots[1].inputExecution.replans, 1);
@@ -389,9 +521,11 @@ test(`incoming maturity discards a stale ${firstNotFound ? 'not-found' : 'plan'}
     return tick.call(this, [...events, ...extra]);
   });
   const proposals = [];
+  let rerankCalls = 0;
   const resolutions = [];
   const handlers = createGuiInputMatchHandlers({ now: () => 0, runtime: {
     propose: async payload => { proposals.push(payload); return { moves: [spawnMove(payload.state)] }; },
+    rerankF14: async () => { rerankCalls++; throw new Error('unexpected non-champion rerank'); },
     resolveInput: async payload => {
       resolutions.push({ payload: structuredClone(payload), proposalCount: proposals.length });
       const result = resolveInputJob(payload);
@@ -415,11 +549,16 @@ test(`incoming maturity discards a stale ${firstNotFound ? 'not-found' : 'plan'}
   assert.equal(resolutions[0].payload.request.decision.incoming.dueThisLockRows, 0);
   assert.equal(resolutions[1].payload.request.decision.incoming.dueThisLockRows, 4);
   assert.equal(resolutions[1].proposalCount, 1);
+  assert.equal(rerankCalls, 0);
   assert.equal(proposals[0].thinkMs, 250);
   assert.deepEqual(resolutions[0].payload.request.moves, resolutions[1].payload.request.moves);
   const stats = result.body.bots[1].inputExecution;
   assert.equal(stats.publicStateMismatches, 1);
   assert.equal(stats.replans, 1);
+  assert.equal(stats.inputPlanReuses, firstNotFound ? 0 : 1);
+  assert.ok(stats.incomingChanges > 0);
+  assert.equal(stats.incomingWaitSamples, 1);
+  assert.ok(stats.incomingWaitFrames > 0);
   assert.equal(stats.plannedLocks, 1);
   assert.equal(stats.naturalLocks, 0);
   assert.equal(stats.resolutionOutcomes.preferred, firstNotFound ? 1 : 2);

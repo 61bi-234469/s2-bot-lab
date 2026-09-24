@@ -1,0 +1,10 @@
+{
+  "schema": "cc2-s2-native-spawn-occupancy-oracle/1",
+  "policy": "cold-clear-2-s2-find-moves-normal-mode-spawn-gate/1",
+  "cases": [
+    { "id": "empty", "occupiedCells": [], "blocked": [] },
+    { "id": "common-origin", "occupiedCells": [[4, 19]], "blocked": ["I", "O", "T", "L", "J", "S", "Z"] },
+    { "id": "upper-left", "occupiedCells": [[3, 20]], "blocked": ["J", "Z"] },
+    { "id": "outside-spawn", "occupiedCells": [[0, 19]], "blocked": [] }
+  ]
+}
