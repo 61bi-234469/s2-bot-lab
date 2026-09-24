@@ -468,7 +468,7 @@ async function loadBotCapabilities() {
         option.dataset.inputReason = bot.inputReason ?? "";
       }
       option.disabled = bot.available === false;
-      option.textContent = bot.available === false ? `${bot.label} · unavailable` : bot.label;
+      option.textContent = bot.available === false && bot.inputAvailable !== true ? `${bot.label} · unavailable` : bot.label;
       option.title = bot.reason ?? "";
     }
   }
@@ -479,7 +479,7 @@ async function loadBotCapabilities() {
       select.value = [...select.options].find((option) => !option.disabled)?.value ?? "";
     }
   }
-  const unavailable = [...byId.values()].filter((bot) => bot.available === false);
+  const unavailable = [...byId.values()].filter((bot) => bot.available === false && bot.inputAvailable !== true);
   if (unavailable.length > 0) {
     elements["match-bot-note"].hidden = false;
     elements["match-bot-note"].textContent = `現在使えないBot: ${unavailable.map((bot) => `${bot.label}（${bot.reason}）`).join("、")}`;

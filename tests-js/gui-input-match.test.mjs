@@ -71,7 +71,8 @@ test('champion INPUT asks the F14 profile-B core and locks its selected move', a
 });
 
 for (const rerankMismatch of [false, true])
-test(`champion INPUT ${rerankMismatch ? 'falls back on rerank mismatch' : 'reranks incoming-only changes'}`, async t => {
+for (const sameTarget of [false, true])
+test(`champion INPUT ${rerankMismatch ? 'falls back on rerank mismatch' : 'reranks incoming-only changes'}; same target ${sameTarget}`, async t => {
   const tick = Engine.prototype.tick;
   let receiver;
   t.mock.method(Engine.prototype, 'tick', function(events) {
@@ -100,13 +101,12 @@ test(`champion INPUT ${rerankMismatch ? 'falls back on rerank mismatch' : 'reran
     rerankF14: async payload => {
       reranks.push(payload);
       if (rerankMismatch) throw new Error('rerank-mismatch');
-      return fakeCoreDecision(payload.request, 2);
+      return fakeCoreDecision(payload.request, sameTarget ? 0 : 2);
     },
     resolveInput: async payload => {
       resolutions.push(structuredClone(payload));
-      // Hold the piece until the queued garbage becomes due, so the incoming
-      // rows change while the same piece is still being planned.
-      if (payload.request.decision.incoming.dueThisLockRows === 0) return { status: 'stale', reason: 'incoming-changed', attempts: [] };
+      // The paced first plan crosses garbage maturity; it must be reranked
+      // before deciding whether its input route can be reused.
       return resolveInputJob(payload);
     },
     closeSessions: async () => {},
@@ -130,13 +130,14 @@ test(`champion INPUT ${rerankMismatch ? 'falls back on rerank mismatch' : 'reran
   assert.equal(decisions.length, rerankMismatch ? 2 : 1);
   assert.equal(reranks.length, 1);
   assert.ok(reranks[0].request.selector.incoming.dueThisLockRows > 0);
-  const expected = rerankMismatch ? decisions[1].result : fakeCoreDecision(reranks[0].request, 2);
+  const expected = rerankMismatch ? decisions[1].result : fakeCoreDecision(reranks[0].request, sameTarget ? 0 : 2);
   const lastPlan = resolveInputJob(resolutions.at(-1));
   assert.equal(lastPlan.status, 'planned', JSON.stringify(lastPlan));
   assert.equal(lastPlan.selection.adoptionRank, 0);
   const pose = placement => [placement.piece, placement.rotation, placement.x, placement.y, placement.usedHold];
   assert.deepEqual(pose(lastPlan.placement), pose(expected.selectedPlacement));
   assert.equal(view.bots[1].inputExecution.championReranks, rerankMismatch ? 0 : 1);
+  assert.equal(view.bots[1].inputExecution.inputPlanReuses, !rerankMismatch && sameTarget ? 1 : 0);
   await handlers.handle({ method: 'POST', path: '/api/input-match/close', body: { sessionId: started.sessionId } });
 });
 
@@ -342,10 +343,12 @@ test('input GUI preserves native B2B payload, bounds THINK TIME and accumulates 
 test('live handler adopts a forecast plan only at its exact boundary; late result does not teleport a lock', async () => {
   for (const delayed of [false, true]) {
     let finish;
+    const leads = [];
     let proposalCount = 0;
     const handlers = createGuiInputMatchHandlers({ now: () => 0, runtime: {
       propose: async ({ state }) => { proposalCount++; return { suggestion: { moves: [spawnMove(state)] } }; },
       resolveInput: async payload => {
+        leads.push(payload.startFrame - payload.movement.frame);
         const result = resolveInputJob(payload);
         assert.equal(result.status, 'planned', JSON.stringify(result));
         if (delayed) await new Promise(resolve => { finish = resolve; });
@@ -363,6 +366,7 @@ test('live handler adopts a forecast plan only at its exact boundary; late resul
     assert.equal(result.body.bots[1].inputExecution.plannedLocks, delayed ? 0 : 1);
     assert.equal(result.body.bots[1].inputExecution.naturalLocks, 0);
     if (delayed) {
+      assert.ok(leads[1] >= 80, `late response must account for observed logical progress: ${leads}`);
       assert.equal(proposalCount, 1);
       assert.equal(result.body.bots[1].inputExecution.lateResponses, 1);
       assert.equal(result.body.bots[1].inputExecution.replans, 1);
@@ -551,6 +555,10 @@ test(`incoming maturity discards a stale ${firstNotFound ? 'not-found' : 'plan'}
   const stats = result.body.bots[1].inputExecution;
   assert.equal(stats.publicStateMismatches, 1);
   assert.equal(stats.replans, 1);
+  assert.equal(stats.inputPlanReuses, firstNotFound ? 0 : 1);
+  assert.ok(stats.incomingChanges > 0);
+  assert.equal(stats.incomingWaitSamples, 1);
+  assert.ok(stats.incomingWaitFrames > 0);
   assert.equal(stats.plannedLocks, 1);
   assert.equal(stats.naturalLocks, 0);
   assert.equal(stats.resolutionOutcomes.preferred, firstNotFound ? 1 : 2);

@@ -52,6 +52,10 @@ export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
       parameter.key === "selectionLimit" ? Object.freeze({ ...parameter, maximum: 1_000_000 })
         : parameter.key === "queueDepth" ? Object.freeze({ ...parameter, minimum: 2 }) : parameter)),
   }),
+  "cc2-s2-champion-legacy": Object.freeze({
+    description: "比較用：F14コア導入前のチャンピオンのINPUT判断経路（CC2候補＋旧F14評価）です。TTRM INPUTと非INPUTの両方で選べます。現在のS2実行ファイルとspawn-integrity-v2設定を使い、ローカルはnative、ブラウザ版はWASMで候補を生成します。当時のバイナリ全体の復元ではありません。INPUT時の入力操作は現チャンピオンと共通です。",
+    parameters: CC2_PARAMETERS,
+  }),
   "s2-simple": Object.freeze({
     description: "S2のルールだけで置き場所を決める、比較の基準になるBotです。HOLDを候補に入れるかを設定します。",
     parameters: Object.freeze([

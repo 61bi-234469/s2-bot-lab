@@ -109,7 +109,7 @@ function resolverView(result) {
   };
 }
 
-for (const type of ['cc2-raw', 'cc2-chouhy', 'cc2-s2-f14', 'cc2-s2-champion'])
+for (const type of ['cc2-raw', 'cc2-chouhy', 'cc2-s2-f14', 'cc2-s2-champion', 'cc2-s2-champion-legacy'])
 test(`${type}: hidden incoming packet identity and sender clock do not affect public resolver execution`, () => {
   const left = createProfileSession({ iid: 1, gameid: 2, senderFrame: 7, size: 1 });
   const right = createProfileSession({ iid: 91, gameid: 99, senderFrame: 47, size: 2 });

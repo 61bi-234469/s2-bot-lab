@@ -16,7 +16,7 @@ const key = (frame, name, type = 'keydown') => ({ frame, type, data: { key: name
  */
 export function planInputTarget(request, movement, candidate, {
   maxNodes = 128, maxFrames = 60, maxTimeMs = 250, compactInputs = false,
-  allowEquivalentSpinWitness = false, timeProgression = true, naturalGravity = true,
+  allowEquivalentSpinWitness = false, timeProgression = true, naturalGravity = true, reusePlan = null,
 } = {}) {
   if (typeof timeProgression !== 'boolean') throw new Error('invalid input target time progression option');
   if (typeof naturalGravity !== 'boolean') throw new Error('invalid input target natural gravity option');
@@ -53,7 +53,7 @@ export function planInputTarget(request, movement, candidate, {
   piece.x = target.x;
   piece.y = target.y + (target.piece === 'I' ? 3 : target.piece === 'O' ? 1 : 2);
   const targetCells = cellKey(piece.absoluteBlocks);
-  const startedAt = performance.now();
+  let startedAt = performance.now();
   let nodes = 0;
   let equivalentTrial = null;
   let hitFrameBudget = false;
@@ -64,7 +64,7 @@ export function planInputTarget(request, movement, candidate, {
       nodes >= maxNodes ? 'node-budget' : hitFrameBudget ? 'frame-budget' : 'search-exhausted',
     nodes, elapsedMs: performance.now() - startedAt });
 
-  const attempt = (actions, compact = compactInputs) => {
+  const attempt = (actions, compact = compactInputs, replay = null) => {
     if (nodes >= maxNodes || performance.now() - startedAt >= maxTimeMs) return null;
     nodes++;
     const engine = neutralEngine(decision, movement, timeProgression, naturalGravity);
@@ -95,6 +95,14 @@ export function planInputTarget(request, movement, candidate, {
       observer.checkBoundary();
     };
     try {
+      if (replay) {
+        const offset = movement.frame - replay.startedAtFrame;
+        for (let frame = replay.startedAtFrame; frame <= replay.lockedAtFrame; frame++) {
+          tick(replay.events.filter(event => event.frame === frame)
+            .map(event => ({ ...event, frame: event.frame + offset })));
+        }
+        return null;
+      }
       let input = [];
       for (const action of actions) {
         if (action === 'floor') {
@@ -132,6 +140,27 @@ export function planInputTarget(request, movement, candidate, {
     lock: { ...trial.lock, usedHold: target.usedHold,
       holdAfter: target.usedHold ? decision.pieces.current : decision.pieces.hold },
     events: trial.events, nodes, elapsedMs: performance.now() - startedAt });
+
+  // Re-execute a previously preferred route against today's public movement.
+  // Never trust its old lock witness or shift its timestamps without replay.
+  if (reusePlan?.status === 'planned' && Number.isSafeInteger(reusePlan.startedAtFrame) &&
+      Number.isSafeInteger(reusePlan.lockedAtFrame) && reusePlan.lockedAtFrame >= reusePlan.startedAtFrame &&
+      reusePlan.lockedAtFrame - reusePlan.startedAtFrame < maxFrames &&
+      Array.isArray(reusePlan.events) && reusePlan.events.length <= 512 &&
+      reusePlan.events.every(event => Number.isSafeInteger(event.frame) &&
+        event.frame >= reusePlan.startedAtFrame && event.frame <= reusePlan.lockedAtFrame &&
+        ['keydown', 'keyup'].includes(event.type) && event.data?.subframe === 0 &&
+        ['moveLeft', 'moveRight', 'softDrop', 'hardDrop', 'rotateCW', 'rotateCCW', 'rotate180', 'hold'].includes(event.data?.key))) {
+    const trial = attempt([], compactInputs, reusePlan);
+    const reusedTrial = trial?.matches ? trial : equivalentTrial;
+    if (reusedTrial) return { ...result(reusedTrial), reused: true };
+    // A rejected route must not change the normal search's node/time budget
+    // or provide a different equivalent-witness fallback.
+    nodes = 0;
+    equivalentTrial = null;
+    hitFrameBudget = false;
+    startedAt = performance.now();
+  }
 
   // Short direct routes first, before bounded target-directed prefix search.
   const hold = target.usedHold ? ['hold'] : [];

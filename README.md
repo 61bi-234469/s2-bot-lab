@@ -18,10 +18,13 @@ development build is published under `preview/`. The development URL is marked `
 - deterministic browser-WASM Cold Clear 2: raw upstream, the chouhy fork, the S2 `F14` development
   snapshot, and the current S2 development champion (not release-qualified)
 
-The bot selectors (single analysis and bot-vs-bot) offer exactly these four bots, the same set as
-TTRM INPUT, plus You (1P) on the left; the local Node server offers the same list. The champion's
-defaults (512 selections, THINK TIME off, queue 14) are the champion itself; SELECTION, THINK TIME
-and QUEUE DEPTH can be changed like the other bots. The Pages build runs these Cold Clear 2 entries
+The bot selectors (single analysis and bot-vs-bot) offer these four bots plus a comparison entry,
+the same set as TTRM INPUT, and You (1P) on the left; the local Node server offers the same list.
+The comparison entry is the previous INPUT champion route: CC2 candidates ranked by the earlier F14
+amount-only selector, run on the current S2 engine. It is not a restoration of the earlier binary.
+The champion's defaults (512 selections, THINK TIME off, queue 14) are the champion itself;
+SELECTION, THINK TIME and QUEUE DEPTH can be changed like the other bots.
+The Pages build runs these Cold Clear 2 entries
 in browser module workers. It bundles three
 import-free WebAssembly engines and the matching S2 configurations, so the browser entries do not
 require a native executable or the local Node server. WebAssembly and module-worker support are

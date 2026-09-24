@@ -2,7 +2,7 @@ import { forecastInputBoundary } from './triangle/input-target-planner.mjs';
 import { resolveQualifiedInputSubmission } from './s2-input-public-resolver.mjs';
 
 /** Worker entry accepts only the amount-only policy request and public movement. */
-export function resolveInputJob({ request, movement, startFrame, timeProgression = true, naturalGravity = true }) {
+export function resolveInputJob({ request, movement, startFrame, timeProgression = true, naturalGravity = true, reuse = null }) {
   let future;
   try { future = forecastInputBoundary(request, movement, startFrame, { timeProgression, naturalGravity }); }
   catch (error) {
@@ -10,6 +10,6 @@ export function resolveInputJob({ request, movement, startFrame, timeProgression
     throw error;
   }
   const result = resolveQualifiedInputSubmission(future.request, future.movement,
-    { compactInputs: true, timeProgression, naturalGravity });
+    { compactInputs: true, timeProgression, naturalGravity, reuse });
   return { ...result, boundary: { decision: future.request.decision, movement: future.movement } };
 }

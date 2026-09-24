@@ -136,12 +136,14 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
               initialGarbageById: handicapTerrain === null ? {} : { [humanSide]: handicapGarbageCells(handicapTerrain) },
               handlingById: types.left === 'human' ? { left: humanEngineHandling(body.humanControls) } : {} }), closed: false, failure: null,
             jobs: {}, ready: {}, plans: {}, proposals: {}, speculations: {}, f14Requests: 0, pathWaits: {}, lastLock: {}, misses: {}, leadFrames: {}, paceDeadline: {}, saved: null, maxTurns: body.maxTurns ?? null,
-            selections: {}, stallPenalty: { ...stallPenalty, rows: 0,
+            selections: {}, cachedPlans: {}, incomingObserved: {}, incomingWait: {}, stallPenalty: { ...stallPenalty, rows: 0,
               forcedLockPending: false, dueFrame: stallPenalty.enabled ? 60 / stallPenalty.pps : null },
             diagnostics: Object.fromEntries(IDS.map(id => [id,
               { plannedLocks: 0, fallbackLocks: 0, naturalLocks: 0, lastFallback: null,
                 publicStateMismatches: 0, lateResponses: 0, replans: 0, noInputResponses: 0, championReranks: 0, championSpeculations: 0, championSpeculationHits: 0,
                 pathBudgetWaits: 0, lastPathBudgetWait: null,
+                inputPlanReuses: 0, decisionMs: 0, planningMs: 0,
+                incomingChanges: 0, incomingWaitSamples: 0, incomingWaitFrames: 0, incomingWaitMaxFrames: 0,
                 resolutionOutcomes: { preferred: 0, fallback: 0, notFound: 0, stale: 0 },
                 fallbackReasons: {}, pacedLocks: 0, deadlineExceededLocks: 0 }])),
             handicap: handicapTerrain === null
@@ -183,11 +185,25 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
             const inputs = {};
             for (const id of IDS) {
               if (session.types[id] === 'human') continue;
+              const incoming = session.round.publicState(id).decision.incoming;
+              if (session.incomingObserved[id] && !equal(incoming, session.incomingObserved[id])) {
+                session.diagnostics[id].incomingChanges++;
+                session.incomingWait[id] ??= frame;
+              }
+              session.incomingObserved[id] = incoming;
               adopt(session, id);
               const plan = session.plans[id];
               if (plan) inputs[id] = plan.events.filter(event => event.frame === frame);
               else if (turnLockSubstitutesGravity(session, id)) {
                 inputs[id] = ['keydown', 'keyup'].map(type => ({ frame, type, data: { key: 'hardDrop', subframe: 0 } }));
+              }
+              if (session.incomingWait[id] !== undefined && inputs[id]?.some(event => event.type === 'keydown')) {
+                const waited = frame - session.incomingWait[id];
+                const stats = session.diagnostics[id];
+                stats.incomingWaitSamples++;
+                stats.incomingWaitFrames += waited;
+                stats.incomingWaitMaxFrames = Math.max(stats.incomingWaitMaxFrames, waited);
+                delete session.incomingWait[id];
               }
             }
             if (session.types.left === 'human') {
@@ -252,6 +268,8 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
                 delete session.selections[id];
                 delete session.ready[id];
                 delete session.proposals[id];
+                delete session.cachedPlans[id];
+                delete session.incomingWait[id];
               }
               if (session.maxTurns !== null && Object.values(session.lastLock).some(index => index + 1 >= session.maxTurns) && session.round.status === 'active') {
                 throw new Error('MAX TURNS reached before top-out; unfinished rounds cannot be exported as .ttrm');
@@ -425,6 +443,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
         session.diagnostics[id].replans++;
       } else {
         delete session.proposals[id];
+        const decisionStarted = now();
         const savedState = structuredClone(state);
         let response;
         if (F14_CORE_TYPES.has(type)) {
@@ -487,6 +506,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           proposed = { identity, state: savedState, status: 'no-input', evidence: structuredClone(info) };
         }
         if (response) proposed = { identity, state: savedState, moves: structuredClone(response.suggestion?.moves ?? response.moves) };
+        session.diagnostics[id].decisionMs += Math.max(0, now() - decisionStarted);
       }
       if (!live(session)) return;
       const latest = session.round.publicState(id);
@@ -511,10 +531,19 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
         moves: structuredClone(proposed.moves) };
       const startFrame = Math.max(session.round.frame + (session.leadFrames[id] ?? 2), dueFrame);
       const resolveStarted = now();
+      const cached = session.cachedPlans[id];
       const resolved = await runtime.resolveInput({ request, movement: latest.movement, startFrame,
+        reuse: cached && equal(cached.identity, identity) ? cached.reuse : null,
         timeProgression: session.round.timeProgression, naturalGravity: session.round.naturalGravity });
       if (!live(session)) return;
       const diagnostics = session.diagnostics[id];
+      const planningMs = Math.max(0, now() - resolveStarted);
+      diagnostics.planningMs += planningMs;
+      if (resolved.plan?.reused) diagnostics.inputPlanReuses++;
+      if (resolved.status === 'planned' && resolved.selection.adoptionRank === 0 &&
+          typeof resolved.targetIdentity === 'string' && equal(identity, pieceIdentity(session.round.publicState(id)))) {
+        session.cachedPlans[id] = { identity, reuse: { targetIdentity: resolved.targetIdentity, plan: resolved.plan } };
+      }
       // Count completed resolution decisions, including plans discarded later.
       // Consumed locks use separate counters; one piece may be replanned.
       const outcome = resolved.status === 'planned' ? (resolved.selection.adoptionRank > 0 ? 'fallback' : 'preferred') :
@@ -524,7 +553,14 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
         const reason = resolved.selection.fallback?.reason ?? 'unspecified';
         diagnostics.fallbackReasons[reason] = (diagnostics.fallbackReasons[reason] ?? 0) + 1;
       }
-      session.leadFrames[id] = Math.min(120, Math.max(2, Math.ceil((now() - resolveStarted) * 60 / 1000) + 1));
+      // One frame suffices for a sub-frame job. Keep extra headroom after a
+      // miss; exact-boundary adoption still rejects every late result.
+      // A busy host may advance several logical frames in one step. Include
+      // that observed progress, rather than repeatedly missing with a budget
+      // derived only from wall time at an assumed 60 Hz.
+      session.leadFrames[id] = Math.min(120, Math.max(1, Math.ceil(planningMs * 60 / 1000),
+        session.round.frame - latest.movement.frame) +
+        (session.round.frame > startFrame || (session.misses[id] ?? 0) > 0 ? 1 : 0));
       // After the plan, so the search never delays it (Pages resolves in the
       // same worker), and only when the planner took the core's selection.
       if (proposed.next && outcome === 'preferred') speculate(session, id, sessionKey, type, proposed);

@@ -1,6 +1,6 @@
 import { inputDecisionFingerprint } from './input-decision-request.mjs';
 import { inputBotProfile } from './input-bot-contract.mjs';
-import { rankS2AmountOnlyPublicCandidates, projectS2AmountOnlyPublicLock } from './s2-amount-only-public-candidates.mjs';
+import { rankS2AmountOnlyPublicCandidates, projectS2AmountOnlyPublicCandidates, projectS2AmountOnlyPublicLock } from './s2-amount-only-public-candidates.mjs';
 import { QUALIFIED_STATIC_CC2_RESOLVER_POLICY } from './s2-amount-only-public-resolver.mjs';
 import { planInputTarget, INPUT_TARGET_CONTROLLER } from './triangle/input-target-planner.mjs';
 import { validateInputPublicMovement } from './triangle/input-public-movement.mjs';
@@ -10,16 +10,19 @@ import { sha256Hex } from './sha256.mjs';
 /** Pure placement-selection boundary for the qualified INPUT route. */
 export function orderQualifiedInputCandidates(request) {
   const options = { ...QUALIFIED_STATIC_CC2_RESOLVER_POLICY, allowCompleteReturnedPrefix: true };
-  const ranked = rankS2AmountOnlyPublicCandidates(request.decision, request.moves, options);
-  // Match selectS2AmountOnlyPublicCandidate's rescue rule using this ranking.
-  // Keep the frozen selector source unchanged; parity is covered by fixtures.
+  // Legacy F14 still uses its score and solvency rescue; already-decided
+  // orders need only the same legal projections and spin witnesses.
   const profile = inputBotProfile(request.type);
   // `f14-core-order/1` moves arrive already in the F14 core's adoption order
   // (its selected move first), so they are kept in request order like CC2's.
   const coreOrder = profile.selector === 'f14-core-order/1';
   const nativeOrder = profile.selector === 'cc2-order/1' || coreOrder;
-  const ordered = nativeOrder ? [...ranked.candidates].sort((a, b) => a.cc2Rank - b.cc2Rank) : ranked.candidates;
+  const ranked = nativeOrder
+    ? projectS2AmountOnlyPublicCandidates(request.decision, request.moves, options)
+    : rankS2AmountOnlyPublicCandidates(request.decision, request.moves, options);
+  const ordered = ranked.candidates;
   if (coreOrder && ordered[0]?.cc2Rank !== 0) throw new Error('F14 core selected move has no public projection');
+  if (nativeOrder) return { ranked, first: ordered[0], candidates: ordered, nativeOrder };
   const control = ordered[0];
   const solvent = ranked.candidates.find(candidate => candidate.solvency.solvent);
   const first = !nativeOrder && control.solvency.solvency < 0 && solvent !== undefined ? solvent : control;
@@ -38,7 +41,7 @@ export function orderQualifiedInputCandidates(request) {
  */
 export function resolveQualifiedInputSubmission(request, movement, {
   maxNodes = 128, maxFrames = 60, maxTimeMs = 250, compactInputs = false, timeProgression = true,
-  naturalGravity = true,
+  naturalGravity = true, reuse = null,
 } = {}) {
   const decisionFingerprint = inputDecisionFingerprint(request);
   validateInputPublicMovement(movement);
@@ -65,7 +68,8 @@ export function resolveQualifiedInputSubmission(request, movement, {
         Math.max(1, Math.floor(remainingNodes / (candidates.length - adoptionRank))));
     const candidateTime = Math.min(remainingTime, candidates.length > 1 && adoptionRank === 0 ? maxTimeMs * 3 / 4 : remainingTime);
     const plan = planInputTarget(request, movement, candidate, { maxNodes: candidateNodes, maxFrames, maxTimeMs: candidateTime,
-      compactInputs, allowEquivalentSpinWitness: true, timeProgression, naturalGravity });
+      compactInputs, allowEquivalentSpinWitness: true, timeProgression, naturalGravity,
+      reusePlan: adoptionRank === 0 && reuse?.targetIdentity === candidate.identity ? reuse.plan : null });
     nodes += plan.nodes;
     attempts.push({ cc2Rank: candidate.cc2Rank, adoptionRank, status: plan.status,
       reason: plan.reason ?? null, nodes: plan.nodes });
@@ -78,7 +82,7 @@ export function resolveQualifiedInputSubmission(request, movement, {
       }
       return {
         status: 'planned', decisionFingerprint, movementFingerprint, controller: INPUT_TARGET_CONTROLLER,
-        placement, plan,
+        placement, plan, targetIdentity: candidate.identity,
         selection: { originalCc2Rank: first.cc2Rank, selectedCc2Rank: candidate.cc2Rank,
           adoptionRank, reason: adoptionRank === 0 ? 'preferred-reachable' : 'preferred-path-not-found', fallback }, attempts,
         fallback,

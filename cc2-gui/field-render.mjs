@@ -380,6 +380,12 @@ export function formatInputExecutionTooltip(inputExecution) {
     `公開状態の不一致 ${shownInputCount(inputExecution.publicStateMismatches)}回 / 遅延応答 ${shownInputCount(inputExecution.lateResponses)}回 / 再計画 ${shownInputCount(inputExecution.replans)}回`,
   ];
   const fallback = inputExecution.lastFallback;
+  if (Number.isFinite(inputExecution.inputPlanReuses)) {
+    lines.push(`入力経路の再利用 ${inputExecution.inputPlanReuses}回 / 判断処理累計 ${shownInputCount(inputExecution.decisionMs).toFixed(1)}ms / 経路処理累計 ${shownInputCount(inputExecution.planningMs).toFixed(1)}ms`);
+    const samples = inputExecution.incomingWaitSamples;
+    const mean = samples > 0 ? `${(inputExecution.incomingWaitFrames * 1000 / 60 / samples).toFixed(1)}ms` : '—';
+    lines.push(`せり上がり量の更新→次の入力: 平均 ${mean} / 最大 ${(shownInputCount(inputExecution.incomingWaitMaxFrames) * 1000 / 60).toFixed(1)}ms / ${samples ?? 0}件（PPS待機を含む）`);
+  }
   if (inputExecution.resolutionOutcomes) {
     const counts = inputExecution.resolutionOutcomes;
     const decisions = Object.values(counts).reduce((sum, count) => sum + count, 0);

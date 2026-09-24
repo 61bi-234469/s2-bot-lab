@@ -3,6 +3,24 @@ import test from "node:test";
 
 import { createStaticCc2Runtime } from "../cc2-gui/static-host.mjs";
 
+test('legacy INPUT champion proposes with spawn-integrity-v2 instead of calling the F14 core', async () => {
+  const messages = [];
+  class Worker {
+    postMessage(message) {
+      messages.push(message);
+      queueMicrotask(() => this.onmessage({ data: { id: message.id, ok: true,
+        value: message.type === 'suggest' ? { suggestion: { moves: [], move_info: {} } } : undefined } }));
+    }
+    terminate() {}
+  }
+  const runtime = createStaticCc2Runtime({ WorkerType: Worker });
+  try {
+    await runtime.propose({ sessionKey: 'legacy/right', engine: 'cc2-s2-champion-legacy', state: {}, selectionLimit: 512, thinkMs: null });
+    assert.deepEqual(messages.map(message => message.type), ['init', 'suggest']);
+    assert.equal(messages[0].payload.configUrl, './cc2-s2-spawn-integrity-substrate-v2.json');
+  } finally { await runtime.closeSessions(); }
+});
+
 test('static worker preserves searched-empty evidence for the input owner', async () => {
   const moveInfo = { selections: 512, nodes: 0, candidate_values: [], extra: 'searched' };
   class EmptyWorker {

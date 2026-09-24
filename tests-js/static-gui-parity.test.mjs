@@ -103,7 +103,7 @@ async function exerciseStaleOnePlayerProposal(makeSecondError) {
 
 test("static handler lists exactly the INPUT bots and You, unavailable without WASM", async () => {
   const capabilities = await request(createGuiRequestHandlers(), "GET", "/api/bots");
-  assert.deepEqual(capabilities.bots.map((bot) => bot.id), [...Object.keys(INPUT_BOT_PROFILES), "human"]);
+  assert.deepEqual(capabilities.bots.map((bot) => bot.id), ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion", "human"]);
   assert.ok(capabilities.bots.filter((bot) => bot.id.startsWith("cc2-")).every((bot) => !bot.available));
 });
 
@@ -229,14 +229,15 @@ test("qualified analysis supplies canonical comparison identity after public sel
 
 // The GUI offers only the bots TTRM INPUT admits (plus You on the left), so the
 // public and local hosts show one list and nothing non-OSS can enter it.
-test("every bot selector offers exactly the INPUT bots", async () => {
+test("selectors offer all INPUT bots with the comparison before the current champion", async () => {
   const html = await readFile(new URL("../cc2-gui/index.html", import.meta.url), "utf8");
   const optionsFor = (id) => [...(html.match(new RegExp(`<select id="${id}">([\\s\\S]*?)</select>`))?.[1] ?? "")
     .matchAll(/<option value="([^"]+)"/g)].map((match) => match[1]);
-  const inputBots = Object.keys(INPUT_BOT_PROFILES);
-  assert.deepEqual(optionsFor("analysis-bot"), inputBots);
-  assert.deepEqual(optionsFor("left-bot"), [...inputBots, "human"]);
-  assert.deepEqual(optionsFor("right-bot"), inputBots);
+  const orderedBots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion"];
+  assert.deepEqual(new Set(orderedBots), new Set(Object.keys(INPUT_BOT_PROFILES)));
+  assert.deepEqual(optionsFor("analysis-bot"), orderedBots);
+  assert.deepEqual(optionsFor("left-bot"), [...orderedBots, "human"]);
+  assert.deepEqual(optionsFor("right-bot"), orderedBots);
 });
 
 test("bot-vs-bot selectors expose the current champion", async () => {
@@ -245,6 +246,31 @@ test("bot-vs-bot selectors expose the current champion", async () => {
     const select = html.match(new RegExp(`<select id="${id}">([\\s\\S]*?)</select>`))?.[1] ?? "";
     assert.match(select, /value="cc2-s2-champion"/);
   }
+});
+
+test('legacy champion is available in both match modes on the static host', async () => {
+  const handlers = createGuiRequestHandlers({ proposeCc2: async ({ state }) => ({
+    suggestion: { moves: [{ location: {
+      type: state.queue[0], orientation: "north", x: 4, y: state.queue[0] === "I" ? 2 : 0,
+    }, spin: "none" }] },
+  }) });
+  const bot = (await request(handlers, 'GET', '/api/bots')).bots.find(bot => bot.id === 'cc2-s2-champion-legacy');
+  assert.equal(bot.available, true);
+  assert.notEqual(bot.inputAvailable, false);
+  assert.equal(bot.inputOnly, undefined);
+  const seed = 42;
+  const result = await handlers.handle({ method: 'POST', path: '/api/match/start',
+    body: { left: bot.id, right: 's2-simple', seed, preLockPreview: true } });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  const stepped = await request(handlers, 'POST', '/api/match/step');
+  const preview = stepped.bots.find(({ id }) => id === 'left').preLockPreview;
+  const state = toS2GuiState(createGame(seed));
+  const applied = await request(handlers, 'POST', '/api/apply-s2', {
+    engine: bot.id, state, moves: [{ location: {
+      type: state.queue[0], orientation: 'north', x: 4, y: state.queue[0] === 'I' ? 2 : 0,
+    }, spin: 'none' }],
+  });
+  assert.deepEqual(preview.placement, applied.comparison.witness.placement);
 });
 
 test("bot-vs-bot exposes You (1P) only in the left-player selector", async () => {

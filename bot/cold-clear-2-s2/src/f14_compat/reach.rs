@@ -198,102 +198,6 @@ fn legal_at(
         .any(|&(bx, by)| occupied(board_cells, width, height, bx, by))
 }
 
-fn highest_in_bounds_y(
-    _width: i32,
-    height: i32,
-    cells_table: &HashMap<(String, String), Vec<(i32, i32)>>,
-    piece: &str,
-    rotation: &str,
-    x: i32,
-) -> Option<i32> {
-    let spans = blocks_at(cells_table, piece, rotation, x, 0);
-    if spans.is_empty() {
-        return None;
-    }
-    let high = spans.iter().map(|(_, y)| *y).max().unwrap();
-    let low = spans.iter().map(|(_, y)| *y).min().unwrap();
-    let top_y = height - 1 - high;
-    if top_y + low < 0 {
-        None
-    } else {
-        Some(top_y)
-    }
-}
-
-fn kick_tests<'a>(tables: &'a KickTables, piece: &str, kick_id: &str) -> Option<&'a Vec<(i32, i32)>> {
-    let custom = format!("{}_kicks", piece.to_ascii_lowercase());
-    if custom == "i_kicks" {
-        tables.i_kicks.get(kick_id).or_else(|| tables.kicks.get(kick_id))
-    } else {
-        tables.kicks.get(kick_id)
-    }
-}
-
-fn rotate_with_kicks(
-    board_cells: &str,
-    width: i32,
-    height: i32,
-    cells_table: &HashMap<(String, String), Vec<(i32, i32)>>,
-    tables: &KickTables,
-    current: &ReachPlacement,
-    amount: i32,
-) -> Option<ReachPlacement> {
-    let from = rotation_index(&current.placement.rotation);
-    let to = ((from + amount) % 4 + 4) % 4;
-    let rotation = ROTATION_NAMES[to as usize].to_string();
-    let direct = ReachPlacement {
-        placement: CanonicalPlacement {
-            rotation: rotation.clone(),
-            ..current.placement.clone()
-        },
-        last_rotation: true,
-        kick_index: Some(0),
-        kick_id: Some("00".into()),
-        kick_offset: Some((0, 0)),
-    };
-    if legal_at(
-        board_cells,
-        width,
-        height,
-        cells_table,
-        &direct.placement.piece,
-        &direct.placement.rotation,
-        direct.placement.x,
-        direct.placement.y,
-    ) {
-        return Some(direct);
-    }
-    let kick_id = format!("{from}{to}");
-    let tests = kick_tests(tables, &current.placement.piece, &kick_id)?;
-    for (index, (dx, dy)) in tests.iter().enumerate() {
-        let kicked = ReachPlacement {
-            placement: CanonicalPlacement {
-                rotation: rotation.clone(),
-                x: current.placement.x + dx,
-                y: current.placement.y - dy,
-                ..current.placement.clone()
-            },
-            last_rotation: true,
-            kick_index: Some(index as i32),
-            kick_id: Some(kick_id.clone()),
-            kick_offset: Some((*dx, -dy)),
-        };
-        if legal_at(
-            board_cells,
-            width,
-            height,
-            cells_table,
-            &kicked.placement.piece,
-            &kicked.placement.rotation,
-            kicked.placement.x,
-            kicked.placement.y,
-        ) {
-            return Some(kicked);
-        }
-    }
-    None
-}
-
 fn state_id(placement: &ReachPlacement) -> String {
     format!(
         "{}:{}:{}:{}:{}",
@@ -309,22 +213,6 @@ fn state_id(placement: &ReachPlacement) -> String {
     )
 }
 
-fn hard_drop_placement(piece: &str, rotation: &str, x: i32, y: i32, used_hold: bool) -> ReachPlacement {
-    ReachPlacement {
-        placement: CanonicalPlacement {
-            piece: piece.to_string(),
-            rotation: rotation.to_string(),
-            x,
-            y,
-            used_hold,
-        },
-        last_rotation: false,
-        kick_index: None,
-        kick_id: None,
-        kick_offset: None,
-    }
-}
-
 fn sources(pieces: &ReachPieceState) -> Vec<(bool, String)> {
     let mut out = Vec::new();
     if let Some(current) = &pieces.current {
@@ -338,6 +226,114 @@ fn sources(pieces: &ReachPieceState) -> Vec<(bool, String)> {
     out
 }
 
+/// Kick ids by (from, to) rotation index, as the kick tables key them.
+const KICK_IDS: [[&str; 4]; 4] = [
+    ["00", "01", "02", "03"],
+    ["10", "11", "12", "13"],
+    ["20", "21", "22", "23"],
+    ["30", "31", "32", "33"],
+];
+
+/// A search state without strings. `kick` is `(kick_id, index, offset)` of the
+/// rotation that produced it; `fin` caches `is_fin_or_tst` for the seen key.
+#[derive(Clone, Copy)]
+struct Node {
+    rotation: usize,
+    x: i32,
+    y: i32,
+    last_rotation: bool,
+    kick: Option<(&'static str, i32, (i32, i32))>,
+    fin: bool,
+}
+
+impl Node {
+    fn plain(rotation: usize, x: i32, y: i32) -> Self {
+        Node {
+            rotation,
+            x,
+            y,
+            last_rotation: false,
+            kick: None,
+            fin: false,
+        }
+    }
+
+    fn rotated(rotation: usize, x: i32, y: i32, kick_id: &'static str, index: i32, offset: (i32, i32)) -> Self {
+        Node {
+            rotation,
+            x,
+            y,
+            last_rotation: true,
+            kick: Some((kick_id, index, offset)),
+            fin: is_fin_or_tst(Some(kick_id), Some(offset)),
+        }
+    }
+
+    fn placement(&self, piece: &str, used_hold: bool) -> ReachPlacement {
+        ReachPlacement {
+            placement: CanonicalPlacement {
+                piece: piece.to_string(),
+                rotation: ROTATION_NAMES[self.rotation].to_string(),
+                x: self.x,
+                y: self.y,
+                used_hold,
+            },
+            last_rotation: self.last_rotation,
+            kick_index: self.kick.map(|(_, index, _)| index),
+            kick_id: self.kick.map(|(id, _, _)| id.to_string()),
+            kick_offset: self.kick.map(|(_, _, offset)| offset),
+        }
+    }
+}
+
+/// The `state_id` identity of a node: position, rotation, last-rotation flag
+/// and the fin/TST flag. Legal states keep every block on the board, so the
+/// dense index covers them; `None` falls back to a hash set.
+struct Seen {
+    width: i32,
+    height: i32,
+    dense: Vec<bool>,
+    sparse: HashSet<(i32, i32, usize, bool, bool)>,
+}
+
+const SEEN_MARGIN: i32 = 8;
+
+impl Seen {
+    fn new(width: i32, height: i32) -> Self {
+        // A board without a positive size never admits a legal state; keep
+        // such sizes on the hash set instead of sizing an array from them.
+        let dense = width > 0 && height > 0 && width <= 64 && height <= 256;
+        let (width, height) = if dense { (width, height) } else { (0, 0) };
+        let cells = if dense {
+            ((width + 2 * SEEN_MARGIN) * (height + 2 * SEEN_MARGIN)) as usize
+        } else {
+            0
+        };
+        Seen {
+            width,
+            height,
+            dense: vec![false; cells * 16],
+            sparse: HashSet::new(),
+        }
+    }
+
+    fn insert(&mut self, node: &Node) -> bool {
+        let (x, y) = (node.x + SEEN_MARGIN, node.y + SEEN_MARGIN);
+        let (w, h) = (self.width + 2 * SEEN_MARGIN, self.height + 2 * SEEN_MARGIN);
+        if self.dense.is_empty() || x < 0 || y < 0 || x >= w || y >= h {
+            return self
+                .sparse
+                .insert((node.x, node.y, node.rotation, node.last_rotation, node.fin));
+        }
+        let index = (((y * w + x) as usize) * 4 + node.rotation) * 4
+            + (node.last_rotation as usize) * 2
+            + node.fin as usize;
+        !std::mem::replace(&mut self.dense[index], true)
+    }
+}
+
+/// Same exploration, yield order and results as the string-keyed search it
+/// replaced (see `state_id`, `legal_at`, and the kick-table lookup below).
 fn bfs(
     board_cells: &str,
     width: i32,
@@ -346,22 +342,64 @@ fn bfs(
     tables: &KickTables,
     piece: &str,
     used_hold: bool,
-    seed_rotations: &[&str],
     allow_180: bool,
 ) -> Vec<ReachPlacement> {
-    let mut queue = Vec::new();
-    let mut seen = HashSet::new();
-    for rotation in seed_rotations {
+    let empty = Vec::new();
+    let blocks: [&[(i32, i32)]; 4] = std::array::from_fn(|rotation| {
+        cells_table
+            .get(&(piece.to_string(), ROTATION_NAMES[rotation].to_string()))
+            .unwrap_or(&empty)
+            .as_slice()
+    });
+    let legal = |rotation: usize, x: i32, y: i32| {
+        !blocks[rotation]
+            .iter()
+            .any(|&(bx, by)| occupied(board_cells, width, height, bx + x, by + y))
+    };
+    let i_piece = piece.eq_ignore_ascii_case("i");
+    let kick_tests: [[Option<&Vec<(i32, i32)>>; 4]; 4] = std::array::from_fn(|from| {
+        std::array::from_fn(|to| {
+            let kick_id = KICK_IDS[from][to];
+            if i_piece {
+                tables.i_kicks.get(kick_id).or_else(|| tables.kicks.get(kick_id))
+            } else {
+                tables.kicks.get(kick_id)
+            }
+        })
+    });
+    let rotate = |current: &Node, amount: i32| -> Option<Node> {
+        let from = current.rotation;
+        let to = ((from as i32 + amount) % 4 + 4) as usize % 4;
+        if legal(to, current.x, current.y) {
+            return Some(Node::rotated(to, current.x, current.y, "00", 0, (0, 0)));
+        }
+        let tests = kick_tests[from][to]?;
+        tests.iter().enumerate().find_map(|(index, &(dx, dy))| {
+            let (x, y) = (current.x + dx, current.y - dy);
+            legal(to, x, y).then(|| Node::rotated(to, x, y, KICK_IDS[from][to], index as i32, (dx, -dy)))
+        })
+    };
+
+    let mut queue: Vec<Node> = Vec::new();
+    let mut seen = Seen::new(width, height);
+    // Seeds every rotation in ROTATION_NAMES order, as both callers did.
+    for rotation in 0..4 {
+        let spans = blocks[rotation];
+        if spans.is_empty() {
+            continue;
+        }
+        let high = spans.iter().map(|(_, y)| *y).max().unwrap();
+        let low = spans.iter().map(|(_, y)| *y).min().unwrap();
+        let top_y = height - 1 - high;
+        if top_y + low < 0 {
+            continue;
+        }
         for x in -4..width + 4 {
-            let Some(top_y) = highest_in_bounds_y(width, height, cells_table, piece, rotation, x) else {
-                continue;
-            };
-            if !legal_at(board_cells, width, height, cells_table, piece, rotation, x, top_y) {
+            if !legal(rotation, x, top_y) {
                 continue;
             }
-            let seed = hard_drop_placement(piece, rotation, x, top_y, used_hold);
-            let id = state_id(&seed);
-            if seen.insert(id) {
+            let seed = Node::plain(rotation, x, top_y);
+            if seen.insert(&seed) {
                 queue.push(seed);
             }
         }
@@ -370,78 +408,24 @@ fn bfs(
     let mut yielded = Vec::new();
     let mut cursor = 0;
     while cursor < queue.len() {
-        let current = queue[cursor].clone();
+        let current = queue[cursor];
         cursor += 1;
-        if !legal_at(
-            board_cells,
-            width,
-            height,
-            cells_table,
-            &current.placement.piece,
-            &current.placement.rotation,
-            current.placement.x,
-            current.placement.y - 1,
-        ) {
-            yielded.push(current.clone());
+        if !legal(current.rotation, current.x, current.y - 1) {
+            yielded.push(current.placement(piece, used_hold));
         }
         for dx in [-1, 1] {
-            let moved = hard_drop_placement(
-                &current.placement.piece,
-                &current.placement.rotation,
-                current.placement.x + dx,
-                current.placement.y,
-                current.placement.used_hold,
-            );
-            if legal_at(
-                board_cells,
-                width,
-                height,
-                cells_table,
-                &moved.placement.piece,
-                &moved.placement.rotation,
-                moved.placement.x,
-                moved.placement.y,
-            ) {
-                let id = state_id(&moved);
-                if seen.insert(id) {
-                    queue.push(moved);
-                }
+            let moved = Node::plain(current.rotation, current.x + dx, current.y);
+            if legal(moved.rotation, moved.x, moved.y) && seen.insert(&moved) {
+                queue.push(moved);
             }
         }
-        let down = hard_drop_placement(
-            &current.placement.piece,
-            &current.placement.rotation,
-            current.placement.x,
-            current.placement.y - 1,
-            current.placement.used_hold,
-        );
-        if legal_at(
-            board_cells,
-            width,
-            height,
-            cells_table,
-            &down.placement.piece,
-            &down.placement.rotation,
-            down.placement.x,
-            down.placement.y,
-        ) {
-            let id = state_id(&down);
-            if seen.insert(id) {
-                queue.push(down);
-            }
+        let down = Node::plain(current.rotation, current.x, current.y - 1);
+        if legal(down.rotation, down.x, down.y) && seen.insert(&down) {
+            queue.push(down);
         }
         for amount in amounts {
-            if let Some(rotated) = rotate_with_kicks(
-                board_cells,
-                width,
-                height,
-                cells_table,
-                tables,
-                &current,
-                *amount,
-            ) {
-                let id = state_id(&rotated);
-                if seen.insert(id) {
+            if let Some(rotated) = rotate(&current, *amount) {
+                if seen.insert(&rotated) {
                     queue.push(rotated);
                 }
             }
@@ -482,7 +466,6 @@ pub fn generate_reachable_a(
             tables,
             &piece,
             used_hold,
-            &ROTATION_NAMES,
             true,
         ) {
             if seen.insert(cell_placement_identity(cells_table, &placement)) {
@@ -515,7 +498,6 @@ pub fn generate_public_reachable(
             tables,
             &piece,
             used_hold,
-            &ROTATION_NAMES,
             true,
         );
         out.append(&mut yielded);

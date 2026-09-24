@@ -116,6 +116,17 @@ const cc2Engines = Object.freeze({
     binary: options.s2Binary,
     config: loadS2Config("fixtures/tuning/cc2-s2-spin-value-aligned.json"),
   }),
+  "cc2-s2-champion-legacy": Object.freeze({
+    botType: "cc2-s2-champion-legacy",
+    engineId: "cold-clear-2-s2/pre-f14-core-input-route/1",
+    label: "CC2 S2 — previous INPUT champion (comparison)",
+    repository: "https://github.com/61bi-234469/s2-bot-lab",
+    commit: "pre-f14-core-input-route-current-s2-binary",
+    comparisonSource: "cold-clear-2-s2-pre-f14-core-final-placement",
+    protocolName: "Cold Clear 2 S2",
+    binary: options.s2Binary,
+    config: loadS2Config("fixtures/tuning/cc2-s2-spawn-integrity-substrate-v2.json"),
+  }),
   "cc2-s2-champion": Object.freeze({
     botType: "cc2-s2-champion",
     engineId: "cold-clear-2-s2-development-champion/f14-substrate-v2-search-state/1",
@@ -169,6 +180,11 @@ async function inputF14Session(type) {
   return createCc2WasmWorkerSession({ wasmBytes: readWasmBytesMatchingHash(inputChampionWasm) });
 }
 function inputEngineFor(type) {
+  if (type === "cc2-s2-champion-legacy") {
+    const engine = cc2Engines[type];
+    if (!isFilePath(engine.binary)) throw new Error(`${engine.label} binary not found: ${engine.binary ?? "not configured"}`);
+    return engine;
+  }
   if (type === "cc2-s2-f14") return {
     botType: type,
     engineId: "cold-clear-2-s2-f14-post-tank-solvency-rescue/1",
@@ -1029,7 +1045,7 @@ async function closeCc2MatchSessions(session) {
 }
 
 function assertBotType(value) {
-  if (!["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion", "s2-simple", "human"].includes(value)) throw new Error(`unsupported match bot ${value}`);
+  if (!["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion", "s2-simple", "human"].includes(value)) throw new Error(`unsupported match bot ${value}`);
   if (value in cc2Engines) requireCc2Engine(value);
   if (value in cc2Engines && !isAdr062QualifiedStaticType(value)) throw new Error("ADR-062-qualified resolver required");
   return value;
