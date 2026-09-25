@@ -1,6 +1,6 @@
 import { inputDecisionFingerprint } from './input-decision-request.mjs';
 import { inputBotProfile } from './input-bot-contract.mjs';
-import { rankS2AmountOnlyPublicCandidates, projectS2AmountOnlyPublicCandidates, projectS2AmountOnlyPublicLock } from './s2-amount-only-public-candidates.mjs';
+import { rankS2AmountOnlyPublicCandidates, projectS2AmountOnlyPublicCandidates, projectS2AmountOnlyPublicCandidatesWithPreferredWitness, projectS2AmountOnlyPublicLock } from './s2-amount-only-public-candidates.mjs';
 import { QUALIFIED_STATIC_CC2_RESOLVER_POLICY } from './s2-amount-only-public-resolver.mjs';
 import { planInputTarget, INPUT_TARGET_CONTROLLER } from './triangle/input-target-planner.mjs';
 import { validateInputPublicMovement } from './triangle/input-public-movement.mjs';
@@ -39,7 +39,24 @@ export function orderQualifiedInputCandidates(request) {
 /** Opt-in product resolver: retain the qualified selector's first choice,
  * then try its other ranked candidates within one shared input-search budget.
  */
-export function resolveQualifiedInputSubmission(request, movement, {
+export function resolveQualifiedInputSubmission(request, movement, options = {}) {
+  return resolveInputSubmissionWithCandidates(request, movement, orderQualifiedInputCandidates(request), options);
+}
+
+/** Plans the F14 core's existing move order without running the legacy S2 selector. */
+export function resolveCoreOrderedInputSubmission(request, movement, options = {}) {
+  // `preferredWitness` is the core's own spin witness for its selected move
+  // (`selectedPlacement`); it is planner input, not part of the fingerprinted
+  // decision request. See projectS2AmountOnlyPublicCandidatesWithPreferredWitness.
+  const { preferredWitness = null, ...planning } = options;
+  const ranked = projectS2AmountOnlyPublicCandidatesWithPreferredWitness(request.decision, request.moves,
+    { candidateLimit: Math.min(16, request.moves.length), allowCompleteReturnedPrefix: true, preferredWitness });
+  const first = ranked.candidates[0];
+  return resolveInputSubmissionWithCandidates(request, movement,
+    { ranked, first, candidates: ranked.candidates, nativeOrder: true }, planning);
+}
+
+function resolveInputSubmissionWithCandidates(request, movement, { ranked, first, candidates }, {
   maxNodes = 128, maxFrames = 60, maxTimeMs = 250, compactInputs = false, timeProgression = true,
   naturalGravity = true, reuse = null,
 } = {}) {
@@ -49,7 +66,6 @@ export function resolveQualifiedInputSubmission(request, movement, {
   if (!Number.isSafeInteger(maxNodes) || maxNodes < 1 || maxNodes > 1024 ||
       !Number.isSafeInteger(maxFrames) || maxFrames < 1 || maxFrames > 120 ||
       !Number.isFinite(maxTimeMs) || maxTimeMs <= 0 || maxTimeMs > 1000) throw new Error('invalid input resolver budget');
-  const { ranked, first, candidates } = orderQualifiedInputCandidates(request);
   // maxTimeMs bounds path search after ranking, not the whole synchronous
   // resolver call. Individual Engine ticks cannot be preempted.
   const startedAt = performance.now();

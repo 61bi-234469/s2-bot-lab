@@ -1,6 +1,6 @@
-import { F14_COMPAT_QUEUE_LIMIT, createF14DecideRequest } from "./s2-f14-compat-browser.mjs";
-import { createPublicCompatProfile } from "./public-compat-request.mjs";
-import { championVisibleState, extendChampionQueue } from "./champion-parameters.mjs";
+import { F14_COMPAT_QUEUE_LIMIT, createF14DecideRequest, createF14LeafConversionGatedProfile,
+  ROOT_LEAF_CONVERSION_GATED_PROFILE } from "./s2-f14-compat-browser.mjs";
+import { assertGatedChampionResponse, championVisibleState, extendChampionQueue } from "./champion-parameters.mjs";
 import { createS2AmountOnlyDecisionState, decisionStateToSyntheticGui } from "./s2-amount-only-decision-state.mjs";
 import { guiStateToCanonical } from "./gui-state.mjs";
 import { applyTransition } from "./transition.mjs";
@@ -9,9 +9,13 @@ import { applyTransition } from "./transition.mjs";
  * The INPUT route only sees the amount-only decision state, never the referee's
  * canonical state. This rebuilds exactly the request createPublicCompatRequest
  * makes from the canonical state behind that decision, so INPUT asks the same
- * F14 profile-B core the champion's final-placement route asks.
+ * gated F14 core the champion's final-placement route asks.
  */
-export function createChampionInputRequest(decision, { requestId, generation = 1, profile = createPublicCompatProfile(), queueDepth = F14_COMPAT_QUEUE_LIMIT } = {}) {
+export function createChampionInputRequest(decision, { requestId, generation = 1,
+  profile = createF14LeafConversionGatedProfile({ scale: "0.25", maxHeight: "8" }), queueDepth = F14_COMPAT_QUEUE_LIMIT } = {}) {
+  if (profile?.profileId !== ROOT_LEAF_CONVERSION_GATED_PROFILE) {
+    throw new Error("champion INPUT requires the gated leaf-conversion profile");
+  }
   const { board, pieces, chain, lockTime, incoming, rulesetId } = decision;
   // The core's A-profile contract always has HOLD available; see championInputMoves.
   const queue = [pieces.current, ...pieces.known].filter((piece) => piece != null);
@@ -35,20 +39,17 @@ export function createChampionInputRequest(decision, { requestId, generation = 1
 }
 
 /**
- * The champion's own adoption order for the INPUT planner: its selected move,
- * then its other ranked candidates, solvent before insolvent and by selection
- * score within each group. Only reachability can move the planner past the
- * first entry.
+ * The champion's adoption order for the INPUT planner: its selected
+ * (possibly rescue-vetoed) move, then the other candidates in CC2 rank order,
+ * which is the gated core's final order. Only reachability can move the
+ * planner past the first entry.
  */
 export function championInputMoves(response, { current = null, holdAvailable = true } = {}) {
   if (response?.status !== "move") throw new Error(`champion INPUT decision ${response?.status}: ${response?.reason}`);
-  // `identities` is the core's ranked order; `returnedIdentities` is CC2 order,
-  // the one a `cc2Rank` indexes.
-  const { returnedIdentities, candidates, selectedCc2Rank } = response.ranking;
-  if (returnedIdentities?.[selectedCc2Rank] !== response.selectedIdentity) throw new Error("champion INPUT selected identity mismatch");
-  const rest = candidates.filter((candidate) => candidate.cc2Rank !== selectedCc2Rank)
-    .sort((a, b) => Number(b.solvent) - Number(a.solvent) || b.selectionScore - a.selectionScore || a.cc2Rank - b.cc2Rank);
-  const moves = [selectedCc2Rank, ...rest.map((candidate) => candidate.cc2Rank)].map((rank) => JSON.parse(returnedIdentities[rank]));
+  assertGatedChampionResponse({ execution: { profileId: ROOT_LEAF_CONVERSION_GATED_PROFILE } }, response);
+  const { returnedIdentities, selectedCc2Rank } = response.ranking;
+  const moves = [selectedCc2Rank, ...[...returnedIdentities.keys()].filter((rank) => rank !== selectedCc2Rank)]
+    .map((rank) => JSON.parse(returnedIdentities[rank]));
   if (holdAvailable) return moves;
   // Only an INPUT replan after this piece's HOLD input sees HOLD spent, which
   // the core cannot be asked about; keep its order among the moves that

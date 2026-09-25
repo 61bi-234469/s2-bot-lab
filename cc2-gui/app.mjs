@@ -578,7 +578,7 @@ function botParameterRow(parameter, values, { nested = false, describe = true, s
   row.dataset.control = parameter.type;
   if (nested) row.dataset.nested = "true";
   const label = document.createElement("label");
-  const input = document.createElement("input");
+  const input = parameter.type === "enum" ? document.createElement("select") : document.createElement("input");
   const control = document.createElement("div");
   control.className = "bot-parameter-control";
   input.id = `bot-parameter-${parameter.key}`;
@@ -587,7 +587,15 @@ function botParameterRow(parameter, values, { nested = false, describe = true, s
   // Inside a card the toggle above already says SELECTION or THINK TIME, so the
   // limit only has to say that it is the limit.
   label.textContent = nested ? parameter.shortLabel ?? parameter.label : parameter.label;
-  if (parameter.type === "boolean") {
+  if (parameter.type === "enum") {
+    for (const option of parameter.options ?? []) {
+      const choice = document.createElement("option");
+      choice.value = option.value;
+      choice.textContent = option.label;
+      input.append(choice);
+    }
+    input.value = values[parameter.key] ?? parameter.defaultValue;
+  } else if (parameter.type === "boolean") {
     input.type = "checkbox";
     input.checked = values[parameter.key];
   } else {
@@ -874,7 +882,8 @@ function saveBotSettings(event) {
   const candidate = Object.fromEntries(capability.parameters.map((parameter) => {
     const input = form.elements.namedItem(parameter.key);
     if (parameter.key === "pps" && ppsIsOverridden()) return [parameter.key, values[parameter.key]];
-    return [parameter.key, parameter.type === "boolean" ? input.checked : Number(input.value)];
+    return [parameter.key, parameter.type === "boolean" ? input.checked
+      : parameter.type === "enum" ? input.value : Number(input.value)];
   }));
   try {
     botParameters[side][botType] = { ...normalizeBotParameters(botType, candidate) };
@@ -913,8 +922,12 @@ function renderBotSettingsSummary(side) {
       || (parameter.key === "pps" && fairComparisonEnabled());
   }).map((parameter) => {
     const overriddenPps = parameter.key === "pps" && ppsIsOverridden();
-    const value = overriddenPps ? effectivePps(values) : values[parameter.key];
+    const value = overriddenPps ? effectivePps(values) : (values[parameter.key] ?? parameter.defaultValue);
     if (parameter.type === "boolean") return `${parameter.label} ${value ? "ON" : "OFF"}`;
+    if (parameter.type === "enum") {
+      const label = parameter.options?.find((option) => option.value === value)?.label ?? value;
+      return `${parameter.label} ${label}`;
+    }
     const source = fairComparisonEnabled() ? " (FAIR)" : "";
     return `${parameter.label} ${value}${parameter.suffix ? ` ${parameter.suffix}` : ""}${overriddenPps ? source : ""}`;
   }).join(" · ");

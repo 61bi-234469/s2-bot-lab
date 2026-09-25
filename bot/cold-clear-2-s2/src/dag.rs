@@ -110,20 +110,103 @@ struct Child<E: Evaluation> {
     mv: Action<E>,
     reward: E::Reward,
     cached_eval: E,
+    root_bonus: RootOrderAdjustment,
     root_priority: bool,
     target: Link<E>,
     closed: bool,
 }
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RootOrderAdjustmentKind {
+    None,
+    Mix,
+    Tiebreak,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct RootOrderAdjustment {
+    value: f64,
+    kind: RootOrderAdjustmentKind,
+}
+
+impl RootOrderAdjustment {
+    const NONE: Self = Self {
+        value: 0.0,
+        kind: RootOrderAdjustmentKind::None,
+    };
+
+    fn mix(value: f64) -> Self {
+        Self { value, kind: RootOrderAdjustmentKind::Mix }
+    }
+
+    fn tiebreak(value: f64) -> Self {
+        Self { value, kind: RootOrderAdjustmentKind::Tiebreak }
+    }
+
+    fn is_tiebreak(self) -> bool {
+        self.kind == RootOrderAdjustmentKind::Tiebreak
+    }
+
+    fn mix_value(self) -> Option<f64> {
+        (self.kind == RootOrderAdjustmentKind::Mix).then_some(self.value)
+    }
+
+    fn tiebreak_value(self) -> Option<f64> {
+        self.is_tiebreak().then_some(self.value)
+    }
+}
+
+// Preserve the generic child footprint used by S2 allocation estimates; only
+// the Legacy root comparator interprets the new adjustment kind.
+const _: [(); std::mem::size_of::<Option<f64>>()] =
+    [(); std::mem::size_of::<RootOrderAdjustment>()];
+const _: [(); std::mem::align_of::<Option<f64>>()] =
+    [(); std::mem::align_of::<RootOrderAdjustment>()];
 
 fn compare_children<E: Evaluation>(a: &Child<E>, b: &Child<E>) -> std::cmp::Ordering {
     if E::Domain::S2 {
         return a.cached_eval.is_error().cmp(&b.cached_eval.is_error())
             .then_with(|| (!a.cached_eval.is_loss()).cmp(&(!b.cached_eval.is_loss())))
             .then_with(|| a.root_priority.cmp(&b.root_priority))
-            .then_with(|| a.cached_eval.cmp(&b.cached_eval))
+            .then_with(|| compare_child_values(a, b))
             .then_with(|| E::Domain::compare_actions(b.mv, a.mv));
     }
-    a.root_priority.cmp(&b.root_priority).then_with(|| a.cached_eval.cmp(&b.cached_eval))
+    a.root_priority.cmp(&b.root_priority).then_with(|| compare_child_values(a, b))
+}
+
+fn compare_child_values<E: Evaluation>(a: &Child<E>, b: &Child<E>) -> std::cmp::Ordering {
+    // Tie-break terms preserve native Ord unless the native values are exactly
+    // equal. This tag is only populated by the opt-in F14 profile.
+    if a.root_bonus.is_tiebreak() || b.root_bonus.is_tiebreak() {
+        let native_cmp = a.cached_eval.cmp(&b.cached_eval);
+        if native_cmp != std::cmp::Ordering::Equal {
+            return native_cmp;
+        }
+        return match (a.root_bonus.tiebreak_value(), b.root_bonus.tiebreak_value()) {
+            (Some(a_term), Some(b_term)) => a_term
+                .partial_cmp(&b_term)
+                .unwrap_or(std::cmp::Ordering::Equal),
+            (Some(_), None) => std::cmp::Ordering::Greater,
+            (None, Some(_)) => std::cmp::Ordering::Less,
+            (None, None) => std::cmp::Ordering::Equal,
+        };
+    }
+
+    // With no tie-break tag, preserve the old native/mix comparator exactly.
+    let a_bonus = a.root_bonus.mix_value().unwrap_or(0.0);
+    let b_bonus = b.root_bonus.mix_value().unwrap_or(0.0);
+    if a_bonus == 0.0 && b_bonus == 0.0 {
+        return a.cached_eval.cmp(&b.cached_eval);
+    }
+    let native_cmp = || a.cached_eval.cmp(&b.cached_eval);
+    let a_value = a.cached_eval.value() as f64 + a_bonus;
+    let b_value = b.cached_eval.value() as f64 + b_bonus;
+    a_value
+        .partial_cmp(&b_value)
+        .unwrap_or_else(native_cmp)
+        .then_with(native_cmp)
 }
 
 pub struct RootEdge<E: Evaluation> {
@@ -299,6 +382,96 @@ impl<E: Evaluation> Dag<E> {
                 });
                 node.eval = E::average(std::iter::once(children.first().map(|child| child.cached_eval)));
                 changed
+            }
+            LayerKind::Speculated(_) => unreachable!("Legacy root must be despeculated before use"),
+        })
+    }
+
+    /// Reorder only the Legacy root by native backed-up value plus a separate
+    /// F14 bonus. The root `node.eval` is not recomputed, and the first suggested
+    /// child's native value may differ from the root's stored value.
+    pub(crate) fn apply_legacy_root_bonuses(
+        &self,
+        bonuses: &[(crate::data::Placement, f64)],
+        scale: f64,
+    ) -> Result<usize, CompatError>
+    where
+        E::Domain: Domain<Action = crate::data::Placement>,
+    {
+        assert!(!E::Domain::S2, "Legacy root bonuses are not an S2 API");
+        if !scale.is_finite() {
+            return Err(CompatError::NonFiniteFeature);
+        }
+        let bonuses: std::collections::HashMap<_, _> = bonuses
+            .iter()
+            .map(|(action, term)| {
+                if !term.is_finite() {
+                    return Err(CompatError::NonFiniteFeature);
+                }
+                let bonus = scale * term;
+                if !bonus.is_finite() {
+                    return Err(CompatError::NonFiniteFeature);
+                }
+                Ok((*action, bonus))
+            })
+            .collect::<Result<_, _>>()?;
+        self.top_layer.kind.with(|this| match this.data {
+            LayerKind::Known(layer) => {
+                let root_index = layer.states.index(&self.root);
+                let Some(mut node) = layer.states.get_raw_mut(root_index) else { return Ok(0); };
+                let Some(children) = node.children.as_mut() else { return Ok(0); };
+                let mut changed = 0;
+                for child in children.iter_mut() {
+                    child.root_bonus = RootOrderAdjustment::NONE;
+                    if let Some(bonus) = bonuses.get(&child.mv) {
+                        if !(child.cached_eval.value() as f64 + bonus).is_finite() {
+                            return Err(CompatError::NonFiniteFeature);
+                        }
+                        child.root_bonus = RootOrderAdjustment::mix(*bonus);
+                        changed += 1;
+                    }
+                }
+                children.sort_by(|left, right| compare_children(left, right).reverse());
+                Ok(changed)
+            }
+            LayerKind::Speculated(_) => unreachable!("Legacy root must be despeculated before use"),
+        })
+    }
+
+    /// Order the Legacy root by native value, then use the F14 term only inside
+    /// an exact native tie. The reported values remain native.
+    pub(crate) fn apply_legacy_root_tiebreaks(
+        &self,
+        terms: &[(crate::data::Placement, f64)],
+    ) -> Result<usize, CompatError>
+    where
+        E::Domain: Domain<Action = crate::data::Placement>,
+    {
+        assert!(!E::Domain::S2, "Legacy root tie-breaks are not an S2 API");
+        let terms: std::collections::HashMap<_, _> = terms
+            .iter()
+            .map(|(action, term)| {
+                if !term.is_finite() {
+                    return Err(CompatError::NonFiniteFeature);
+                }
+                Ok((*action, *term))
+            })
+            .collect::<Result<_, _>>()?;
+        self.top_layer.kind.with(|this| match this.data {
+            LayerKind::Known(layer) => {
+                let root_index = layer.states.index(&self.root);
+                let Some(mut node) = layer.states.get_raw_mut(root_index) else { return Ok(0); };
+                let Some(children) = node.children.as_mut() else { return Ok(0); };
+                let mut changed = 0;
+                for child in children.iter_mut() {
+                    child.root_bonus = RootOrderAdjustment::NONE;
+                    if let Some(term) = terms.get(&child.mv) {
+                        child.root_bonus = RootOrderAdjustment::tiebreak(*term);
+                        changed += 1;
+                    }
+                }
+                children.sort_by(|left, right| compare_children(left, right).reverse());
+                Ok(changed)
             }
             LayerKind::Speculated(_) => unreachable!("Legacy root must be despeculated before use"),
         })
@@ -1183,6 +1356,79 @@ mod edge_cost_tests {
         assert_eq!(changed, 2);
         assert_eq!(dag.suggest(4).into_iter().map(|(action, _)| action).collect::<Vec<_>>(),
             vec![mv(1), mv(0), mv(3), mv(2)]);
+    }
+
+    #[test]
+    fn root_value_bonuses_mix_with_native_values_without_overwriting_them() {
+        use rand::{rngs::StdRng, SeedableRng};
+        let mv = |x| Placement { location: PieceLocation { piece: Piece::I,
+            rotation: Rotation::North, x, y: 0 }, spin: Spin::None };
+        let root = GameState { board: Board::default(), bag: EnumSet::only(Piece::I),
+            reserve: Piece::I, b2b: 0, combo: 0, pending_incoming_rows: 0, due_this_lock_rows: 0 };
+        let dag = Dag::<Value>::new(root, &[Piece::I]);
+        let mut rng = StdRng::seed_from_u64(29);
+        let selected = dag.select(false, 0.5, &mut rng).unwrap();
+        let mut children = EnumMap::default();
+        children[Piece::I] = vec![
+            ChildData { resulting_state: GameState { combo: 1, ..root }, mv: mv(0),
+                eval: Value(2), reward: 0, root_priority: false },
+            ChildData { resulting_state: GameState { combo: 2, ..root }, mv: mv(1),
+                eval: Value(1), reward: 0, root_priority: false },
+            ChildData { resulting_state: GameState { combo: 3, ..root }, mv: mv(2),
+                eval: Value(100), reward: 0, root_priority: false },
+            ChildData { resulting_state: GameState { combo: 4, ..root }, mv: mv(3),
+                eval: Value(0), reward: 0, root_priority: false },
+        ];
+        selected.expand(children);
+
+        let native = vec![(mv(2), 100.0), (mv(0), 2.0), (mv(1), 1.0), (mv(3), 0.0)];
+        assert_eq!(dag.suggest(4), native);
+        let terms = [(mv(0), 0.0), (mv(1), 5.0)];
+        assert_eq!(dag.apply_legacy_root_bonuses(&terms, 1.0).unwrap(), 2);
+        assert_eq!(
+            dag.suggest(4),
+            vec![(mv(2), 100.0), (mv(1), 1.0), (mv(0), 2.0), (mv(3), 0.0)],
+            "an unscored child competes by its native value and all reported values stay native"
+        );
+
+        assert_eq!(dag.apply_legacy_root_bonuses(&terms, 0.0).unwrap(), 2);
+        assert_eq!(dag.suggest(4), native, "zero scale reproduces native ordering");
+    }
+
+    #[test]
+    fn root_value_tiebreak_only_orders_exact_native_ties_without_overwriting_values() {
+        use rand::SeedableRng;
+        let mv = |x| Placement { location: PieceLocation { piece: Piece::I,
+            rotation: Rotation::North, x, y: 0 }, spin: Spin::None };
+        let root = GameState { board: Board::default(), bag: EnumSet::only(Piece::I),
+            reserve: Piece::I, b2b: 0, combo: 0, pending_incoming_rows: 0, due_this_lock_rows: 0 };
+        let dag = Dag::<Value>::new(root, &[Piece::I]);
+        let mut rng = rand::rngs::StdRng::seed_from_u64(31);
+        let selected = dag.select(false, 0.5, &mut rng).unwrap();
+        let mut children = EnumMap::default();
+        children[Piece::I] = vec![
+            ChildData { resulting_state: GameState { combo: 1, ..root }, mv: mv(0),
+                eval: Value(3), reward: 0, root_priority: false },
+            ChildData { resulting_state: GameState { combo: 2, ..root }, mv: mv(1),
+                eval: Value(3), reward: 0, root_priority: false },
+            ChildData { resulting_state: GameState { combo: 3, ..root }, mv: mv(2),
+                eval: Value(4), reward: 0, root_priority: false },
+            ChildData { resulting_state: GameState { combo: 4, ..root }, mv: mv(3),
+                eval: Value(3), reward: 0, root_priority: false },
+            ChildData { resulting_state: GameState { combo: 5, ..root }, mv: mv(4),
+                eval: Value(3), reward: 0, root_priority: false },
+        ];
+        selected.expand(children);
+
+        let terms = [(mv(0), 20.0), (mv(1), 500.0), (mv(2), -50_000.0)];
+        assert_eq!(dag.apply_legacy_root_tiebreaks(&terms).unwrap(), 3);
+        let suggestions = dag.suggest(5);
+        assert_eq!(suggestions.iter().map(|(action, _)| *action).collect::<Vec<_>>(),
+            vec![mv(2), mv(1), mv(0), mv(3), mv(4)],
+            "native value leads; tied terms decide; unscored ties follow in native order");
+        assert_eq!(suggestions.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
+            vec![4.0, 3.0, 3.0, 3.0, 3.0],
+            "the ordering term never changes reported native values");
     }
 
     #[test]

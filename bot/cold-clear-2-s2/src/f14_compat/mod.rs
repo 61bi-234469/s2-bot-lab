@@ -869,8 +869,14 @@ pub fn apply_f14_lock_blocks(
     })?;
     let width_us = width as usize;
     let height_us = height as usize;
-    let mut grid: Vec<Vec<char>> = (0..height_us)
-        .map(|y| cells.chars().skip(y * width_us).take(width_us).collect())
+    // `parse_lock_board` has verified the exact `width * height` cell count, so
+    // one pass over the cells yields the same rows as re-skipping the prefix
+    // for every row did.
+    let flat: Vec<char> = cells.chars().collect();
+    let mut grid: Vec<Vec<char>> = flat
+        .chunks(width_us)
+        .take(height_us)
+        .map(|row| row.to_vec())
         .collect();
     for &(x, y, cell) in blocks {
         if x < 0 || y < 0 || x >= width || y >= height || !is_cell_char(cell) || cell == '_' {

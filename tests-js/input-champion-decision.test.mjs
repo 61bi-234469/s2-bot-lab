@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { createGame, toS2GuiState } from "../cc2-gui/game.mjs";
 import { guiStateToCanonical } from "../src-js/gui-state.mjs";
 import { createPublicCompatProfile, createPublicCompatRequest } from "../src-js/public-compat-request.mjs";
+import { createF14LeafConversionGatedProfile } from "../src-js/s2-f14-compat-browser.mjs";
 import { createS2AmountOnlyDecisionState } from "../src-js/s2-amount-only-decision-state.mjs";
 import { analyzeSimpleS2FinalPlacements } from "../src-js/simple-s2-bot.mjs";
 import { championInputMoves, createChampionInputRequest } from "../src-js/input-champion-decision.mjs";
@@ -38,7 +39,8 @@ test("INPUT champion request equals the final-placement champion request for the
     let state = guiStateToCanonical(toS2GuiState(createGame(seed)));
     for (let turn = 0; turn < 40; turn++) {
       for (const probe of [state, withPendingGarbage(state, turn)]) {
-        const expected = createPublicCompatRequest(probe, { requestId: "r" });
+        const profile = createF14LeafConversionGatedProfile({ scale: "0.25", maxHeight: "8" });
+        const expected = createPublicCompatRequest(probe, { requestId: "r", profile });
         const actual = createChampionInputRequest(createS2AmountOnlyDecisionState(probe), { requestId: "r" });
         assert.equal(canonicalize(actual), canonicalize(expected), `seed ${seed} turn ${turn}`);
         if (expected.selector.incoming.pendingRows > 0) withIncoming++;
@@ -55,26 +57,35 @@ test("INPUT champion request equals the final-placement champion request for the
     `${compared} positions, ${heldStates} with hold, ${withIncoming} with incoming rows`);
 });
 
-test("champion INPUT order keeps the core's selection first, then solvent candidates by score", () => {
+test("champion INPUT order keeps the core selection first, then CC2 rank order", () => {
   const identity = (x) => canonicalize({ location: { orientation: "north", type: "O", x, y: 1 }, spin: "none" });
   const identities = [0, 2, 4, 6].map(identity);
-  // `returnedIdentities` is CC2 order (what cc2Rank indexes); `identities` is
-  // the core's ranked order, which differs from it.
-  const moves = championInputMoves({ status: "move", selectedIdentity: identities[2], ranking: {
-    returnedIdentities: identities, identities: [identities[2], identities[3], identities[0], identities[1]],
-    selectedCc2Rank: 2, candidates: [
-      { cc2Rank: 0, solvent: false, selectionScore: 10 },
-      { cc2Rank: 1, solvent: true, selectionScore: -3 },
-      { cc2Rank: 2, solvent: true, selectionScore: -9 },
-      { cc2Rank: 3, solvent: true, selectionScore: 1 },
-    ] } });
-  assert.deepEqual(moves.map(canonicalize), [identities[2], identities[3], identities[1], identities[0]]);
+  const gated = (ranking, selectedIdentity) => ({ status: "move", profileId: "f14-leaf-conversion-gated-b/1",
+    diagnostics: { finalOrderPolicyId: "cc2-rank-order/1", postStageRerankCalls: 1,
+      postStageConversionComputeCalls: 4, postStageConversionAddCalls: 4 },
+    selectedIdentity, ranking });
+  const candidates = [
+    { cc2Rank: 0, solvent: false, solvency: -2, selectionScore: 10 },
+    { cc2Rank: 1, solvent: true, solvency: 1, selectionScore: -3 },
+    { cc2Rank: 2, solvent: true, solvency: 2, selectionScore: -9 },
+    { cc2Rank: 3, solvent: true, solvency: 3, selectionScore: 1 },
+  ];
+  // A rescue selects the first solvent rank; the rest follow in CC2 order.
+  const rescue = { rescueApplied: true, selectedCc2Rank: 1, returnedIdentities: identities, identities: [...identities], candidates };
+  assert.deepEqual(championInputMoves(gated(rescue, identities[1])).map(canonicalize),
+    [identities[1], identities[0], identities[2], identities[3]]);
+  // The gate mirrors Rust choose_rescue and the cc2-rank-order final order.
+  assert.throws(() => championInputMoves(gated({ ...rescue, identities: [identities[0], identities[2], identities[1], identities[3]] }, identities[1])),
+    /CC2 rank order/);
+  assert.throws(() => championInputMoves(gated({ ...rescue, selectedCc2Rank: 2 }, identities[2])), /first solvent/);
+  const zeroSolvency = candidates.map((candidate) => candidate.cc2Rank === 0 ? { ...candidate, solvency: 0 } : candidate);
+  assert.throws(() => championInputMoves(gated({ ...rescue, candidates: zeroSolvency }, identities[1])), /rank 0/);
   assert.throws(() => championInputMoves({ status: "incomplete", reason: "deadline" }), /incomplete/);
-  const withHold = { status: "move", selectedIdentity: canonicalize({ location: { orientation: "north", type: "T", x: 4, y: 1 }, spin: "none" }),
-    ranking: { selectedCc2Rank: 0, returnedIdentities: [
-      canonicalize({ location: { orientation: "north", type: "T", x: 4, y: 1 }, spin: "none" }), identities[1], identities[0]],
-    candidates: [{ cc2Rank: 0, solvent: true, selectionScore: 0 }, { cc2Rank: 1, solvent: true, selectionScore: -1 },
-      { cc2Rank: 2, solvent: true, selectionScore: -2 }] } };
+  const held = canonicalize({ location: { orientation: "north", type: "T", x: 4, y: 1 }, spin: "none" });
+  const withHold = gated({ rescueApplied: false, selectedCc2Rank: 0, identities: [held, identities[1], identities[0]],
+    returnedIdentities: [held, identities[1], identities[0]],
+    candidates: [{ cc2Rank: 0, solvent: true, solvency: 1, selectionScore: 0 }, { cc2Rank: 1, solvent: true, solvency: 1, selectionScore: -1 },
+      { cc2Rank: 2, solvent: true, solvency: 1, selectionScore: -2 }] }, held);
   // A replan after this piece's HOLD cannot place the held piece.
   assert.deepEqual(championInputMoves(withHold, { current: "O", holdAvailable: false }).map(canonicalize), [identities[1], identities[0]]);
 });
@@ -217,7 +228,7 @@ test("F14 rerank accepts changed selector time and rebuilds the ranking context"
   assert.ok(changedFromA, "the changed time/incoming cases include a decision different from request A");
 });
 
-test("local INPUT runtime reranks only through an existing matching F14 session", {
+test("local INPUT runtime re-finalizes the gated champion search through an existing session", {
   skip: !existsSync(wasmPath),
   timeout: 120_000,
 }, async () => {
@@ -227,13 +238,11 @@ test("local INPUT runtime reranks only through an existing matching F14 session"
     f14SessionFor: () => createCc2WasmSession({ wasmBytes }),
   });
   try {
-    const profile = createPublicCompatProfile();
+    const profile = createF14LeafConversionGatedProfile({ scale: "0.25", maxHeight: "8" });
     const state = withPendingGarbage(guiStateToCanonical(toS2GuiState(createGame(67))), 4);
     const request = createPublicCompatRequest(state, { requestId: 'local-rerank', profile });
     const payload = { sessionKey: 'input-rerank-test/right', type: 'cc2-s2-champion',
       engine: { botType: 'cc2-s2-champion', engineId: 'cc2-s2-champion' }, profile, request };
-    await assert.rejects(runtime.rerankF14(payload), /rerank is unavailable/i);
-
     const zeroed = structuredClone(request);
     zeroed.selector.incoming = { pendingRows: 0, dueThisLockRows: 0 };
     const baseline = await runtime.decideF14({ ...payload, request: zeroed });
@@ -280,7 +289,8 @@ test("champion INPUT match locks the WASM F14 core selection, also under incomin
       await new Promise((resolveWait) => setTimeout(resolveWait, 2));
     }
     assert.ok(view.bots.every((bot) => bot.stats.turns >= 20), JSON.stringify(view.bots.map((bot) => bot.stats.turns)));
-    assert.ok(decisions.every(({ payload }) => canonicalize(payload.profile) === canonicalize(createPublicCompatProfile())));
+    const gatedProfile = createF14LeafConversionGatedProfile({ scale: "0.25", maxHeight: "8" });
+    assert.ok(decisions.every(({ payload }) => canonicalize(payload.profile) === canonicalize(gatedProfile)));
     assert.ok(decisions.some(({ payload }) => payload.request.selector.incoming.pendingRows > 0), "a decision saw incoming rows");
     const pose = (placement) => [placement.piece, placement.rotation, placement.x, placement.y, placement.usedHold];
     const planned = plans.filter(({ payload, result }) => payload.request.type === "cc2-s2-champion" && result.status === "planned");
@@ -296,6 +306,8 @@ test("champion INPUT match locks the WASM F14 core selection, also under incomin
     // Most pieces reuse the search run while the previous piece was moved.
     const champion = view.bots.find((bot) => bot.type === "cc2-s2-champion").inputExecution;
     assert.ok(champion.championSpeculationHits > champion.championSpeculations / 2, JSON.stringify(champion));
+    assert.ok(champion.championSpeculationHits > 0,
+      "a gated retained-search speculation was reused instead of triggering a fresh-search fallback");
     // A fresh core session answers the same request identically, also for
     // the re-ranked (speculative or incoming-only) decisions.
     const fresh = await createCc2WasmSession({ wasmBytes });
@@ -310,16 +322,25 @@ test("champion INPUT match locks the WASM F14 core selection, also under incomin
   }
 });
 
-test("champion GUI parameters at their defaults are exactly the champion's profile and request", () => {
+test("champion GUI parameters always build the gated leaf-conversion profile and request", () => {
   const defaults = defaultBotParameters("cc2-s2-champion");
-  assert.equal(canonicalize(createChampionProfile(defaults)), canonicalize(createPublicCompatProfile()));
+  const gatedBase = createF14LeafConversionGatedProfile({ scale: "0.25", maxHeight: "8" });
+  assert.equal(canonicalize(createChampionProfile(defaults)), canonicalize(gatedBase));
   for (const seed of [1, 2, 3]) {
     const state = withPendingGarbage(guiStateToCanonical(toS2GuiState(createGame(seed))), seed);
     assert.equal(canonicalize(createChampionRequest(state, defaults, { requestId: "r" })),
-      canonicalize(createPublicCompatRequest(state, { requestId: "r" })));
+      canonicalize(createPublicCompatRequest(state, { requestId: "r", profile: gatedBase })));
   }
   const timed = createChampionProfile({ ...defaults, thinkTimeEnabled: true, thinkMs: 300, selectionEnabled: false });
   assert.deepEqual(timed.budget, { mode: "time", selections: 1_000_000, maxMillis: 300 });
+  const gatedParameters = { ...defaults, selectionLimit: 384 };
+  assert.equal(canonicalize(createChampionProfile(gatedParameters)), canonicalize({
+    ...gatedBase, budget: { ...gatedBase.budget, selections: 384 },
+  }));
+  const gatedTimed = createChampionProfile({ ...gatedParameters, selectionEnabled: false, thinkTimeEnabled: true, thinkMs: 300 });
+  assert.equal(canonicalize(gatedTimed), canonicalize({
+    ...gatedBase, budget: { mode: "time", selections: 1_000_000, maxMillis: 300 },
+  }));
   assert.throws(() => createChampionProfile({ ...defaults, queueDepth: 29 }), /QUEUE DEPTH must be 2-28/);
   // The core's search needs a NEXT piece; depth 1 crashed the WASM core.
   assert.throws(() => createChampionProfile({ ...defaults, queueDepth: 1 }), /QUEUE DEPTH must be 2-28/);
@@ -343,6 +364,28 @@ test("champion THINK TIME and QUEUE DEPTH decide through the WASM core", { skip:
     assert.equal(resolved.positionFingerprint, fullStateKey(state));
     // The full queue survives the lock even though the core saw three pieces.
     assert.equal(resolved.transition.nextState.pieces.known.length, state.pieces.known.length - 1);
+
+    const gatedTimedRequest = createChampionRequest(state, parameters, { requestId: "gated-timed" });
+    const gatedTimedResponse = await session.decideF14({ request: gatedTimedRequest, profile: gatedTimedRequest.execution });
+    assert.equal(gatedTimedResponse.status, "move", JSON.stringify(gatedTimedResponse));
+    assert.equal(gatedTimedResponse.reason, "time-budget");
+    assert.ok(gatedTimedResponse.search.actualSelections >= 1
+      && gatedTimedResponse.search.actualSelections <= gatedTimedRequest.execution.budget.selections);
+    assert.equal(resolveChampionDecision({ state, gui, request: gatedTimedRequest, response: gatedTimedResponse,
+      parameters }).transition.legality.legal, true);
+
+    const gatedParameters = { ...defaultBotParameters("cc2-s2-champion"), selectionLimit: 64 };
+    const gatedRequest = createChampionRequest(state, gatedParameters, { requestId: "gated" });
+    const gatedResponse = await session.decideF14({ request: gatedRequest, profile: gatedRequest.execution });
+    assert.equal(gatedRequest.execution.profileId, "f14-leaf-conversion-gated-b/1");
+    assert.equal(resolveChampionDecision({ state, gui, request: gatedRequest, response: gatedResponse,
+      parameters: gatedParameters }).transition.legality.legal, true);
+    assert.throws(() => resolveChampionDecision({ state, gui, request: gatedRequest,
+      response: { ...gatedResponse, diagnostics: { ...gatedResponse.diagnostics, finalOrderPolicyId: "all-spin-rerank/1" } },
+      parameters: gatedParameters }), /cc2-rank-order\/1 final order/);
+    assert.throws(() => resolveChampionDecision({ state, gui, request: gatedRequest,
+      response: { ...gatedResponse, profileId: "f14-amount-only-compat-b/1" }, parameters: gatedParameters }),
+    /must use the gated leaf-conversion profile/);
 
     const counted = { ...parameters, selectionEnabled: true, selectionLimit: 64, thinkTimeEnabled: false };
     const fixedRequest = createChampionRequest(state, counted, { requestId: "counted" });

@@ -114,6 +114,84 @@ export function projectS2AmountOnlyPublicCandidates(decision, moves, {
   return Object.freeze({ state, candidates: Object.freeze(candidates) });
 }
 
+/**
+ * Core-order projection that reuses the F14 core's spin witness. The core's
+ * `selectedPlacement` comes from the same public reach search as
+ * `createPublicSpinWitnesses`; when it names the preferred candidate's final
+ * pose, that candidate takes it and the JS reach search runs only when a later
+ * candidate's placement or projection is read (fallback planning). Candidate
+ * legality does not depend on rotation evidence, so the candidate list is the
+ * same as `projectS2AmountOnlyPublicCandidates` returns; a witness that does not
+ * name the preferred pose falls back to that eager projection.
+ */
+export function projectS2AmountOnlyPublicCandidatesWithPreferredWitness(decision, moves, {
+  candidateLimit = 16, allowCompleteReturnedPrefix = false, preferredWitness = null,
+} = {}) {
+  const eager = () => projectS2AmountOnlyPublicCandidates(decision, moves, { candidateLimit, allowCompleteReturnedPrefix });
+  const witness = normalizePreferredWitness(preferredWitness);
+  if (witness === null) return eager();
+  assertOptions({ candidateLimit, rankPenalty: 25, adjustmentScale: 28, allowCompleteReturnedPrefix });
+  const state = publicStateFromDecision(decision);
+  if (!Array.isArray(moves) || moves.length === 0 || (!allowCompleteReturnedPrefix && moves.length < candidateLimit)) {
+    throw new Error("amount-only public selector requires a complete CC2 candidate prefix");
+  }
+  const prefix = moves.slice(0, allowCompleteReturnedPrefix ? Math.min(candidateLimit, moves.length) : candidateLimit);
+  const preferredRequested = cc2MoveToPublicPlacement(state, prefix[0]);
+  if (finalPoseKey(witness) !== finalPoseKey(preferredRequested)) return eager();
+  const identities = prefix.map(canonicalize);
+  if (new Set(identities).size !== identities.length) {
+    throw new Error("amount-only public selector prefix contains duplicate identities");
+  }
+  let witnesses = null;
+  const witnessesFor = () => (witnesses ??= createPublicSpinWitnesses(state));
+  const candidates = [];
+  for (const [cc2Rank, move] of prefix.entries()) {
+    if (cc2Rank === 0) {
+      const projection = projectS2AmountOnlyPublicLock(state, witness, decision.incoming);
+      if (projection === null) continue;
+      candidates.push({ cc2Rank, identity: identities[cc2Rank], move, placement: witness, projection });
+      continue;
+    }
+    const requested = cc2MoveToPublicPlacement(state, move);
+    const requestedProjection = projectS2AmountOnlyPublicLock(state, requested, decision.incoming);
+    if (requestedProjection === null) continue;
+    let resolved = null;
+    const resolve = () => {
+      if (resolved === null) {
+        const placement = witnessesFor().get(finalPoseKey(requested)) ?? requested;
+        resolved = { placement, projection: placement === requested
+          ? requestedProjection : projectS2AmountOnlyPublicLock(state, placement, decision.incoming) };
+      }
+      return resolved;
+    };
+    candidates.push({
+      cc2Rank,
+      identity: identities[cc2Rank],
+      move,
+      get placement() { return resolve().placement; },
+      get projection() { return resolve().projection; },
+    });
+  }
+  if (candidates.length === 0) throw new Error("amount-only public selector has no legal candidate");
+  return Object.freeze({ state, candidates: Object.freeze(candidates) });
+}
+
+/** Rebuilds a core-reported placement in the exact shape the JS reach search
+ * produces (key order included), or returns null when it is not one. */
+function normalizePreferredWitness(placement) {
+  if (placement === null || typeof placement !== "object") return null;
+  const { piece, rotation, x, y, usedHold, rotationEvidence: evidence } = placement;
+  if (typeof piece !== "string" || typeof rotation !== "string" || !Number.isSafeInteger(x) || !Number.isSafeInteger(y) ||
+      typeof usedHold !== "boolean" || evidence === null || typeof evidence !== "object" ||
+      typeof evidence.lastInputWasRotation !== "boolean") return null;
+  if (evidence.lastInputWasRotation !== true) return { piece, rotation, x, y, usedHold, rotationEvidence: HARD_DROP };
+  const { kickIndex, kickId, kickOffset } = evidence;
+  if (!Number.isSafeInteger(kickIndex) || typeof kickId !== "string" || !Array.isArray(kickOffset) ||
+      kickOffset.length !== 2 || !kickOffset.every(Number.isSafeInteger)) return null;
+  return { piece, rotation, x, y, usedHold,
+    rotationEvidence: { lastInputWasRotation: true, kickIndex, kickId, kickOffset: [kickOffset[0], kickOffset[1]] } };
+}
+
 export function projectS2AmountOnlyPublicLock(state, placement, incoming) {
   const rules = resolveS2AmountOnlyPublicRules(state.rulesetId);
   const locked = lockPublicPlacement(state, placement, rules);

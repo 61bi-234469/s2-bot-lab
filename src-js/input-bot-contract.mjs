@@ -7,7 +7,7 @@ export const INPUT_BOT_PROFILES = Object.freeze(Object.fromEntries([
   ['cc2-raw', 'cc2-order/1'],
   ['cc2-chouhy', 'cc2-order/1'],
   ['cc2-s2-f14', 'f14-amount-only/1'],
-  // The champion's F14 profile-B core decides; INPUT only plans reachability.
+  // The champion's gated F14 core decides; INPUT only plans reachability.
   ['cc2-s2-champion', 'f14-core-order/1'],
   // Comparison route used by the INPUT champion before its F14 core decided.
   ['cc2-s2-champion-legacy', 'f14-amount-only/1'],

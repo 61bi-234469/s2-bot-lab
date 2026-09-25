@@ -20,6 +20,7 @@ function fakeF14Decision({ request }) {
   }, spin: "none" };
   const selectedPlacement = cc2MoveToCanonicalPlacement({ queue: [piece] }, selectedMove);
   const selectedIdentity = canonicalize(selectedMove);
+  const gated = request.execution.profileId === "f14-leaf-conversion-gated-b/1";
   return {
     type: "f14_decision", schemaVersion: 1, requestId: request.requestId,
     positionId: request.positionId, generation: request.generation,
@@ -28,7 +29,11 @@ function fakeF14Decision({ request }) {
     boundaryAudit: { externalStrategicReselectCalls: 0, legacyF14RescueCalls: 0, legacyF14SelectionCalls: 0 },
     search: { requestedSelections: request.execution.budget.selections, actualSelections: request.execution.budget.selections },
     selectedMove, selectedIdentity, selectedPlacement,
-    ranking: { identities: [selectedIdentity] },
+    ...(gated ? { diagnostics: { finalOrderPolicyId: "cc2-rank-order/1", postStageConversionComputeCalls: 0,
+      postStageConversionAddCalls: 0, postStageRerankCalls: 0 } } : {}),
+    ranking: { identities: [selectedIdentity], ...(gated ? { returnedIdentities: [selectedIdentity], selectedCc2Rank: 0, rescueApplied: false,
+      candidates: [{ cc2Rank: 0, s2Score: 0,
+      selectionScore: 0, solvency: 0, solvent: true, conversionBranch: "other", conversionUnits: 0 }] } : {}) },
   };
 }
 
@@ -105,6 +110,11 @@ test("static handler lists exactly the INPUT bots and You, unavailable without W
   const capabilities = await request(createGuiRequestHandlers(), "GET", "/api/bots");
   assert.deepEqual(capabilities.bots.map((bot) => bot.id), ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion", "human"]);
   assert.ok(capabilities.bots.filter((bot) => bot.id.startsWith("cc2-")).every((bot) => !bot.available));
+  const available = await request(createGuiRequestHandlers({ cc2: { decideF14: async () => { throw new Error("must not run"); } } }), "GET", "/api/bots");
+  const champion = available.bots.find((bot) => bot.id === "cc2-s2-champion");
+  assert.equal(champion.parameters.some((parameter) => parameter.key === "engineProfile"), false);
+  assert.equal(champion.execution.profileId, "f14-leaf-conversion-gated-b/1");
+  assert.match(champion.description, /gated leaf-conversion/);
 });
 
 test("static match records a verified stall penalty top-out", async () => {
@@ -236,6 +246,7 @@ test("selectors offer all INPUT bots with the comparison before the current cham
   const orderedBots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion"];
   assert.deepEqual(new Set(orderedBots), new Set(Object.keys(INPUT_BOT_PROFILES)));
   assert.deepEqual(optionsFor("analysis-bot"), orderedBots);
+  assert.doesNotMatch(html, /analysis-engine-profile|analysis-engine-control/);
   assert.deepEqual(optionsFor("left-bot"), [...orderedBots, "human"]);
   assert.deepEqual(optionsFor("right-bot"), orderedBots);
 });
@@ -296,7 +307,7 @@ test("CC2 pace is bot-specific and the former match-wide pace toggle is absent",
     .bots.find((bot) => bot.id === "cc2-s2-champion");
   assert.equal(capability.fixedDecision, true);
   assert.deepEqual(capability.execution.budget, { mode: "selection", selections: 512, maxMillis: 30000 });
-  assert.equal(capability.execution.profileId, "f14-amount-only-compat-b/1");
+  assert.equal(capability.execution.profileId, "f14-leaf-conversion-gated-b/1");
   assert.deepEqual(capability.parameters.slice(0, 2).map(({ key, controlledBy }) => ({ key, controlledBy })), [
     { key: "ppsEnabled", controlledBy: undefined },
     { key: "pps", controlledBy: "ppsEnabled" },
@@ -322,7 +333,7 @@ test("match start rejects You (1P) on the right side", async () => {
   assert.match(result.body.error, /available only on the left side/);
 });
 
-test("static CC2 suggestion preserves the GUI response identity contract", async () => {
+test("static CC2 suggestion preserves the gated GUI response identity contract", async () => {
   let proposalRequest;
   const handlers = createGuiRequestHandlers({ cc2: {
     async decideF14(payload) { proposalRequest = payload.request; return fakeF14Decision(payload); },
@@ -334,13 +345,14 @@ test("static CC2 suggestion preserves the GUI response identity contract", async
   });
   assert.equal(proposalRequest.selector.chain.b2b, 7);
   assert.equal(Object.hasOwn(proposalRequest.selector, "garbage"), false);
-  assert.equal(body.info.version, "F14 public profile B WASM");
+  assert.equal(body.info.version, "F14 gated leaf-conversion WASM");
+  assert.equal(body.nativeDecision.profileId, "f14-leaf-conversion-gated-b/1");
   assert.equal(body.engine.botType, "cc2-s2-champion");
   assert.equal(body.nativeDecision.search.actualSelections, 512);
   assert.equal(proposalRequest.execution.budget.selections, 512);
 });
 
-test("static CC2 champion always uses the fixed F14 selection profile", async () => {
+test("static CC2 champion always uses the fixed gated leaf-conversion profile", async () => {
   let decisionRequest;
   const handlers = createGuiRequestHandlers({ cc2: {
     async decideF14(payload) { decisionRequest = payload.request; return fakeF14Decision(payload); },
@@ -350,8 +362,23 @@ test("static CC2 champion always uses the fixed F14 selection profile", async ()
     state: toS2GuiState(createGame(71002)),
     parameters: { selectionEnabled: true, selectionLimit: 512, thinkTimeEnabled: false, queueDepth: 14 },
   });
-  assert.equal(body.info.version, "F14 public profile B WASM");
+  assert.equal(body.info.version, "F14 gated leaf-conversion WASM");
+  assert.equal(decisionRequest.execution.profileId, "f14-leaf-conversion-gated-b/1");
   assert.equal(decisionRequest.execution.budget.selections, 512);
+});
+
+test("static CC2 champion ignores saved ENGINE values and keeps the gated profile", async () => {
+  let decisionRequest;
+  const handlers = createGuiRequestHandlers({ cc2: {
+    async decideF14(payload) { decisionRequest = payload.request; return fakeF14Decision(payload); },
+  } });
+  const body = await request(handlers, "POST", "/api/suggest", {
+    engine: "cc2-s2-champion", state: toS2GuiState(createGame(71005)),
+    parameters: { engineProfile: "f14-public" },
+  });
+  assert.equal(decisionRequest.execution.profileId, "f14-leaf-conversion-gated-b/1");
+  assert.equal(body.info.version, "F14 gated leaf-conversion WASM");
+  assert.equal(body.nativeDecision.profileId, decisionRequest.execution.profileId);
 });
 
 test("static CC2 rejects disabling both search limits", async () => {

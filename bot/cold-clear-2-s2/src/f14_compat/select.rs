@@ -8,17 +8,27 @@ use super::reach::{
     generate_public_reachable, generate_reachable_a, is_fin_or_tst, kick_tables_from_json,
     tetromino_cells_from_json, KickTables, ReachPieceState, ReachPlacement,
 };
+use super::root_allocation::{
+    PrefixViewSignature, RootCandidateFacts, RootCandidateFactsCache, RootLocalAblation,
+    RootPrefixView, RootRejectedFacts, RootSnapshotBinding, ALLOCATION_MODE,
+    LEAF_CONVERSION_GATED_MODE, LEAF_CONVERSION_MODE, PREFIX_LIMIT, ROOT_VALUE_MIX_MODE,
+    ROOT_VALUE_MODE, ROOT_VALUE_TIEBREAK_MODE,
+};
 use super::{
-    advance_f14_amount_only, advance_f14_chain, advance_f14_pieces, apply_f14_lock_blocks,
-    calculate_f14_surge, choose_rescue, classify_conversion_for_policy,
-    amount_only_features_from_metrics, metrics_from_occupancy, non_t_all_spin_clear,
+    advance_f14_amount_only, advance_f14_chain, advance_f14_pieces,
+    amount_only_features_from_metrics, apply_f14_lock_blocks,
+    calculate_f14_surge, choose_rescue, classify_conversion_for_policy, metrics_from_occupancy, non_t_all_spin_clear,
     occupancy_from_lock_board, occupied_height, rank_candidates_with_policy,
     score_evaluation_features, CompatError, Conversion, ConversionBranch, F14Incoming,
     F14LockPublic, F14Pieces, FeatureProjection, FinalOrderPolicy, LockBoardView, PostSpinPolicy,
-    RankedCandidate,
-    F14_RULESET_ID,
+    RankedCandidate, ADJUSTMENT_SCALE, F14_RULESET_ID,
 };
+use crate::bot::Statistics;
+use crate::dag::{LegacyRootSnapshot, RootSelectionMapper};
+use crate::data::Placement;
+use crate::time::Instant;
 use once_cell::sync::Lazy;
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -28,14 +38,6 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
 };
-use crate::time::Instant;
-use parking_lot::Mutex;
-use crate::bot::Statistics;
-use crate::data::Placement;
-use crate::dag::{LegacyRootSnapshot, RootSelectionMapper};
-use super::root_allocation::{PrefixViewSignature, RootCandidateFacts, RootCandidateFactsCache,
-    RootLocalAblation, RootPrefixView, RootRejectedFacts, RootSnapshotBinding, ALLOCATION_MODE,
-    ROOT_VALUE_MODE, PREFIX_LIMIT};
 
 const TABLES_JSON: &str = include_str!("tables.json");
 const VISIBLE_HEIGHT: i32 = 20;
@@ -346,7 +348,8 @@ pub(crate) struct RootObservation {
 
 impl RootObservation {
     pub(crate) fn native_shadow(sink: Arc<RootAllocationTraceSink>) -> Self {
-        Self { shadow_each_work: true, sink }
+        Self { shadow_each_work: true, sink,
+        }
     }
 
     pub(crate) fn sink(&self) -> &Arc<RootAllocationTraceSink> {
@@ -390,6 +393,10 @@ pub(crate) enum AllocationMode {
     Off,
     PermutationV1,
     RootValueV1,
+    RootValueMixV1,
+    RootValueTiebreakV1,
+    LeafConversionV1,
+    LeafConversionGatedV1,
 }
 
 impl AllocationMode {
@@ -397,6 +404,10 @@ impl AllocationMode {
         match self {
             Self::Off | Self::PermutationV1 => ALLOCATION_MODE,
             Self::RootValueV1 => ROOT_VALUE_MODE,
+            Self::RootValueMixV1 => ROOT_VALUE_MIX_MODE,
+            Self::RootValueTiebreakV1 => ROOT_VALUE_TIEBREAK_MODE,
+            Self::LeafConversionV1 => LEAF_CONVERSION_MODE,
+            Self::LeafConversionGatedV1 => LEAF_CONVERSION_GATED_MODE,
         }
     }
 }
@@ -426,7 +437,8 @@ pub(crate) struct FinishedRootDecision {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum FinishedRootOutcome {
     Decided(FinishedRootDecision),
-    NoCandidates { completed_selections: u64, nodes: u64 },
+    NoCandidates { completed_selections: u64, nodes: u64,
+    },
     Failed(CompatError),
 }
 
@@ -491,6 +503,9 @@ pub(crate) struct RootObjectiveSession {
     request_epoch: u64,
     public_context_digest: [u8; 32],
     allocation_mode: AllocationMode,
+    root_value_scale: f64,
+    leaf_conversion_scale: Option<f64>,
+    leaf_conversion_max_height: Option<u32>,
     counters: Arc<CoreDecisionCounters>,
     completed_selections: AtomicU64,
     completed_nodes: AtomicU64,
@@ -554,6 +569,9 @@ impl RootObjectiveSession {
             request_epoch,
             public_context_digest,
             allocation_mode: AllocationMode::Off,
+            root_value_scale: 1.0,
+            leaf_conversion_scale: None,
+            leaf_conversion_max_height: None,
             counters,
             completed_selections: AtomicU64::new(0),
             completed_nodes: AtomicU64::new(0),
@@ -578,6 +596,50 @@ impl RootObjectiveSession {
         public_context_digest: [u8; 32],
         allocation_mode: AllocationMode,
     ) -> Self {
+        Self::new_with_allocation_mode_and_root_value_scale(
+            context,
+            decision_stage,
+            selection_limit,
+            request_epoch,
+            public_context_digest,
+            allocation_mode,
+            1.0,
+        )
+    }
+
+    pub(crate) fn new_with_allocation_mode_and_root_value_scale(
+        context: PublicRootLockContext,
+        decision_stage: RootDecisionStage,
+        selection_limit: u64,
+        request_epoch: u64,
+        public_context_digest: [u8; 32],
+        allocation_mode: AllocationMode,
+        root_value_scale: f64,
+    ) -> Self {
+        Self::new_with_allocation_mode_and_scales(
+            context,
+            decision_stage,
+            selection_limit,
+            request_epoch,
+            public_context_digest,
+            allocation_mode,
+            root_value_scale,
+            None,
+            None,
+        )
+    }
+
+    pub(crate) fn new_with_allocation_mode_and_scales(
+        context: PublicRootLockContext,
+        decision_stage: RootDecisionStage,
+        selection_limit: u64,
+        request_epoch: u64,
+        public_context_digest: [u8; 32],
+        allocation_mode: AllocationMode,
+        root_value_scale: f64,
+        leaf_conversion_scale: Option<f64>,
+        leaf_conversion_max_height: Option<u32>,
+    ) -> Self {
         let mut session = Self::new(
             context,
             decision_stage,
@@ -586,6 +648,9 @@ impl RootObjectiveSession {
             public_context_digest,
         );
         session.allocation_mode = allocation_mode;
+        session.root_value_scale = root_value_scale;
+        session.leaf_conversion_scale = leaf_conversion_scale;
+        session.leaf_conversion_max_height = leaf_conversion_max_height;
         session
     }
 
@@ -599,17 +664,18 @@ impl RootObjectiveSession {
     /// Observe one raw Legacy root before the next native work.  Observation
     /// is deliberately fail-soft: the OFF/native search remains authoritative,
     /// while the trace records that this snapshot was unavailable.
-    pub(crate) fn observe_legacy_root(&self, snapshot: LegacyRootSnapshot) -> Result<(), CompatError> {
+    pub(crate) fn observe_legacy_root(&self, snapshot: LegacyRootSnapshot,
+    ) -> Result<(), CompatError> {
         let observation = self.observation.lock().clone();
         // Feedback production has no diagnostic sink, but it still needs the
         // same request-local view prepared before the root draw.  Keeping the
         // preparation here (rather than allocating another RNG or rebuilding
         // from a post-draw suggestion) preserves the native draw/index
         // binding while leaving OFF production completely untouched.
-        if observation.as_ref().is_some_and(|value| !value.enabled() && !self.uses_root_values()) {
+        if observation.as_ref().is_some_and(|value| !value.enabled() && !self.uses_root_value_ordering()) {
             return Ok(());
         }
-        if observation.is_none() && self.allocation_mode == AllocationMode::Off {
+        if observation.is_none() && !self.search_consumes_root_view() {
             return Ok(());
         }
         let work_index = observation.as_ref().map_or(0, |value| value.sink().rows().len() as u64);
@@ -642,7 +708,8 @@ impl RootObjectiveSession {
                 visit_concentration: None,
                 error: None,
             },
-            LegacyRootSnapshot::Expanded { actions } if actions.is_empty() => RootAllocationTraceRow {
+            LegacyRootSnapshot::Expanded { actions } if actions.is_empty() => {
+                RootAllocationTraceRow {
                 work_index,
                 status: "empty".to_owned(),
                 raw_count: 0,
@@ -663,7 +730,8 @@ impl RootObjectiveSession {
                 prefix_entrant_count: 0,
                 visit_concentration: None,
                 error: None,
-            },
+            }
+            }
             LegacyRootSnapshot::Expanded { actions } => {
                 self.counters.raw_actions_seen.fetch_add(actions.len() as u64, Ordering::AcqRel);
                 let before = self.counters.snapshot();
@@ -671,11 +739,13 @@ impl RootObjectiveSession {
                     Ok(Some(view)) => {
                         let after = self.counters.snapshot();
                         if self.allocation_mode == AllocationMode::PermutationV1 || observation.is_some() {
-                            pending = Some(PendingRootDraw { work_index, view: view.clone() });
+                            pending = Some(PendingRootDraw { work_index, view: view.clone(),
+                            });
                         }
                         let signature_changed = after.signature_changes > before.signature_changes;
                         let top1_rejected = view.rejected_prefix_indices.contains(&0);
-                        let detail_saved = detail_required(first_ready, work_index, signature_changed, top1_rejected, self.selection_limit);
+                        let detail_saved = detail_required(first_ready, work_index, signature_changed, top1_rejected, self.selection_limit,
+                        );
                         RootAllocationTraceRow {
                             work_index,
                             status: "ready".to_owned(),
@@ -726,7 +796,7 @@ impl RootObjectiveSession {
                         error: None,
                     },
                     Err(error) if matches!(error, CompatError::NoVerifiableCandidate) => {
-                        if self.uses_root_values() { fail_closed = Some(error); }
+                        if self.uses_root_value_ordering() { fail_closed = Some(error); }
                         RootAllocationTraceRow {
                             work_index,
                             status: "ready".to_owned(),
@@ -763,7 +833,7 @@ impl RootObjectiveSession {
                         }
                     }
                     Err(error) => {
-                        if self.uses_root_values() { fail_closed = Some(error); }
+                        if self.uses_root_value_ordering() { fail_closed = Some(error); }
                         RootAllocationTraceRow {
                             work_index,
                             status: "invalid".to_owned(),
@@ -852,6 +922,47 @@ impl RootObjectiveSession {
         self.allocation_mode == AllocationMode::RootValueV1
     }
 
+    pub(crate) fn uses_root_value_mix(&self) -> bool {
+        self.allocation_mode == AllocationMode::RootValueMixV1
+    }
+
+    pub(crate) fn uses_root_value_tiebreak(&self) -> bool {
+        self.allocation_mode == AllocationMode::RootValueTiebreakV1
+    }
+
+    fn uses_root_value_ordering(&self) -> bool {
+        self.uses_root_values() || self.uses_root_value_mix() || self.uses_root_value_tiebreak()
+    }
+
+    /// Whether the search itself reads the per-selection root view: the
+    /// permutation mode maps native draws through it and the root-value modes
+    /// apply its values.  Every other mode (Off, leaf conversion, gated leaf
+    /// conversion) ranks from the finish-time compose, so without a diagnostic
+    /// sink the per-selection snapshot, view rebuild, and trace rows would be
+    /// built and discarded.
+    pub(crate) fn search_consumes_root_view(&self) -> bool {
+        self.allocation_mode == AllocationMode::PermutationV1 || self.uses_root_value_ordering()
+    }
+
+    /// Whether `Freestyle::do_work` must snapshot the legacy root before each
+    /// selection: a diagnostic sink always observes; otherwise only when the
+    /// search consumes the view.
+    pub(crate) fn observes_legacy_root(&self) -> bool {
+        self.observation.lock().is_some() || self.search_consumes_root_view()
+    }
+
+    pub(crate) fn root_value_scale(&self) -> f64 {
+        self.root_value_scale
+    }
+
+    pub(crate) fn leaf_conversion_scale(&self) -> Option<f64> {
+        self.leaf_conversion_scale
+    }
+
+    pub(crate) fn leaf_conversion_max_height(&self) -> Option<u32> {
+        self.leaf_conversion_max_height
+    }
+
     pub(crate) fn root_value_assignments(&self) -> Result<Vec<(Placement, f64, i32)>, CompatError> {
         if !self.uses_root_values() {
             return Ok(Vec::new());
@@ -864,6 +975,26 @@ impl RootObjectiveSession {
                 let score = facts.ranked.selection_score;
                 score.is_finite()
                     .then_some((facts.action, score, facts.ranked.cc2_rank))
+                    .ok_or(CompatError::NonFiniteFeature)
+            })
+            .collect()
+    }
+
+    pub(crate) fn root_value_mix_assignments(&self) -> Result<Vec<(Placement, f64)>, CompatError> {
+        if !self.uses_root_value_mix() && !self.uses_root_value_tiebreak() {
+            return Ok(Vec::new());
+        }
+        let view = self.root_view.lock();
+        let Some(view) = view.as_ref() else {
+            return Err(CompatError::RootAllocationBindingMismatch);
+        };
+        view.facts
+            .iter()
+            .map(|facts| {
+                let term = facts.ranked.s2_score
+                    + ADJUSTMENT_SCALE * facts.ranked.conversion.units;
+                term.is_finite()
+                    .then_some((facts.action, term))
                     .ok_or(CompatError::NonFiniteFeature)
             })
             .collect()
@@ -903,7 +1034,8 @@ impl RootObjectiveSession {
             revision,
             &actions,
         );
-        let signature = PrefixViewSignature::new_with_mode(&binding, &identities, self.allocation_mode.prefix_mode());
+        let signature = PrefixViewSignature::new_with_mode(&binding, &identities, self.allocation_mode.prefix_mode(),
+        );
         let mut current = self.root_view.lock();
         self.counters.signature_comparisons.fetch_add(1, Ordering::AcqRel);
         if let Some(view) = current.as_mut() {
@@ -1031,8 +1163,7 @@ impl RootObjectiveSession {
                 ranked.selection_score = super::selection_score(
                     ranked.s2_score,
                     ranked.conversion.units,
-                    index as i32,
-                );
+                    index as i32);
                 let facts = RootCandidateFacts {
                     raw_index: index,
                     action: actions[index],
@@ -1647,6 +1778,22 @@ fn project_lock(
     b2b: u32,
     multiplier: f64,
 ) -> Result<(EvaluatedLock, F14Pieces, FeatureProjection, f64), CompatError> {
+    let (eval, pieces_after) =
+        evaluate_lock_once(state, placement, last_rotation, kick_id, kick_offset)?;
+    let (projection, solvency) = project_evaluated_lock(state, &eval, combo, b2b, multiplier)?;
+    Ok((eval, pieces_after, projection, solvency))
+}
+
+/// The chain-independent half of `project_lock`: piece availability, the lock
+/// itself, and the piece advance. The counterfactual projections (no REN,
+/// withheld B2B) share this evaluation and differ only in the chain input.
+fn evaluate_lock_once(
+    state: &F14PublicState,
+    placement: &CanonicalPlacement,
+    last_rotation: bool,
+    kick_id: Option<&str>,
+    kick_offset: Option<(i32, i32)>,
+) -> Result<(EvaluatedLock, F14Pieces), CompatError> {
     available_piece(&state.pieces, placement.used_hold).and_then(|piece| {
         if piece != placement.piece {
             Err(CompatError::PieceUnavailable)
@@ -1664,6 +1811,18 @@ fn project_lock(
         kick_offset,
     )?;
     let pieces_after = advance_f14_pieces(&state.pieces, placement.used_hold)?;
+    Ok((eval, pieces_after))
+}
+
+/// The chain-dependent half of `project_lock`, in the same operation order as
+/// before: chain, surge, amount-only advance, occupied height.
+fn project_evaluated_lock(
+    state: &F14PublicState,
+    eval: &EvaluatedLock,
+    combo: u32,
+    b2b: u32,
+    multiplier: f64,
+) -> Result<(FeatureProjection, f64), CompatError> {
     let chain = advance_f14_chain(
         combo,
         b2b,
@@ -1712,7 +1871,7 @@ fn project_lock(
         surge_sent: f64::from(surge.amount),
     };
     let solvency = visible_margin - tank - remaining;
-    Ok((eval, pieces_after, projection, solvency))
+    Ok((projection, solvency))
 }
 
 // Test-only reference entries: reproduce the earlier transport route for byte comparison.
@@ -1953,36 +2112,14 @@ pub fn conversion_facts_for_lock(
             (accepted_placement.clone(), false, None, None, None)
         };
     crate::s2_audit::post_stage_conversion_compute();
-    let (eval, pieces_after, actual, solvency) = project_lock(
-        state,
-        &placement,
-        last_rotation,
-        kick_id.as_deref(),
-        kick_offset,
-        state.combo,
-        state.b2b,
-        multiplier,
-    )?;
-    let (_, _, no_ren, _) = project_lock(
-        state,
-        &placement,
-        last_rotation,
-        kick_id.as_deref(),
-        kick_offset,
-        0,
-        state.b2b,
-        multiplier,
-    )?;
-    let (_, _, withheld, _) = project_lock(
-        state,
-        &placement,
-        last_rotation,
-        kick_id.as_deref(),
-        kick_offset,
-        state.combo,
-        0,
-        multiplier,
-    )?;
+    // One lock evaluation serves the actual projection and both
+    // counterfactuals; only the chain input differs between them.
+    let (eval, pieces_after) =
+        evaluate_lock_once(state, &placement, last_rotation, kick_id.as_deref(), kick_offset)?;
+    let (actual, solvency) =
+        project_evaluated_lock(state, &eval, state.combo, state.b2b, multiplier)?;
+    let (no_ren, _) = project_evaluated_lock(state, &eval, 0, state.b2b, multiplier)?;
+    let (withheld, _) = project_evaluated_lock(state, &eval, state.combo, 0, multiplier)?;
     let realised = |projection: &FeatureProjection| {
         projection.outgoing_after_cancel + projection.cancelled_rows
     };
@@ -2154,8 +2291,7 @@ fn evaluate_f14_candidate(
     let (occupancy, _) = occupancy_from_lock_board(board)?;
     let features = amount_only_features_from_metrics(
         metrics_from_occupancy(&occupancy),
-        facts.actual,
-    );
+        facts.actual);
     let s2_score = score_evaluation_features(&features, &options.weights)?;
     // Keep InvalidSolvency after scoring, matching the pre-extraction order.
     // solvency is an integer-derived f64 difference and is not observed non-finite.

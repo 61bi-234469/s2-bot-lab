@@ -7,15 +7,20 @@ use parking_lot::Mutex;
 use rand::{rngs::StdRng, SeedableRng};
 use serde::{Deserialize, Serialize};
 
-use super::{BotOptions, Mode, ModeSwitch, Statistics};
 use super::evaluation_features::{
     cell_coveredness, row_transitions, tetris_well_depth, well_known_tslot_left,
     well_known_tslot_right,
 };
-use crate::dag::{ChildData, Dag, Evaluation};
+use super::{BotOptions, Mode, ModeSwitch, Statistics};
+use crate::dag::{ChildData, Dag, Evaluation, LegacyRootSnapshot};
 use crate::data::*;
+use crate::f14_compat::{
+    advance_f14_amount_only, advance_f14_chain, classify_conversion_for_policy,
+    select::{PublicRootLockContext, RootObjectiveSession},
+    CompatError, F14Incoming, F14LockPublic, PostSpinPolicy, ADJUSTMENT_SCALE,
+    F12_MIN_B2B_BEFORE, F12_MIN_RELEASE_VALUE,
+};
 use crate::movegen::{find_moves, find_moves_complete_with_entry, RootEntry};
-use crate::f14_compat::{CompatError, select::{PublicRootLockContext, RootObjectiveSession}};
 
 pub struct Freestyle {
     dag: Dag<Eval>,
@@ -54,13 +59,26 @@ impl Mode for Freestyle {
         options: &BotOptions,
         session: Option<&RootObjectiveSession>,
     ) -> Result<Statistics, CompatError> {
-        if let Some(root) = session {
-            // Observe the Legacy root before the next native draw. Existing
-            // OFF sessions keep this as a no-op; root-value mode refreshes its
-            // accepted depth-one values without remapping the native draw.
-            root.observe_legacy_root(self.dag.legacy_root_snapshot())?;
+        if let Some(root) = session.filter(|root| root.observes_legacy_root()) {
+            // Observe the Legacy root before the next native draw. Sessions
+            // whose search does not consume the root view and have no
+            // diagnostic sink skip the snapshot entirely (it was a no-op);
+            // root-value mode refreshes its accepted depth-one values without
+            // remapping the native draw.
+            let snapshot = self.dag.legacy_root_snapshot();
+            let has_candidates = matches!(
+                &snapshot,
+                LegacyRootSnapshot::Expanded { actions } if !actions.is_empty()
+            );
+            root.observe_legacy_root(snapshot)?;
             if root.uses_root_values() {
                 self.apply_root_values(root)?;
+            }
+            if root.uses_root_value_mix() && has_candidates {
+                self.apply_root_value_bonuses(root)?;
+            }
+            if root.uses_root_value_tiebreak() && has_candidates {
+                self.apply_root_value_tiebreaks(root)?;
             }
         }
         // Allocation OFF owns only the post-search ranking bundle. It must not
@@ -70,6 +88,28 @@ impl Mode for Freestyle {
             if root.uses_root_values() {
                 root.observe_legacy_root(self.dag.legacy_root_snapshot())?;
                 self.apply_root_values(root)?;
+            }
+            if root.uses_root_value_mix() {
+                let snapshot = self.dag.legacy_root_snapshot();
+                let has_candidates = matches!(
+                    &snapshot,
+                    LegacyRootSnapshot::Expanded { actions } if !actions.is_empty()
+                );
+                root.observe_legacy_root(snapshot)?;
+                if has_candidates {
+                    self.apply_root_value_bonuses(root)?;
+                }
+            }
+            if root.uses_root_value_tiebreak() {
+                let snapshot = self.dag.legacy_root_snapshot();
+                let has_candidates = matches!(
+                    &snapshot,
+                    LegacyRootSnapshot::Expanded { actions } if !actions.is_empty()
+                );
+                root.observe_legacy_root(snapshot)?;
+                if has_candidates {
+                    self.apply_root_value_tiebreaks(root)?;
+                }
             }
             root.complete_work(&stats, || {
                 self.dag.suggest(options.config.suggestion_count.clamp(1, 64))
@@ -97,6 +137,9 @@ impl Freestyle {
         observation: Option<&RootObjectiveSession>,
     ) -> Result<Statistics, CompatError> {
         puffin::profile_function!();
+        let leaf_conversion_scale = observation.and_then(|root| root.leaf_conversion_scale());
+        let leaf_conversion_max_height =
+            observation.and_then(|root| root.leaf_conversion_max_height());
         let mut new_stats = Statistics::default();
         new_stats.selections += 1;
 
@@ -163,8 +206,11 @@ impl Freestyle {
                         moves[state.reserve].iter()
                     });
                     for &(mv, sd_distance) in moves {
-                        let mut state = state;
+                        let combo_before = state.combo;
+                        let b2b_before = state.b2b;
                         let pending_rows_before_lock = state.pending_incoming_rows;
+                        let due_rows_before_lock = state.due_this_lock_rows;
+                        let mut state = state;
                         let info = state
                             .try_advance_with_surge(next, mv, options.config.enable_s2_b2b_surge)
                             .map_err(|_| CompatError::ChainOverflow)?;
@@ -189,7 +235,7 @@ impl Freestyle {
                             new_stats.amount_top_out_priced += 1;
                         }
 
-                        let (eval, reward) = evaluate_with_surge(
+                        let (eval, mut reward) = evaluate_with_surge(
                             &options.config.freestyle_weights,
                             state,
                             &info,
@@ -204,6 +250,39 @@ impl Freestyle {
                             root_edge,
                             pending_rows_before_lock,
                         );
+                        if let (Some(scale), Some(max_height)) =
+                            (leaf_conversion_scale, leaf_conversion_max_height)
+                        {
+                            add_leaf_conversion_reward_when_safe(
+                                &mut reward,
+                                Some(scale),
+                                max_height,
+                                occupied_height(&state.board),
+                                || {
+                                    legacy_conversion_facts(
+                                        combo_before,
+                                        info.combo,
+                                        b2b_before,
+                                        state.b2b,
+                                        pending_rows_before_lock,
+                                        due_rows_before_lock,
+                                        &info,
+                                    )
+                                },
+                            )?;
+                        } else if leaf_conversion_scale.is_some() {
+                            add_leaf_conversion_reward(&mut reward, leaf_conversion_scale, || {
+                                legacy_conversion_facts(
+                                    combo_before,
+                                    info.combo,
+                                    b2b_before,
+                                    state.b2b,
+                                    pending_rows_before_lock,
+                                    due_rows_before_lock,
+                                    &info,
+                                )
+                            })?;
+                        }
 
                         children[next].push(ChildData {
                             resulting_state: state,
@@ -211,7 +290,8 @@ impl Freestyle {
                             eval,
                             reward,
                             root_priority: if node.is_root() {
-                                priority.map(|context| context.inside_margin(mv)).transpose()?.unwrap_or(false)
+                                priority.map(|context| context.inside_margin(mv)).transpose()?
+                                    .unwrap_or(false)
                             } else { false },
                         });
                     }
@@ -233,6 +313,26 @@ impl Freestyle {
             value: OrderedFloat(value),
         });
         if applied != values.len() {
+            return Err(CompatError::RootAllocationBindingMismatch);
+        }
+        Ok(())
+    }
+
+    fn apply_root_value_bonuses(&self, root: &RootObjectiveSession) -> Result<(), CompatError> {
+        let bonuses = root.root_value_mix_assignments()?;
+        let applied = self
+            .dag
+            .apply_legacy_root_bonuses(&bonuses, root.root_value_scale())?;
+        if applied != bonuses.len() {
+            return Err(CompatError::RootAllocationBindingMismatch);
+        }
+        Ok(())
+    }
+
+    fn apply_root_value_tiebreaks(&self, root: &RootObjectiveSession) -> Result<(), CompatError> {
+        let terms = root.root_value_mix_assignments()?;
+        let applied = self.dag.apply_legacy_root_tiebreaks(&terms)?;
+        if applied != terms.len() {
             return Err(CompatError::RootAllocationBindingMismatch);
         }
         Ok(())
@@ -375,8 +475,7 @@ fn evaluate_with_surge(
         }
         if is_root_edge {
             reward += amount_solvency_rescue_reward(
-                weights, pending_rows_before_lock, &real_board, info,
-            );
+                weights, pending_rows_before_lock, &real_board, info);
         }
     }
 
@@ -557,6 +656,189 @@ struct Reward {
     value: OrderedFloat<f32>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct LegacyConversionFacts {
+    piece: &'static str,
+    combo_before: u32,
+    combo_after: u32,
+    b2b_before: u32,
+    b2b_after: u32,
+    lines: u32,
+    spin: &'static str,
+    cancelled: f64,
+    ren_combat_gain: f64,
+    setup_witnessed: bool,
+    surge_sent: u32,
+    release_value: f64,
+}
+
+fn legacy_conversion_facts(
+    combo_before: u8,
+    combo_after: u32,
+    b2b_before: u32,
+    b2b_after: u32,
+    pending_rows: u8,
+    due_rows: u8,
+    info: &PlacementInfo,
+) -> Result<LegacyConversionFacts, CompatError> {
+    let piece = match info.placement.location.piece {
+        Piece::I => "I",
+        Piece::O => "O",
+        Piece::T => "T",
+        Piece::L => "L",
+        Piece::J => "J",
+        Piece::S => "S",
+        Piece::Z => "Z",
+    };
+    let spin = match info.placement.spin {
+        Spin::None => "none",
+        Spin::Mini => "mini",
+        Spin::Full => "normal",
+    };
+    let incoming = F14Incoming {
+        pending_rows: u32::from(pending_rows),
+        due_this_lock_rows: u32::from(due_rows),
+    };
+    let actual_lock = F14LockPublic {
+        lines: info.lines_cleared,
+        spin: spin.to_owned(),
+        perfect_clear: info.perfect_clear,
+        combo_after,
+        b2b_after,
+        b2b_before,
+    };
+    let actual = advance_f14_amount_only(incoming, &actual_lock)?;
+    if actual.cancelled_rows != info.cancelled_rows
+        || actual.outgoing_after_cancel != info.outgoing_after_cancel
+    {
+        return Err(CompatError::InconsistentSearchAttack);
+    }
+    let actual_realised = f64::from(actual.outgoing_after_cancel + actual.cancelled_rows);
+
+    // Match the F14 post-stage's no-REN projection (select.rs) using the same
+    // amount-only transition used by Legacy search.
+    let no_ren_chain = advance_f14_chain(
+        0,
+        b2b_before,
+        info.lines_cleared,
+        spin,
+        info.perfect_clear,
+        1,
+    )?;
+    let no_ren_lock = F14LockPublic {
+        combo_after: no_ren_chain.combo_after,
+        b2b_after: no_ren_chain.b2b_after,
+        ..actual_lock.clone()
+    };
+    let no_ren = advance_f14_amount_only(incoming, &no_ren_lock)?;
+    let no_ren_realised = f64::from(no_ren.outgoing_after_cancel + no_ren.cancelled_rows);
+
+    // Match the post-stage's B2B-withheld projection. Legacy search does not
+    // carry the post-stage's `surge_sent` or geometry-heavy `setup_witnessed`
+    // inputs. These values are placeholders only; the reward helper omits the
+    // term whenever either unknown could change the classifier branch.
+    let withheld_chain = advance_f14_chain(
+        u32::from(combo_before),
+        0,
+        info.lines_cleared,
+        spin,
+        info.perfect_clear,
+        1,
+    )?;
+    let withheld_lock = F14LockPublic {
+        b2b_after: withheld_chain.b2b_after,
+        b2b_before: 0,
+        ..actual_lock
+    };
+    let withheld = advance_f14_amount_only(incoming, &withheld_lock)?;
+    let withheld_realised = f64::from(withheld.outgoing_after_cancel + withheld.cancelled_rows);
+
+    Ok(LegacyConversionFacts {
+        piece,
+        combo_before: u32::from(combo_before),
+        combo_after,
+        b2b_before,
+        b2b_after,
+        lines: info.lines_cleared,
+        spin,
+        cancelled: f64::from(info.cancelled_rows),
+        ren_combat_gain: actual_realised - no_ren_realised,
+        setup_witnessed: false,
+        surge_sent: info.surge_rows,
+        release_value: actual_realised - withheld_realised,
+    })
+}
+
+fn add_leaf_conversion_reward(
+    reward: &mut Reward,
+    scale: Option<f64>,
+    project_facts: impl FnOnce() -> Result<LegacyConversionFacts, CompatError>,
+) -> Result<(), CompatError> {
+    let Some(scale) = scale else {
+        return Ok(());
+    };
+    if !scale.is_finite() {
+        return Err(CompatError::NonFiniteFeature);
+    }
+    if scale == 0.0 {
+        return Ok(());
+    }
+    let Ok(facts) = project_facts() else {
+        return Ok(());
+    };
+    let continuing_ren = facts.combo_before >= 1 && facts.combo_after > facts.combo_before;
+    let setup_bridge_can_change_branch = continuing_ren
+        && ((facts.spin == "mini" && facts.lines >= 1)
+            || (facts.spin == "normal" && facts.lines == 1))
+        && facts.b2b_after > 0;
+    let high_surge_can_change_branch = facts.b2b_before >= F12_MIN_B2B_BEFORE
+        && facts.release_value >= F12_MIN_RELEASE_VALUE;
+    if setup_bridge_can_change_branch || high_surge_can_change_branch {
+        return Ok(());
+    }
+    let Some(conversion) = classify_conversion_for_policy(
+        PostSpinPolicy::LegacyF14,
+        facts.piece,
+        facts.combo_before,
+        facts.combo_after,
+        facts.b2b_before,
+        facts.b2b_after,
+        facts.lines,
+        facts.spin,
+        facts.cancelled,
+        facts.ren_combat_gain,
+        facts.setup_witnessed,
+        facts.surge_sent,
+        facts.release_value,
+    ) else {
+        return Ok(());
+    };
+    let term = scale * ADJUSTMENT_SCALE * conversion.units;
+    if !term.is_finite() {
+        return Err(CompatError::NonFiniteFeature);
+    }
+    let term = term as f32;
+    let next = reward.value.0 + term;
+    if !term.is_finite() || !next.is_finite() {
+        return Err(CompatError::NonFiniteFeature);
+    }
+    reward.value = OrderedFloat(next);
+    Ok(())
+}
+
+fn add_leaf_conversion_reward_when_safe(
+    reward: &mut Reward,
+    scale: Option<f64>,
+    max_height: u32,
+    post_lock_height: u32,
+    project_facts: impl FnOnce() -> Result<LegacyConversionFacts, CompatError>,
+) -> Result<(), CompatError> {
+    if post_lock_height > max_height {
+        return Ok(());
+    }
+    add_leaf_conversion_reward(reward, scale, project_facts)
+}
+
 impl Evaluation for Eval {
     type Reward = Reward;
     type Domain = crate::dag::domain::LegacyDomain;
@@ -607,18 +889,23 @@ mod real_board_tests {
         score_with_dedup(board, weights, enabled, false)
     }
 
-    fn score_with_dedup(board: Board, weights: &Weights, enabled: bool, dedup: bool) -> (Eval, Reward) {
+    fn score_with_dedup(board: Board, weights: &Weights, enabled: bool, dedup: bool,
+    ) -> (Eval, Reward) {
         let state = GameState { board, bag: EnumSet::only(Piece::T), reserve: Piece::T,
-            b2b: 0, combo: 0, pending_incoming_rows: 0, due_this_lock_rows: 0 };
+            b2b: 0, combo: 0, pending_incoming_rows: 0, due_this_lock_rows: 0,
+        };
         let info = PlacementInfo {
             placement: Placement { location: PieceLocation { piece: Piece::I,
-                rotation: Rotation::North, x: 4, y: 0 }, spin: Spin::None },
+                rotation: Rotation::North, x: 4, y: 0,
+                }, spin: Spin::None,
+            },
             lines_cleared: 0, combo: 0, back_to_back: false, perfect_clear: false,
             cancelled_rows: 0, tank_rows: 0, remaining_rows: 0, outgoing_after_cancel: 0,
             surge_rows: 0,
             search_attack_overflow: false,
         };
-        evaluate(weights, state, &info, 0, false, false, false, enabled, dedup, false)
+        evaluate(weights, state, &info, 0, false, false, false, enabled, dedup, false,
+        )
     }
 
     fn weights() -> Weights {
@@ -771,8 +1058,10 @@ mod spawn_occupancy_tests {
             surge_rows: 0,
             search_attack_overflow: false,
         };
-        let (off, off_reward) = evaluate(&weights, state, &info, 0, false, false, false, false, false, false);
-        let (on, on_reward) = evaluate(&weights, state, &info, 0, true, false, false, false, false, false);
+        let (off, off_reward) = evaluate(&weights, state, &info, 0, false, false, false, false, false, false,
+        );
+        let (on, on_reward) = evaluate(&weights, state, &info, 0, true, false, false, false, false, false,
+        );
         assert_eq!(off_reward.value, on_reward.value);
         on.value.0 - off.value.0
     }
@@ -937,8 +1226,10 @@ mod amount_exchange_tests {
         };
         let mut placement = info(0, 0, 0, 0);
         placement.surge_rows = 4;
-        let off = evaluate_with_surge(&weights, state, &placement, 0, false, false, false, false, false, false, false, false, 0).1.value;
-        let on = evaluate_with_surge(&weights, state, &placement, 0, false, false, false, false, false, false, true, false, 0).1.value;
+        let off = evaluate_with_surge(&weights, state, &placement, 0, false, false, false, false, false, false, false, false, 0,
+        ).1.value;
+        let on = evaluate_with_surge(&weights, state, &placement, 0, false, false, false, false, false, false, true, false, 0,
+        ).1.value;
         assert_eq!(on.0 - off.0, 4.0);
     }
 
@@ -1040,34 +1331,41 @@ mod amount_exchange_tests {
         };
         let placement = info(4, 0, 0, 0);
         weights.s2_amount_exchange = 0.0;
-        let zero = evaluate(&weights, state, &placement, 0, false, true, false, false, false, false)
+        let zero = evaluate(&weights, state, &placement, 0, false, true, false, false, false, false,
+        )
             .1
             .value;
-        let off = evaluate(&weights, state, &placement, 0, false, false, false, false, false, false)
+        let off = evaluate(&weights, state, &placement, 0, false, false, false, false, false, false,
+        )
             .1
             .value;
         assert_eq!(zero, off);
 
         weights.s2_amount_exchange = 1.0;
-        let on = evaluate(&weights, state, &placement, 0, false, true, false, false, false, false)
+        let on = evaluate(&weights, state, &placement, 0, false, true, false, false, false, false,
+        )
             .1
             .value;
         assert_eq!(on.0 - off.0, 4.0);
 
         let zero_incoming = info(0, 0, 0, 0);
-        let zero_on = evaluate(&weights, state, &zero_incoming, 0, false, true, false, false, false, false)
+        let zero_on = evaluate(&weights, state, &zero_incoming, 0, false, true, false, false, false, false,
+        )
             .1
             .value;
-        let zero_off = evaluate(&weights, state, &zero_incoming, 0, false, false, false, false, false, false)
+        let zero_off = evaluate(&weights, state, &zero_incoming, 0, false, false, false, false, false, false,
+        )
             .1
             .value;
         assert_eq!(zero_on, zero_off);
 
         weights.s2_amount_top_out = -1.25;
-        let without_top_out = evaluate(&weights, state, &placement, 0, false, true, false, false, false, false)
+        let without_top_out = evaluate(&weights, state, &placement, 0, false, true, false, false, false, false,
+        )
             .1
             .value;
-        let with_top_out = evaluate(&weights, state, &placement, 0, false, true, true, false, false, false)
+        let with_top_out = evaluate(&weights, state, &placement, 0, false, true, true, false, false, false,
+        )
             .1
             .value;
         assert_eq!(with_top_out - without_top_out, -1.25);
@@ -1088,19 +1386,23 @@ mod amount_exchange_tests {
             due_this_lock_rows: 3,
         };
         let cancelled = info(3, 2, 4, 5);
-        let on = evaluate(&weights, state, &cancelled, 0, false, true, false, false, false, false)
+        let on = evaluate(&weights, state, &cancelled, 0, false, true, false, false, false, false,
+        )
             .1.value;
         let mut baseline = weights.clone();
         baseline.s2_cancel_value = 0.0;
-        let off = evaluate(&baseline, state, &cancelled, 0, false, true, false, false, false, false)
+        let off = evaluate(&baseline, state, &cancelled, 0, false, true, false, false, false, false,
+        )
             .1.value;
         assert_eq!(on.0 - off.0, 3.0);
 
         // A no-cancel edge has no reward effect, even with pending/tanked rows.
         let no_cancel = info(0, 2, 6, 5);
-        let on = evaluate(&weights, state, &no_cancel, 0, false, true, false, false, false, false)
+        let on = evaluate(&weights, state, &no_cancel, 0, false, true, false, false, false, false,
+        )
             .1.value;
-        let off = evaluate(&baseline, state, &no_cancel, 0, false, true, false, false, false, false)
+        let off = evaluate(&baseline, state, &no_cancel, 0, false, true, false, false, false, false,
+        )
             .1.value;
         assert_eq!(on, off);
 
@@ -1128,8 +1430,7 @@ mod amount_exchange_tests {
         for (height, tank, remaining, pending, expected) in [
             (10, 2, 9, 11, 0.0),
             (10, 2, 8, 10, 1.0),
-            (10, 2, 7, 9, 1.0),
-        ] {
+            (10, 2, 7, 9, 1.0)] {
             let edge = info(0, tank, remaining, 0);
             assert_eq!(u16::from(edge.cancelled_rows) + u16::from(edge.tank_rows) + u16::from(edge.remaining_rows), u16::from(pending));
             assert_eq!(
@@ -1163,9 +1464,11 @@ mod amount_exchange_tests {
             due_this_lock_rows: 1,
         };
         let edge = info(0, 1, 0, 0);
-        let score = |weights: &Weights, incoming, root| evaluate_with_surge(
+        let score = |weights: &Weights, incoming, root| {
+            evaluate_with_surge(
             weights, state, &edge, 0, false, incoming, false, false, false, false, false, root, 1,
-        ).1.value.0;
+        ).1.value.0
+        };
 
         assert_eq!(score(&weights, true, true), 1.0);
         assert_eq!(score(&weights, true, false), 0.0, "deep search edges must receive no S4 reward");
@@ -1208,7 +1511,8 @@ mod amount_exchange_tests {
         config.freestyle_weights.s2_amount_top_out = -1.0;
         config.search_seed = 7;
         config.suggestion_count = 16;
-        let options = BotOptions { speculate: false, config: Arc::new(config) };
+        let options = BotOptions { speculate: false, config: Arc::new(config),
+        };
         let root = GameState {
             board: board_with_height(20),
             bag: EnumSet::only(Piece::I),
@@ -1231,7 +1535,8 @@ mod amount_exchange_tests {
         config.freestyle_weights.s2_amount_top_out = -1.0;
         config.search_seed = 7;
         config.suggestion_count = 16;
-        let options = BotOptions { speculate: false, config: Arc::new(config) };
+        let options = BotOptions { speculate: false, config: Arc::new(config),
+        };
         let root = GameState {
             board: board_with_height(20),
             bag: EnumSet::only(Piece::I),
@@ -1348,9 +1653,13 @@ mod amount_exchange_tests {
         }
         board.cols[5] |= 1 << 13;
         let state = GameState { board, bag: EnumSet::only(Piece::T), reserve: Piece::T,
-            b2b: 0, combo: 0, pending_incoming_rows: 0, due_this_lock_rows: 0 };
-        let score = |incoming, shaping, t| evaluate(&weights, state, &info(0, t, 0, 0),
-            0, false, incoming, false, false, false, shaping);
+            b2b: 0, combo: 0, pending_incoming_rows: 0, due_this_lock_rows: 0,
+        };
+        let score = |incoming, shaping, t| {
+            evaluate(&weights, state, &info(0, t, 0, 0),
+            0, false, incoming, false, false, false, shaping,
+            )
+        };
         let off = score(true, false, 2);
         let on = score(true, true, 2);
         assert_eq!(on.0, off.0);
@@ -1358,5 +1667,202 @@ mod amount_exchange_tests {
         assert_eq!(score(false, true, 2).1.value, score(false, false, 2).1.value);
         assert_eq!(score(true, true, 0).1.value, score(true, false, 0).1.value);
         assert_eq!(state.board, board);
+    }
+
+    #[test]
+    fn leaf_conversion_reward_is_opt_in_and_zero_scale_reproduces_native_reward() {
+        let facts = LegacyConversionFacts {
+            piece: "I",
+            combo_before: 4,
+            combo_after: 5,
+            b2b_before: 2,
+            b2b_after: 3,
+            lines: 4,
+            spin: "none",
+            cancelled: 0.0,
+            ren_combat_gain: 2.0,
+            setup_witnessed: false,
+            surge_sent: 0,
+            release_value: 0.0,
+        };
+        let conversion = classify_conversion_for_policy(
+            PostSpinPolicy::LegacyF14,
+            facts.piece,
+            facts.combo_before,
+            facts.combo_after,
+            facts.b2b_before,
+            facts.b2b_after,
+            facts.lines,
+            facts.spin,
+            facts.cancelled,
+            facts.ren_combat_gain,
+            facts.setup_witnessed,
+            facts.surge_sent,
+            facts.release_value,
+        )
+        .unwrap();
+        assert!(conversion.units > 0.0);
+
+        let native = Reward {
+            value: OrderedFloat(-3.25),
+        };
+        let mut disabled = native;
+        add_leaf_conversion_reward(&mut disabled, None, || Ok(facts)).unwrap();
+        assert_eq!(disabled.value.0.to_bits(), native.value.0.to_bits());
+
+        let mut enabled = native;
+        add_leaf_conversion_reward(&mut enabled, Some(0.5), || Ok(facts)).unwrap();
+        assert_eq!(enabled.value.0, native.value.0 + 7.0);
+
+        let mut zero_scale = native;
+        let mut projected = false;
+        add_leaf_conversion_reward(&mut zero_scale, Some(0.0), || {
+            projected = true;
+            Ok(facts)
+        })
+        .unwrap();
+        assert!(!projected, "zero scale skips all conversion projections");
+        assert_eq!(zero_scale.value.0.to_bits(), native.value.0.to_bits());
+    }
+
+    #[test]
+    fn gated_leaf_conversion_applies_at_cap_and_never_projects_above_it() {
+        let facts = LegacyConversionFacts {
+            piece: "I",
+            combo_before: 4,
+            combo_after: 5,
+            b2b_before: 2,
+            b2b_after: 3,
+            lines: 4,
+            spin: "none",
+            cancelled: 0.0,
+            ren_combat_gain: 2.0,
+            setup_witnessed: false,
+            surge_sent: 0,
+            release_value: 0.0,
+        };
+        let native = Reward {
+            value: OrderedFloat(-3.25),
+        };
+        let mut at_boundary = native;
+        add_leaf_conversion_reward_when_safe(&mut at_boundary, Some(0.5), 6, 6, || Ok(facts))
+            .unwrap();
+        assert_eq!(at_boundary.value.0, native.value.0 + 7.0);
+
+        let mut above_cap = native;
+        let mut projected = false;
+        add_leaf_conversion_reward_when_safe(&mut above_cap, Some(0.5), 6, 7, || {
+            projected = true;
+            Ok(facts)
+        })
+        .unwrap();
+        assert!(!projected, "unsafe board height skips conversion projections");
+        assert_eq!(above_cap.value.0.to_bits(), native.value.0.to_bits());
+    }
+
+    fn projected_conversion_info(
+        lines: u32,
+        spin: Spin,
+        combo_after: u32,
+        b2b_before: u32,
+        b2b_after: u32,
+        pending_rows: u32,
+    ) -> PlacementInfo {
+        let spin_name = match spin {
+            Spin::None => "none",
+            Spin::Mini => "mini",
+            Spin::Full => "normal",
+        };
+        let lock = F14LockPublic {
+            lines,
+            spin: spin_name.to_owned(),
+            perfect_clear: false,
+            combo_after,
+            b2b_after,
+            b2b_before,
+        };
+        let amount = advance_f14_amount_only(
+            F14Incoming {
+                pending_rows,
+                due_this_lock_rows: 0,
+            },
+            &lock,
+        )
+        .unwrap();
+        PlacementInfo {
+            placement: Placement {
+                location: PieceLocation {
+                    piece: Piece::T,
+                    rotation: Rotation::North,
+                    x: 4,
+                    y: 0,
+                },
+                spin,
+            },
+            lines_cleared: lines,
+            combo: combo_after,
+            back_to_back: b2b_after > 0,
+            perfect_clear: false,
+            cancelled_rows: amount.cancelled_rows,
+            tank_rows: amount.tank_rows,
+            remaining_rows: amount.remaining_rows,
+            outgoing_after_cancel: amount.outgoing_after_cancel,
+            surge_rows: 0,
+            search_attack_overflow: false,
+        }
+    }
+
+    #[test]
+    fn unknown_setup_witness_suppresses_possible_mini_to_tsd_branch() {
+        let info = projected_conversion_info(1, Spin::Full, 10, 1, 2, 1);
+        let facts = legacy_conversion_facts(9, 10, 1, 2, 1, 0, &info).unwrap();
+        assert_eq!(facts.spin, "normal");
+        assert_eq!(facts.combo_before, 9);
+        assert_eq!(facts.combo_after, 10);
+        assert_eq!(facts.b2b_before, 1);
+        assert_eq!(facts.b2b_after, 2);
+        assert_eq!(info.cancelled_rows, 1, "the example includes one pending row");
+
+        let mut reward = Reward {
+            value: OrderedFloat(-2.0),
+        };
+        add_leaf_conversion_reward(&mut reward, Some(0.25), || Ok(facts)).unwrap();
+        assert_eq!(reward.value.0, -2.0);
+    }
+
+    #[test]
+    fn unknown_search_surge_suppresses_possible_high_surge_branch() {
+        let facts = LegacyConversionFacts {
+            piece: "I",
+            combo_before: 9,
+            combo_after: 10,
+            b2b_before: F12_MIN_B2B_BEFORE,
+            b2b_after: F12_MIN_B2B_BEFORE + 1,
+            lines: 4,
+            spin: "none",
+            cancelled: 0.0,
+            ren_combat_gain: 4.0,
+            setup_witnessed: false,
+            surge_sent: 0,
+            release_value: F12_MIN_RELEASE_VALUE,
+        };
+        let mut reward = Reward {
+            value: OrderedFloat(3.0),
+        };
+        add_leaf_conversion_reward(&mut reward, Some(0.25), || Ok(facts)).unwrap();
+        assert_eq!(reward.value.0, 3.0);
+    }
+
+    #[test]
+    fn b2b_255_counterfactual_projection_error_skips_term_and_keeps_search_path_open() {
+        let info = projected_conversion_info(4, Spin::None, 10, 255, 255, 1);
+        let projection = || legacy_conversion_facts(9, 10, 255, 255, 1, 0, &info);
+        assert_eq!(projection().unwrap_err(), CompatError::ChainOutOfU8);
+
+        let mut reward = Reward {
+            value: OrderedFloat(-5.5),
+        };
+        add_leaf_conversion_reward(&mut reward, Some(0.25), projection).unwrap();
+        assert_eq!(reward.value.0, -5.5);
     }
 }

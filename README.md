@@ -22,6 +22,8 @@ The bot selectors (single analysis and bot-vs-bot) offer these four bots plus a 
 the same set as TTRM INPUT, and You (1P) on the left; the local Node server offers the same list.
 The comparison entry is the previous INPUT champion route: CC2 candidates ranked by the earlier F14
 amount-only selector, run on the current S2 engine. It is not a restoration of the earlier binary.
+The current champion is the F14 core's gated leaf-conversion profile: it keeps the CC2 search's
+rank order as its final order and only a root-rescue veto selects past rank 0.
 The champion's defaults (512 selections, THINK TIME off, queue 14) are the champion itself;
 SELECTION, THINK TIME and QUEUE DEPTH can be changed like the other bots.
 The Pages build runs these Cold Clear 2 entries

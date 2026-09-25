@@ -205,6 +205,9 @@ pub fn diagnose_s2_root_allocation(raw: serde_json::Value) -> Result<serde_json:
         } else {
             "off"
         }.to_owned()),
+        root_value_scale: None,
+        leaf_conversion_scale: None,
+        leaf_conversion_max_height: None,
         final_order_policy_id: None,
     };
     if !profile.valid() {
