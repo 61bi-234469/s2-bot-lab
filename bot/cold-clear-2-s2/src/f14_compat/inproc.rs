@@ -37,6 +37,14 @@ pub(crate) enum FinishEnd {
 fn allocation_mode_for(profile_id: &str, allocation_mode: Option<&str>) -> AllocationMode {
     if profile_id == f14::ROOT_VALUE_PROFILE {
         AllocationMode::RootValueV1
+    } else if profile_id == f14::ROOT_VALUE_MIX_PROFILE {
+        AllocationMode::RootValueMixV1
+    } else if profile_id == f14::ROOT_VALUE_TIEBREAK_PROFILE {
+        AllocationMode::RootValueTiebreakV1
+    } else if profile_id == f14::LEAF_CONVERSION_PROFILE {
+        AllocationMode::LeafConversionV1
+    } else if profile_id == f14::LEAF_CONVERSION_GATED_PROFILE {
+        AllocationMode::LeafConversionGatedV1
     } else if allocation_mode == Some("conversion-permutation-v1") {
         AllocationMode::PermutationV1
     } else {
@@ -44,10 +52,12 @@ fn allocation_mode_for(profile_id: &str, allocation_mode: Option<&str>) -> Alloc
     }
 }
 
-/// Prepare the in-process decision with a fresh, never-cancelled runtime.
+/// Prepare the in-process decision with a fresh, never-cancelled runtime for a
+/// request the WASM driver has already admitted with the same profile (the
+/// driver's `admit` is the same first check, so it is not repeated here).
 /// Native callers use the cancel-aware variant after preserving their gate and
-/// cancellation checks; WASM uses this entry point directly.
-pub(crate) fn prepare(
+/// cancellation checks.
+pub(crate) fn prepare_admitted(
     request: Json,
     profile: &Profile,
     config: Arc<BotConfig>,
@@ -61,7 +71,7 @@ pub(crate) fn prepare(
         token,
         observation,
         Arc::new(AtomicBool::new(false)),
-        false,
+        true,
     )
 }
 
@@ -148,21 +158,29 @@ fn prepare_inner(
                 ))
             }
         };
-        let digest = match f14::public_context_digest_for_request(&request, profile) {
-            Ok(digest) => digest,
-            Err(compat_error) => return Err(f14::compat_error_response(&request, compat_error)),
+        let digest = match composed_state.as_ref() {
+            Some(state) => f14::public_context_digest_for_state(state, &request, profile),
+            None => {
+                return Err(f14::compat_error_response(
+                    &request,
+                    CompatError::InvalidSelector,
+                ))
+            }
         };
         let allocation_mode = allocation_mode_for(
             &profile.profile_id,
             profile.allocation_mode.as_deref(),
         );
-        let session = RootObjectiveSession::new_with_allocation_mode(
+        let session = RootObjectiveSession::new_with_allocation_mode_and_scales(
             context,
             profile.decision_stage(),
             profile.budget.selections,
             token,
             digest,
             allocation_mode,
+            profile.root_value_scale_f64().unwrap_or(1.0),
+            profile.leaf_conversion_scale_f64(),
+            profile.leaf_conversion_max_height_u32(),
         );
         if let Some(observation) = observation {
             session.attach_observation(observation);
@@ -274,7 +292,8 @@ pub(crate) fn finish_with_hook(
         }
     }
     if let Some((decision_moves, root_decision, root_stats)) = forced_root {
-        return f14::decide_limited_with_core(
+        // `prepare` admitted this request before the search started.
+        return f14::decide_limited_with_core_admitted(
             request,
             &profile,
             &decision_moves,
@@ -338,7 +357,8 @@ mod root_allocation_mode_tests {
     use super::*;
     use crate::f14_compat::transport::{
         A_PROFILE, COMPOSED_A, COMPOSED_B, CORE_ALLSPIN_PROFILE, PUBLIC_PROFILE,
-        RANK_ORDER_PROFILE, ROOT_OBJECTIVE_PROFILE,
+        RANK_ORDER_PROFILE, ROOT_OBJECTIVE_PROFILE, ROOT_VALUE_MIX_PROFILE,
+        LEAF_CONVERSION_GATED_PROFILE, LEAF_CONVERSION_PROFILE, ROOT_VALUE_TIEBREAK_PROFILE,
     };
 
     #[test]
@@ -346,6 +366,25 @@ mod root_allocation_mode_tests {
         assert_eq!(
             allocation_mode_for(f14::ROOT_VALUE_PROFILE, None),
             AllocationMode::RootValueV1
+        );
+        assert_eq!(
+            allocation_mode_for(ROOT_VALUE_MIX_PROFILE, Some("root-value-mix-v1")),
+            AllocationMode::RootValueMixV1
+        );
+        assert_eq!(
+            allocation_mode_for(ROOT_VALUE_TIEBREAK_PROFILE, Some("root-value-tiebreak-v1")),
+            AllocationMode::RootValueTiebreakV1
+        );
+        assert_eq!(
+            allocation_mode_for(LEAF_CONVERSION_PROFILE, Some("leaf-conversion-v1")),
+            AllocationMode::LeafConversionV1
+        );
+        assert_eq!(
+            allocation_mode_for(
+                LEAF_CONVERSION_GATED_PROFILE,
+                Some("leaf-conversion-gated-v1")
+            ),
+            AllocationMode::LeafConversionGatedV1
         );
         for profile_id in [
             A_PROFILE,

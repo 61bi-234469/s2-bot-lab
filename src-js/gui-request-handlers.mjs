@@ -23,8 +23,7 @@ import {
 } from "./gui-1p-handicap-garbage.mjs";
 import { normalizeTurnMatch, turnMatchControllerOptions } from "./gui-turn-match.mjs";
 import { guiStateToCc2NativeStart } from "./cc2-s2-native-start.mjs";
-import { createPublicCompatProfile } from "./public-compat-request.mjs";
-import { assertChampionParameters, createChampionRequest, resolveChampionDecision } from "./champion-parameters.mjs";
+import { assertChampionParameters, createChampionProfile, createChampionRequest, resolveChampionDecision } from "./champion-parameters.mjs";
 import { resolveGuiStaticSubmission as resolveQualifiedStaticCc2Submission } from "./gui-static-public-resolver.mjs";
 import { createGuiStaticDecisionRequest as createS2AmountOnlyDecisionRequest, isGuiStaticType as isAdr062QualifiedStaticType } from "./s2-amount-only-decision-state.mjs";
 import { applyTransition } from "./transition.mjs";
@@ -36,7 +35,7 @@ import {
 } from "./replay/bot-match-recorder.mjs";
 import { buildReplayIR, nowMs } from "./replay/ttrm-simulator.mjs";
 import { MAX_TTRM_TEXT_LENGTH, TtrmError, parseTtrm } from "./replay/ttrm-parser.mjs";
-import { botParameterCapability, fairComparisonBotParameters, normalizeBotParameters } from "./bot-parameters.mjs";
+import { botParameterCapability, defaultBotParameters, fairComparisonBotParameters, normalizeBotParameters } from "./bot-parameters.mjs";
 import { matchOutcome, normalizeBotMatchOptions, ppsForCc2Parameters } from "./bot-match-options.mjs";
 import { realtimeCc2ThinkMs } from "./bot-match-options.mjs";
 import { runBotProposals } from "./bot-proposal-runner.mjs";
@@ -98,10 +97,10 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
           if (engine === "cc2-s2-champion") {
             assertChampionParameters(parameters);
             const state = guiStateToCanonical(body.state);
-            const decision = await decidePublicChampion("analysis", state, body.state, parameters);
+            const decision = await decideChampion("analysis", state, body.state, parameters);
             return ok({
               engine: publicEngine(engine),
-              info: { name: "Cold Clear 2 S2", version: "F14 public profile B WASM" },
+              info: { name: "Cold Clear 2 S2", version: "F14 gated leaf-conversion WASM" },
               suggestion: { moves: [decision.response.selectedMove] },
               nativeDecision: decision.response,
               verification: { ...decision.resolved.verification, move: decision.response.selectedMove },
@@ -539,7 +538,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     let proposal;
     try {
       if (type === "cc2-s2-champion") {
-        const decision = await decidePublicChampion(bot.id, canonicalState, gui, parameters);
+        const decision = await decideChampion(bot.id, canonicalState, gui, parameters);
         return { botId: bot.id, type, moves: [decision.response.selectedMove], publicDecision: decision };
       }
       proposal = await cc2Runtime.propose({ sessionKey: bot.id, engine: type, state,
@@ -582,7 +581,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       const state = guiStateToCanonical(gui);
       const decision = !forceLocal && proposal.publicDecision !== undefined
         ? proposal.publicDecision
-        : await decidePublicChampion(bot.id, state, gui, activeSession.botParameters[bot.id]);
+        : await decideChampion(bot.id, state, gui, activeSession.botParameters[bot.id]);
       return submissionFor(match, bot, decision.resolved.placement, decision.resolved.transition,
         decision.resolved.score, fullStateKey(bot.state));
     }
@@ -620,7 +619,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     );
   }
 
-  async function decidePublicChampion(sessionKey, state, gui, parameters) {
+  async function decideChampion(sessionKey, state, gui, parameters) {
     if (typeof cc2Runtime?.decideF14 !== "function") throw new Error("CC2 F14 WASM decision is unavailable");
     const request = createChampionRequest(state, parameters, {
       requestId: `f14-wasm-${++publicRequestSequence}`,
@@ -780,8 +779,8 @@ function staticCc2Capability(id) {
   const capability = botParameterCapability(id);
   if (id === "cc2-s2-champion") {
     capability.fixedDecision = true;
-    capability.execution = createPublicCompatProfile();
-    capability.description += " F14 profile B（WASM）で判断します。SELECTION・THINK TIME・QUEUE DEPTH を変えると、現チャンピオンとは別の設定で動きます。";
+    capability.execution = createChampionProfile(defaultBotParameters("cc2-s2-champion"));
+    capability.description += "Pages では gated leaf-conversion profile を WASM で実行し、SELECTION・THINK TIME・QUEUE DEPTH を適用します。開発専用で release-qualified ではありません。最終順序は CC2 順（rerank なし）で、rescue だけが rank 0 以外を選びます。";
     return capability;
   }
   capability.description += " 蜈ｬ髢妓ASM迚医〒繧５HINK TIME繧貞茜逕ｨ縺ｧ縺阪∪縺吶よ怏蜉ｹ譎ゅ・遶ｯ譛ｫ諤ｧ閭ｽ繝ｻ繝悶Λ繧ｦ繧ｶ繝ｻ螳溯｡梧凾雋闕ｷ縺ｫ繧医▲縺ｦ謗｢邏｢驥上→驕ｸ謚樊焔縺悟､牙喧縺励∪縺吶・";
@@ -805,4 +804,4 @@ function staticBotType(value) {
   return value;
 }
 function requireCc2Type(value) { if (!(value in CC2_LABELS)) throw new Error(`unsupported CC2 engine ${value}`); return value; }
-function publicEngine(id) { return { botType: id, engineId: id, label: CC2_LABELS[id], repository: id === "cc2-raw" ? "https://github.com/MinusKelvin/cold-clear-2" : id === "cc2-chouhy" ? "https://github.com/chouhy/cold-clear-2" : "https://github.com/61bi-234469/s2-bot-lab", commit: id === "cc2-raw" ? "ed8b19327b6bd1410ddd873d8611485bd45d8fae" : id === "cc2-chouhy" ? "b20a92b0ed3230dd910d0674f7a09c552a34dd46" : "ed8b193+local-s2-reranker", comparisonSource: `${id}-final-placement` }; }
+function publicEngine(id) { return { botType: id, engineId: id, label: CC2_LABELS[id], repository: id === "cc2-raw" ? "https://github.com/MinusKelvin/cold-clear-2" : id === "cc2-chouhy" ? "https://github.com/chouhy/cold-clear-2" : "https://github.com/61bi-234469/s2-bot-lab", commit: id === "cc2-raw" ? "ed8b19327b6bd1410ddd873d8611485bd45d8fae" : id === "cc2-chouhy" ? "b20a92b0ed3230dd910d0674f7a09c552a34dd46" : id === "cc2-s2-champion" ? "f14-leaf-conversion-gated-b" : "ed8b193+local-s2-reranker", comparisonSource: id === "cc2-s2-champion" ? `${id}-gated-final-placement` : `${id}-final-placement` }; }

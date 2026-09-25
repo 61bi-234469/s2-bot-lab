@@ -27,6 +27,18 @@ test("stored preferences round-trip through sanitization", () => {
   });
 });
 
+test("saved champion ENGINE values and its former Analysis preference are silently dropped", () => {
+  assert.equal(CONTROL_PREFERENCE_IDS.includes("analysis-engine-profile"), false);
+  for (const engineProfile of ["f14-public", "gated-leaf-conversion"]) {
+    const preferences = sanitizePreferences({
+      controls: { "analysis-engine-profile": engineProfile },
+      botParameters: { left: { "cc2-s2-champion": { engineProfile } } },
+    }, normalizeBotParameters);
+    assert.equal(Object.hasOwn(preferences.controls, "analysis-engine-profile"), false);
+    assert.deepEqual(preferences.botParameters.left["cc2-s2-champion"], defaultBotParameters("cc2-s2-champion"));
+  }
+});
+
 test("an unreadable or foreign document leaves every control on its default", () => {
   for (const input of [null, undefined, 7, "match", [], { controls: [], toggles: null, botParameters: 3 }]) {
     assert.deepEqual(sanitizePreferences(input, normalizeBotParameters), emptyPreferences());

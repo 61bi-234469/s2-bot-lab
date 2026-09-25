@@ -10,7 +10,7 @@ import {
 
 test("bot parameters have independent defaults and normalize supported values", () => {
   const defaults = { ppsEnabled: true, pps: 1, selectionEnabled: true, selectionLimit: 512, thinkTimeEnabled: false, thinkMs: 250, queueDepth: 14 };
-  for (const type of ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion"]) {
+  for (const type of ["cc2-raw", "cc2-chouhy", "cc2-s2-f14"]) {
     assert.deepEqual(defaultBotParameters(type), defaults);
   }
   assert.deepEqual(normalizeBotParameters("cc2-raw", { ppsEnabled: false, pps: 2.5, selectionEnabled: false, thinkTimeEnabled: true, thinkMs: 800, queueDepth: 7 }), {
@@ -23,6 +23,23 @@ test("bot parameters have independent defaults and normalize supported values", 
     queueDepth: 7,
   });
   assert.deepEqual(normalizeBotParameters("s2-simple", { allowHold: false }), { pps: 1, allowHold: false });
+});
+
+test("the champion exposes no engine selector and keeps its budget defaults", () => {
+  const defaults = { ppsEnabled: true, pps: 1, selectionEnabled: true, selectionLimit: 512, thinkTimeEnabled: false, thinkMs: 250, queueDepth: 14 };
+  const legacySavedSet = { ppsEnabled: false, pps: 2, selectionEnabled: true, selectionLimit: 640,
+    thinkTimeEnabled: false, thinkMs: 250, queueDepth: 12 };
+
+  const roundTrips = [
+    ["defaults", defaultBotParameters("cc2-s2-champion"), defaults],
+    ["empty input", normalizeBotParameters("cc2-s2-champion", {}), defaults],
+    ["legacy saved set", normalizeBotParameters("cc2-s2-champion", legacySavedSet), legacySavedSet],
+  ];
+  for (const [label, actual, expected] of roundTrips) {
+    assert.deepEqual(actual, expected, label);
+    assert.equal(JSON.stringify(actual), JSON.stringify(expected), `${label} serialization`);
+  }
+  assert.equal(botParameterCapability("cc2-s2-champion").parameters.some((parameter) => parameter.key === "engineProfile"), false);
 });
 
 test("a human player declares no server-side parameters at all", () => {
@@ -94,6 +111,10 @@ test("capabilities are safe to serialize for the GUI", () => {
   assert.match(botParameterCapability("cc2-chouhy").description, /S2向け/);
   assert.match(botParameterCapability("cc2-s2-f14").description, /F14/);
   assert.match(botParameterCapability("cc2-s2-champion").description, /champion/);
+  assert.match(botParameterCapability("cc2-s2-champion").description, /gated leaf-conversion/);
+  assert.match(botParameterCapability("cc2-s2-champion").description, /kappa=0\.25/);
+  assert.match(botParameterCapability("cc2-s2-champion").description, /H=8/);
+  assert.match(botParameterCapability("cc2-s2-champion").description, /CC2 順（rerank なし）/);
   // The champion is a development build. Its description is the only place the
   // GUI says so, and the public tree asserts the same token.
   assert.match(botParameterCapability("cc2-s2-champion").description, /release-qualified/);

@@ -1224,6 +1224,14 @@ pub(crate) fn run_f14(
         ]
     } else if profile.profile_id == f14::RANK_ORDER_PROFILE {
         vec![f14::A_PROFILE, f14::PUBLIC_PROFILE, f14::RANK_ORDER_PROFILE]
+    } else if profile.profile_id == f14::ROOT_VALUE_MIX_PROFILE {
+        vec![f14::A_PROFILE, f14::PUBLIC_PROFILE, f14::ROOT_VALUE_MIX_PROFILE]
+    } else if profile.profile_id == f14::ROOT_VALUE_TIEBREAK_PROFILE {
+        vec![f14::A_PROFILE, f14::PUBLIC_PROFILE, f14::ROOT_VALUE_TIEBREAK_PROFILE]
+    } else if profile.profile_id == f14::LEAF_CONVERSION_PROFILE {
+        vec![f14::A_PROFILE, f14::PUBLIC_PROFILE, f14::LEAF_CONVERSION_PROFILE]
+    } else if profile.profile_id == f14::LEAF_CONVERSION_GATED_PROFILE {
+        vec![f14::A_PROFILE, f14::PUBLIC_PROFILE, f14::LEAF_CONVERSION_GATED_PROFILE]
     } else if profile.is_composed() {
         vec![
             f14::A_PROFILE,

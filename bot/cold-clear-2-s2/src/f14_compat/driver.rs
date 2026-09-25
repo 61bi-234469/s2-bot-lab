@@ -54,7 +54,8 @@ impl F14Driver {
             .and_then(Json::as_u64)
             .unwrap_or(0);
         let limit = profile.budget.selections;
-        let prepared = inproc::prepare(
+        // Admitted above with this profile; prepare must not repeat it.
+        let prepared = inproc::prepare_admitted(
             request,
             &profile,
             Arc::new(config),
@@ -173,7 +174,9 @@ impl F14Driver {
             nps: 0.0,
             extra: "selection budget complete".to_owned(),
         };
-        let retained_outcome = if self.prepared.profile.profile_id == f14::PUBLIC_PROFILE {
+        let retained_outcome = if self.prepared.profile.profile_id == f14::PUBLIC_PROFILE
+            || self.prepared.profile.profile_id == f14::LEAF_CONVERSION_GATED_PROFILE
+        {
             self.prepared
                 .root_session
                 .as_ref()

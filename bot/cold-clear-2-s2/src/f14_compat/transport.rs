@@ -20,18 +20,31 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
 
+fn deserialize_present_optional_string<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(Some)
+}
+
 pub const A_PROFILE: &str = "f14-amount-only-compat-a/1";
 pub const PUBLIC_PROFILE: &str = "f14-amount-only-compat-b/1";
 pub const COMPOSED_A: &str = "f14-composed-ranking-a/1";
 pub const COMPOSED_B: &str = "f14-composed-ranking-b/1";
 pub const CORE_ALLSPIN_PROFILE: &str = "f14-core-allspin-b/1";
 pub const ROOT_VALUE_PROFILE: &str = "f14-core-allspin-rootvalue/1";
+pub const ROOT_VALUE_MIX_PROFILE: &str = "f14-root-value-mix-b/1";
+pub const ROOT_VALUE_TIEBREAK_PROFILE: &str = "f14-root-value-tiebreak-b/1";
+pub const LEAF_CONVERSION_PROFILE: &str = "f14-leaf-conversion-b/1";
+pub const LEAF_CONVERSION_GATED_PROFILE: &str = "f14-leaf-conversion-gated-b/1";
 pub const RANK_ORDER_PROFILE: &str = "f14-rank-order-b/1";
 pub const ROOT_OBJECTIVE_PROFILE: &str = "f14-root-objective-b/1";
 pub const POST_SPIN_POLICY_OFF: &str = "non-t-spin-prior-off/1";
 /// Host-clocked think time: the WASM host stops `work` at its own deadline and
-/// asks for an early finish; `selections` is then an upper bound. Only the
-/// public champion profile admits it, and only through the WASM driver.
+/// asks for an early finish; `selections` is then an upper bound. The public
+/// champion and gated leaf-conversion profiles admit it only through WASM.
 pub const TIME_BUDGET_MODE: &str = "time";
 pub const FINAL_ORDER_POLICY_CC2: &str = "cc2-rank-order/1";
 
@@ -63,6 +76,24 @@ pub struct Profile {
     pub post_spin_policy_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allocation_mode: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_optional_string",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub root_value_scale: Option<Option<String>>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_optional_string",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub leaf_conversion_scale: Option<Option<String>>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_optional_string",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub leaf_conversion_max_height: Option<Option<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub final_order_policy_id: Option<String>,
 }
@@ -92,29 +123,83 @@ impl Profile {
             A_PROFILE | PUBLIC_PROFILE | COMPOSED_A | COMPOSED_B => {
                 self.post_spin_policy_id.is_none()
                     && self.allocation_mode.is_none()
+                    && self.root_value_scale.is_none()
+                    && self.leaf_conversion_scale.is_none()
+                    && self.leaf_conversion_max_height.is_none()
                     && self.final_order_policy_id.is_none()
                     && self.config_hash == CONFIG_HASH
             }
             CORE_ALLSPIN_PROFILE => {
                 self.post_spin_policy_id.as_deref() == Some(POST_SPIN_POLICY_OFF)
                     && self.allocation_mode.is_none()
+                    && self.root_value_scale.is_none()
+                    && self.leaf_conversion_scale.is_none()
+                    && self.leaf_conversion_max_height.is_none()
                     && self.final_order_policy_id.is_none()
                     && (self.config_hash == CONFIG_HASH || self.config_hash == CAS_CONFIG_HASH)
             }
             ROOT_VALUE_PROFILE => {
                 self.post_spin_policy_id.as_deref() == Some(POST_SPIN_POLICY_OFF)
                     && self.allocation_mode.is_none()
+                    && self.root_value_scale.is_none()
+                    && self.leaf_conversion_scale.is_none()
+                    && self.leaf_conversion_max_height.is_none()
                     && self.final_order_policy_id.is_none()
                     && self.config_hash == CAS_CONFIG_HASH
+            }
+            ROOT_VALUE_MIX_PROFILE => {
+                self.post_spin_policy_id.is_none()
+                    && self.allocation_mode.as_deref() == Some(super::root_allocation::ROOT_VALUE_MIX_MODE)
+                    && self.root_value_scale_f64().is_some()
+                    && self.leaf_conversion_scale.is_none()
+                    && self.leaf_conversion_max_height.is_none()
+                    && self.final_order_policy_id.as_deref() == Some(FINAL_ORDER_POLICY_CC2)
+                    && self.config_hash == CONFIG_HASH
+            }
+            ROOT_VALUE_TIEBREAK_PROFILE => {
+                self.post_spin_policy_id.is_none()
+                    && self.allocation_mode.as_deref()
+                        == Some(super::root_allocation::ROOT_VALUE_TIEBREAK_MODE)
+                    && self.root_value_scale.is_none()
+                    && self.leaf_conversion_scale.is_none()
+                    && self.leaf_conversion_max_height.is_none()
+                    && self.final_order_policy_id.as_deref() == Some(FINAL_ORDER_POLICY_CC2)
+                    && self.config_hash == CONFIG_HASH
+            }
+            LEAF_CONVERSION_PROFILE => {
+                self.post_spin_policy_id.is_none()
+                    && self.allocation_mode.as_deref()
+                        == Some(super::root_allocation::LEAF_CONVERSION_MODE)
+                    && self.root_value_scale.is_none()
+                    && self.leaf_conversion_scale_f64().is_some()
+                    && self.leaf_conversion_max_height.is_none()
+                    && self.final_order_policy_id.as_deref() == Some(FINAL_ORDER_POLICY_CC2)
+                    && self.config_hash == CONFIG_HASH
+            }
+            LEAF_CONVERSION_GATED_PROFILE => {
+                self.post_spin_policy_id.is_none()
+                    && self.allocation_mode.as_deref()
+                        == Some(super::root_allocation::LEAF_CONVERSION_GATED_MODE)
+                    && self.root_value_scale.is_none()
+                    && self.leaf_conversion_scale_f64().is_some()
+                    && self.leaf_conversion_max_height_u32().is_some()
+                    && self.final_order_policy_id.as_deref() == Some(FINAL_ORDER_POLICY_CC2)
+                    && self.config_hash == CONFIG_HASH
             }
             RANK_ORDER_PROFILE => {
                 self.post_spin_policy_id.is_none()
                     && self.allocation_mode.is_none()
+                    && self.root_value_scale.is_none()
+                    && self.leaf_conversion_scale.is_none()
+                    && self.leaf_conversion_max_height.is_none()
                     && self.final_order_policy_id.as_deref() == Some(FINAL_ORDER_POLICY_CC2)
                     && (self.config_hash == CONFIG_HASH || self.config_hash == MS06_CONFIG_HASH)
             }
             ROOT_OBJECTIVE_PROFILE => {
                 self.post_spin_policy_id.is_none()
+                    && self.root_value_scale.is_none()
+                    && self.leaf_conversion_scale.is_none()
+                    && self.leaf_conversion_max_height.is_none()
                     && self.final_order_policy_id.is_none()
                     && matches!(
                         self.allocation_mode.as_deref(),
@@ -132,7 +217,8 @@ impl Profile {
         match self.budget.mode.as_str() {
             "selection" => true,
             TIME_BUDGET_MODE => {
-                self.profile_id == PUBLIC_PROFILE && (10..=10_000).contains(&self.budget.max_millis)
+                (self.profile_id == PUBLIC_PROFILE || self.profile_id == LEAF_CONVERSION_GATED_PROFILE)
+                    && (10..=10_000).contains(&self.budget.max_millis)
             }
             _ => false,
         }
@@ -156,12 +242,40 @@ impl Profile {
         self.seed.parse().ok()
     }
 
+    pub(crate) fn root_value_scale_f64(&self) -> Option<f64> {
+        self.root_value_scale
+            .as_ref()?
+            .as_deref()?
+            .parse::<f64>()
+            .ok()
+            .filter(|scale| scale.is_finite())
+    }
+
+    pub(crate) fn leaf_conversion_scale_f64(&self) -> Option<f64> {
+        self.leaf_conversion_scale
+            .as_ref()?
+            .as_deref()?
+            .parse::<f64>()
+            .ok()
+            .filter(|scale| scale.is_finite())
+    }
+
+    pub(crate) fn leaf_conversion_max_height_u32(&self) -> Option<u32> {
+        let value = self.leaf_conversion_max_height.as_ref()?.as_deref()?;
+        let height = value.parse::<u32>().ok()?;
+        ((1..=40).contains(&height) && value == height.to_string()).then_some(height)
+    }
+
     pub fn is_public_amount(&self) -> bool {
         matches!(
             self.profile_id.as_str(),
             PUBLIC_PROFILE
                 | CORE_ALLSPIN_PROFILE
                 | ROOT_VALUE_PROFILE
+                | ROOT_VALUE_MIX_PROFILE
+                | ROOT_VALUE_TIEBREAK_PROFILE
+                | LEAF_CONVERSION_PROFILE
+                | LEAF_CONVERSION_GATED_PROFILE
                 | RANK_ORDER_PROFILE
                 | COMPOSED_B
                 | ROOT_OBJECTIVE_PROFILE
@@ -181,7 +295,10 @@ impl Profile {
             || self.uses_core_snapshot()
             || matches!(
                 self.profile_id.as_str(),
-                A_PROFILE | PUBLIC_PROFILE | CORE_ALLSPIN_PROFILE | ROOT_VALUE_PROFILE | RANK_ORDER_PROFILE
+                A_PROFILE | PUBLIC_PROFILE | CORE_ALLSPIN_PROFILE | ROOT_VALUE_PROFILE
+                    | ROOT_VALUE_MIX_PROFILE | ROOT_VALUE_TIEBREAK_PROFILE | LEAF_CONVERSION_PROFILE
+                    | LEAF_CONVERSION_GATED_PROFILE
+                    | RANK_ORDER_PROFILE
             )
     }
 
@@ -394,7 +511,7 @@ pub fn assert_start_selector_projection(start: &Json, selector: &Json) -> Result
     assert_start_selector_projection_with_queue_limit(start, selector, QUEUE_LIMIT)
 }
 
-/// The public champion profile may also carry a longer queue (up to
+/// The public and gated leaf-conversion champion profiles may also carry a longer queue (up to
 /// `PUBLIC_QUEUE_LIMIT`), which must still be a prefix of current + known.
 /// The default 14-piece truncation stays admitted for every profile.
 pub const PUBLIC_QUEUE_LIMIT: usize = 28;
@@ -564,7 +681,11 @@ pub fn admit(raw: &Json, profile: &Profile) -> Result<(), Json> {
         Some(value) => value,
         None => return Err(error(raw, "error", "invalid-input")),
     };
-    let queue_limit = if profile.profile_id == PUBLIC_PROFILE { PUBLIC_QUEUE_LIMIT } else { QUEUE_LIMIT };
+    let queue_limit = if profile.profile_id == PUBLIC_PROFILE || profile.profile_id == LEAF_CONVERSION_GATED_PROFILE {
+        PUBLIC_QUEUE_LIMIT
+    } else {
+        QUEUE_LIMIT
+    };
     if let Err(compat_error) = assert_start_selector_projection_with_queue_limit(start, selector, queue_limit) {
         let (status, reason) = map_error(compat_error);
         return Err(error(raw, status, reason));
@@ -598,6 +719,35 @@ pub(crate) fn decide_limited_with_core(
     epoch: u64,
     root_decision: Option<FinishedRootDecision>,
 ) -> Json {
+    decide_limited_with_core_admission(raw, profile, moves, search, limits, hook, epoch, root_decision, false)
+}
+
+/// The finish of a prepared decision or a retained rerank: `admit` already
+/// accepted this exact request on entry, so the finish does not repeat it.
+pub(crate) fn decide_limited_with_core_admitted(
+    raw: Json,
+    profile: &Profile,
+    moves: &[Placement],
+    search: SearchStats,
+    limits: Option<&F14RuntimeLimits>,
+    hook: Option<&F14CancelHook>,
+    epoch: u64,
+    root_decision: Option<FinishedRootDecision>,
+) -> Json {
+    decide_limited_with_core_admission(raw, profile, moves, search, limits, hook, epoch, root_decision, true)
+}
+
+fn decide_limited_with_core_admission(
+    raw: Json,
+    profile: &Profile,
+    moves: &[Placement],
+    search: SearchStats,
+    limits: Option<&F14RuntimeLimits>,
+    hook: Option<&F14CancelHook>,
+    epoch: u64,
+    root_decision: Option<FinishedRootDecision>,
+    admitted: bool,
+) -> Json {
     let core_counters = root_decision.as_ref().map(|decision| decision.counters);
     let core_post_stage_counters = root_decision
         .as_ref()
@@ -613,6 +763,7 @@ pub(crate) fn decide_limited_with_core(
                 hook,
                 epoch,
                 root_decision,
+                admitted,
             )
         })
     });
@@ -636,7 +787,7 @@ pub(crate) fn rerank_without_retained(raw: Json) -> Json {
     if let Err(response) = admit(&raw, &profile) {
         return response;
     }
-    if profile.profile_id != PUBLIC_PROFILE {
+    if profile.profile_id != PUBLIC_PROFILE && profile.profile_id != LEAF_CONVERSION_GATED_PROFILE {
         return error(&raw, "unsupported", "f14-rerank-unsupported");
     }
     error(&raw, "unavailable", "rerank-unavailable")
@@ -651,7 +802,7 @@ pub(crate) fn rerank_retained(
     if let Err(response) = admit(&raw, profile) {
         return response;
     }
-    if profile.profile_id != PUBLIC_PROFILE {
+    if profile.profile_id != PUBLIC_PROFILE && profile.profile_id != LEAF_CONVERSION_GATED_PROFILE {
         return error(&raw, "unsupported", "f14-rerank-unsupported");
     }
     if !rerank_request_compatible(original_request, &raw) {
@@ -664,7 +815,7 @@ pub(crate) fn rerank_retained(
             completed_selections,
         } => {
             let token = raw_generation(&raw);
-            decide_limited_with_core(
+            decide_limited_with_core_admitted(
                 raw,
                 profile,
                 &[],
@@ -708,10 +859,7 @@ pub(crate) fn rerank_retained(
                 Err(compat_error) => return compat_error_response(&raw, compat_error),
             };
             let token = raw_generation(&raw);
-            let digest = match public_context_digest_for_request(&raw, profile) {
-                Ok(digest) => digest,
-                Err(compat_error) => return compat_error_response(&raw, compat_error),
-            };
+            let digest = public_context_digest_for_state(&state, &raw, profile);
             let session = RootObjectiveSession::new_with_allocation_mode(
                 context,
                 profile.decision_stage(),
@@ -748,7 +896,7 @@ pub(crate) fn rerank_retained(
             let decision = match session.take_outcome() {
                 Ok(Some(FinishedRootOutcome::Decided(decision))) => decision,
                 Ok(Some(FinishedRootOutcome::NoCandidates { .. })) => {
-                    return decide_limited_with_core(
+                    return decide_limited_with_core_admitted(
                         raw,
                         profile,
                         &[],
@@ -769,7 +917,7 @@ pub(crate) fn rerank_retained(
                 Err(compat_error) => return compat_error_response(&raw, compat_error),
             };
             let moves = decision.native_moves.clone();
-            decide_limited_with_core(
+            decide_limited_with_core_admitted(
                 raw,
                 profile,
                 &moves,
@@ -893,7 +1041,13 @@ fn attach_diagnostics(
             "postStageConversionAddCalls": audit.post_stage_conversion_add_calls,
             "postStageRerankCalls": audit.post_stage_rerank_calls,
         });
-    } else if profile.profile_id == PUBLIC_PROFILE || profile.profile_id == RANK_ORDER_PROFILE {
+    } else if profile.profile_id == PUBLIC_PROFILE
+        || profile.profile_id == RANK_ORDER_PROFILE
+        || profile.profile_id == ROOT_VALUE_MIX_PROFILE
+        || profile.profile_id == ROOT_VALUE_TIEBREAK_PROFILE
+        || profile.profile_id == LEAF_CONVERSION_PROFILE
+        || profile.profile_id == LEAF_CONVERSION_GATED_PROFILE
+    {
         // B keeps the measured earlier transport wire, while composed keeps the
         // frozen transport-thread zeros; only B therefore reads core-carried
         // post-stage counts here.
@@ -908,7 +1062,12 @@ fn attach_diagnostics(
             "postStageConversionAddCalls": counters.conversion_add_calls,
             "postStageRerankCalls": counters.rerank_calls,
         });
-        if profile.profile_id == RANK_ORDER_PROFILE {
+        if profile.profile_id == RANK_ORDER_PROFILE
+            || profile.profile_id == ROOT_VALUE_MIX_PROFILE
+            || profile.profile_id == ROOT_VALUE_TIEBREAK_PROFILE
+            || profile.profile_id == LEAF_CONVERSION_PROFILE
+            || profile.profile_id == LEAF_CONVERSION_GATED_PROFILE
+        {
             response["diagnostics"]["finalOrderPolicyId"] = json!(FINAL_ORDER_POLICY_CC2);
         }
     } else if profile.is_composed() {
@@ -925,9 +1084,17 @@ pub(crate) fn public_context_digest_for_request(
     profile: &Profile,
 ) -> Result<[u8; 32], CompatError> {
     let state = composed_public_state(request)?;
-    Ok(public_context_digest(&public_context_document(
-        &state, request, profile,
-    )))
+    Ok(public_context_digest_for_state(&state, request, profile))
+}
+
+/// The same digest for a selector state the caller has already parsed from
+/// `request`.
+pub(crate) fn public_context_digest_for_state(
+    state: &F14PublicState,
+    request: &Json,
+    profile: &Profile,
+) -> [u8; 32] {
+    public_context_digest(&public_context_document(state, request, profile))
 }
 
 // Legacy composed snapshots are retained only to reproduce the earlier
@@ -1071,7 +1238,10 @@ pub(crate) fn decide_limited_with_legacy_selector(
             let options = stage.legacy_selector_options();
             let selected = match profile.profile_id.as_str() {
                 A_PROFILE => select_f14_amount_only_limited(&state, &move_values, options, limits),
-                PUBLIC_PROFILE | CORE_ALLSPIN_PROFILE | ROOT_VALUE_PROFILE => {
+                PUBLIC_PROFILE | CORE_ALLSPIN_PROFILE | ROOT_VALUE_PROFILE | ROOT_VALUE_MIX_PROFILE
+                | ROOT_VALUE_TIEBREAK_PROFILE
+                | LEAF_CONVERSION_PROFILE
+                | LEAF_CONVERSION_GATED_PROFILE => {
                     select_f14_public_limited(&state, &move_values, options, limits)
                 }
                 _ => Err(CompatError::InvalidSelector),
@@ -1123,6 +1293,15 @@ fn public_context_document(state: &F14PublicState, request: &Json, profile: &Pro
     });
     if let Some(mode) = profile.allocation_mode.as_deref() {
         profile_document["allocationMode"] = json!(mode);
+    }
+    if let Some(Some(scale)) = profile.root_value_scale.as_ref() {
+        profile_document["rootValueScale"] = json!(scale);
+    }
+    if let Some(Some(scale)) = profile.leaf_conversion_scale.as_ref() {
+        profile_document["leafConversionScale"] = json!(scale);
+    }
+    if let Some(Some(max_height)) = profile.leaf_conversion_max_height.as_ref() {
+        profile_document["leafConversionMaxHeight"] = json!(max_height);
     }
     if let Some(policy) = profile.final_order_policy_id.as_deref() {
         profile_document["finalOrderPolicyId"] = json!(policy);
@@ -1221,9 +1400,12 @@ fn decide_limited_inner(
     hook: Option<&F14CancelHook>,
     epoch: u64,
     root_decision: Option<FinishedRootDecision>,
+    admitted: bool,
 ) -> Json {
-    if let Err(response) = admit(&raw, profile) {
-        return response;
+    if !admitted {
+        if let Err(response) = admit(&raw, profile) {
+            return response;
+        }
     }
     if let Err(compat_error) = interrupted(limits) {
         let (status, reason) = map_error(compat_error);
@@ -1392,6 +1574,9 @@ mod tests {
             },
             post_spin_policy_id: None,
             allocation_mode: None,
+            root_value_scale: None,
+            leaf_conversion_scale: None,
+            leaf_conversion_max_height: None,
             final_order_policy_id: None,
         }
     }
@@ -1409,6 +1594,9 @@ mod tests {
             },
             post_spin_policy_id: Some(POST_SPIN_POLICY_OFF.into()),
             allocation_mode: None,
+            root_value_scale: None,
+            leaf_conversion_scale: None,
+            leaf_conversion_max_height: None,
             final_order_policy_id: None,
         }
     }
@@ -1426,6 +1614,89 @@ mod tests {
             },
             post_spin_policy_id: None,
             allocation_mode: None,
+            root_value_scale: None,
+            leaf_conversion_scale: None,
+            leaf_conversion_max_height: None,
+            final_order_policy_id: Some(FINAL_ORDER_POLICY_CC2.into()),
+        }
+    }
+
+    fn root_value_mix_profile(config_hash: &str) -> Profile {
+        Profile {
+            profile_id: ROOT_VALUE_MIX_PROFILE.into(),
+            config_hash: config_hash.into(),
+            seed: "5994928009864282113".into(),
+            worker_concurrency: 1,
+            budget: Budget {
+                mode: "selection".into(),
+                selections: 512,
+                max_millis: 30_000,
+            },
+            post_spin_policy_id: None,
+            allocation_mode: Some(super::super::root_allocation::ROOT_VALUE_MIX_MODE.into()),
+            root_value_scale: Some(Some("0.5".into())),
+            leaf_conversion_scale: None,
+            leaf_conversion_max_height: None,
+            final_order_policy_id: Some(FINAL_ORDER_POLICY_CC2.into()),
+        }
+    }
+
+    fn root_value_tiebreak_profile(config_hash: &str) -> Profile {
+        Profile {
+            profile_id: ROOT_VALUE_TIEBREAK_PROFILE.into(),
+            config_hash: config_hash.into(),
+            seed: "5994928009864282113".into(),
+            worker_concurrency: 1,
+            budget: Budget {
+                mode: "selection".into(),
+                selections: 512,
+                max_millis: 30_000,
+            },
+            post_spin_policy_id: None,
+            allocation_mode: Some(super::super::root_allocation::ROOT_VALUE_TIEBREAK_MODE.into()),
+            root_value_scale: None,
+            leaf_conversion_scale: None,
+            leaf_conversion_max_height: None,
+            final_order_policy_id: Some(FINAL_ORDER_POLICY_CC2.into()),
+        }
+    }
+
+    fn leaf_conversion_profile(config_hash: &str) -> Profile {
+        Profile {
+            profile_id: LEAF_CONVERSION_PROFILE.into(),
+            config_hash: config_hash.into(),
+            seed: "5994928009864282113".into(),
+            worker_concurrency: 1,
+            budget: Budget {
+                mode: "selection".into(),
+                selections: 512,
+                max_millis: 30_000,
+            },
+            post_spin_policy_id: None,
+            allocation_mode: Some(super::super::root_allocation::LEAF_CONVERSION_MODE.into()),
+            root_value_scale: None,
+            leaf_conversion_scale: Some(Some("0.5".into())),
+            leaf_conversion_max_height: None,
+            final_order_policy_id: Some(FINAL_ORDER_POLICY_CC2.into()),
+        }
+    }
+
+    fn leaf_conversion_gated_profile(config_hash: &str) -> Profile {
+        Profile {
+            profile_id: LEAF_CONVERSION_GATED_PROFILE.into(),
+            config_hash: config_hash.into(),
+            seed: "5994928009864282113".into(),
+            worker_concurrency: 1,
+            budget: Budget {
+                mode: "selection".into(),
+                selections: 512,
+                max_millis: 30_000,
+            },
+            post_spin_policy_id: None,
+            allocation_mode: Some(super::super::root_allocation::LEAF_CONVERSION_GATED_MODE.into()),
+            root_value_scale: None,
+            leaf_conversion_scale: Some(Some("0.25".into())),
+            leaf_conversion_max_height: Some(Some("8".into())),
             final_order_policy_id: Some(FINAL_ORDER_POLICY_CC2.into()),
         }
     }
@@ -1669,6 +1940,8 @@ mod tests {
         extra.final_order_policy_id = Some(FINAL_ORDER_POLICY_CC2.into());
         assert!(!extra.valid());
         let encoded = serde_json::to_value(profile()).unwrap();
+        let decoded: Profile = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(decoded, profile(), "profiles without rootValueScale remain deserializable");
         let mut keys: Vec<_> = encoded.as_object().unwrap().keys().cloned().collect();
         keys.sort();
         assert_eq!(
@@ -1762,12 +2035,247 @@ mod tests {
         legacy.allocation_mode = Some("off".into());
         assert!(!legacy.valid());
     }
+
+    #[test]
+    fn root_value_mix_profile_is_champion_bound_and_owns_its_scale_field() {
+        let mix = root_value_mix_profile(CONFIG_HASH);
+        assert!(mix.valid());
+        assert!(mix.is_public_amount() && mix.uses_core_decision());
+        assert_eq!(mix.root_value_scale_f64(), Some(0.5));
+        assert_eq!(mix.decision_stage().legacy_selector_options().final_order_policy,
+            FinalOrderPolicy::Cc2RankOrder);
+
+        let mut wrong_config = mix.clone();
+        wrong_config.config_hash = CAS_CONFIG_HASH.into();
+        assert!(!wrong_config.valid(), "root-value mix is champion-config-only");
+        let mut missing_scale = mix.clone();
+        missing_scale.root_value_scale = None;
+        assert!(!missing_scale.valid());
+        let mut non_finite_scale = mix.clone();
+        non_finite_scale.root_value_scale = Some(Some("NaN".into()));
+        assert!(!non_finite_scale.valid());
+        let mut wrong_mode = mix.clone();
+        wrong_mode.allocation_mode = Some("off".into());
+        assert!(!wrong_mode.valid());
+        let mut wrong_order = mix.clone();
+        wrong_order.final_order_policy_id = None;
+        assert!(!wrong_order.valid());
+
+        let mut legacy_root_value = core_allspin_profile(CAS_CONFIG_HASH);
+        legacy_root_value.profile_id = ROOT_VALUE_PROFILE.into();
+        let mut composed_a = profile();
+        composed_a.profile_id = COMPOSED_A.into();
+        let mut other_profiles = vec![
+            profile(),
+            public_b_profile(),
+            composed_a,
+            composed_b_profile(),
+            core_allspin_profile(CONFIG_HASH),
+            legacy_root_value,
+            rank_order_profile(CONFIG_HASH),
+            root_profile(),
+            root_value_tiebreak_profile(CONFIG_HASH),
+        ];
+        for other in &mut other_profiles {
+            other.root_value_scale = Some(Some("0.5".into()));
+            assert!(!other.valid(), "{} rejects rootValueScale", other.profile_id);
+        }
+    }
+
+    #[test]
+    fn root_value_tiebreak_profile_is_champion_bound_and_rejects_a_scale() {
+        let tie = root_value_tiebreak_profile(CONFIG_HASH);
+        assert!(tie.valid());
+        assert!(tie.is_public_amount() && tie.uses_core_decision());
+        assert_eq!(tie.root_value_scale_f64(), None);
+        assert_eq!(
+            tie.decision_stage().legacy_selector_options().final_order_policy,
+            FinalOrderPolicy::Cc2RankOrder
+        );
+
+        let mut wrong_config = tie.clone();
+        wrong_config.config_hash = CAS_CONFIG_HASH.into();
+        assert!(!wrong_config.valid(), "tiebreak profile is champion-config-only");
+        let mut with_scale = tie.clone();
+        with_scale.root_value_scale = Some(Some("0.3".into()));
+        assert!(!with_scale.valid(), "rootValueScale belongs to the mix profile");
+        let mut wrong_mode = tie.clone();
+        wrong_mode.allocation_mode = Some(super::super::root_allocation::ROOT_VALUE_MIX_MODE.into());
+        assert!(!wrong_mode.valid());
+        let mut wrong_order = tie.clone();
+        wrong_order.final_order_policy_id = None;
+        assert!(!wrong_order.valid());
+    }
+
+    #[test]
+    fn leaf_conversion_profile_is_champion_bound_and_owns_its_scale_field() {
+        let leaf = leaf_conversion_profile(CONFIG_HASH);
+        assert!(leaf.valid());
+        assert!(leaf.is_public_amount() && leaf.uses_core_decision());
+        assert_eq!(leaf.leaf_conversion_scale_f64(), Some(0.5));
+        assert_eq!(leaf.root_value_scale_f64(), None);
+        assert_eq!(
+            leaf.decision_stage()
+                .legacy_selector_options()
+                .final_order_policy,
+            FinalOrderPolicy::Cc2RankOrder
+        );
+
+        let mut wrong_config = leaf.clone();
+        wrong_config.config_hash = CAS_CONFIG_HASH.into();
+        assert!(
+            !wrong_config.valid(),
+            "leaf conversion is champion-config-only"
+        );
+        let mut missing_scale = leaf.clone();
+        missing_scale.leaf_conversion_scale = None;
+        assert!(!missing_scale.valid());
+        let mut non_finite_scale = leaf.clone();
+        non_finite_scale.leaf_conversion_scale = Some(Some("Infinity".into()));
+        assert!(!non_finite_scale.valid());
+        let mut wrong_mode = leaf.clone();
+        wrong_mode.allocation_mode = Some("off".into());
+        assert!(!wrong_mode.valid());
+        let mut wrong_order = leaf.clone();
+        wrong_order.final_order_policy_id = None;
+        assert!(!wrong_order.valid());
+        let mut wrong_scale_field = leaf.clone();
+        wrong_scale_field.root_value_scale = Some(Some("0.5".into()));
+        assert!(!wrong_scale_field.valid());
+
+        let mut legacy_root_value = core_allspin_profile(CAS_CONFIG_HASH);
+        legacy_root_value.profile_id = ROOT_VALUE_PROFILE.into();
+        let mut composed_a = profile();
+        composed_a.profile_id = COMPOSED_A.into();
+        let mut other_profiles = vec![
+            profile(),
+            public_b_profile(),
+            composed_a,
+            composed_b_profile(),
+            core_allspin_profile(CONFIG_HASH),
+            legacy_root_value,
+            rank_order_profile(CONFIG_HASH),
+            root_profile(),
+            root_value_mix_profile(CONFIG_HASH),
+            root_value_tiebreak_profile(CONFIG_HASH),
+        ];
+        for other in &mut other_profiles {
+            other.leaf_conversion_scale = Some(Some("0.5".into()));
+            assert!(
+                !other.valid(),
+                "{} rejects leafConversionScale",
+                other.profile_id
+            );
+            other.leaf_conversion_scale = None;
+            other.leaf_conversion_max_height = Some(Some("8".into()));
+            assert!(
+                !other.valid(),
+                "{} rejects leafConversionMaxHeight",
+                other.profile_id
+            );
+        }
+    }
+
+    #[test]
+    fn leaf_conversion_gated_profile_requires_canonical_scale_and_height() {
+        let gated = leaf_conversion_gated_profile(CONFIG_HASH);
+        assert!(gated.valid());
+        assert!(gated.is_public_amount() && gated.uses_core_decision());
+        assert_eq!(gated.leaf_conversion_scale_f64(), Some(0.25));
+        assert_eq!(gated.leaf_conversion_max_height_u32(), Some(8));
+        assert_eq!(
+            gated.decision_stage().legacy_selector_options().final_order_policy,
+            FinalOrderPolicy::Cc2RankOrder
+        );
+
+        let mut wrong_config = gated.clone();
+        wrong_config.config_hash = CAS_CONFIG_HASH.into();
+        assert!(!wrong_config.valid());
+        let mut missing_scale = gated.clone();
+        missing_scale.leaf_conversion_scale = None;
+        assert!(!missing_scale.valid());
+        let mut missing_height = gated.clone();
+        missing_height.leaf_conversion_max_height = None;
+        assert!(!missing_height.valid());
+        for value in ["0", "41", "01", "8.0", " 8"] {
+            let mut bad_height = gated.clone();
+            bad_height.leaf_conversion_max_height = Some(Some(value.into()));
+            assert!(!bad_height.valid(), "reject height {value:?}");
+        }
+        let mut null_scale = serde_json::to_value(&gated).unwrap();
+        null_scale["leafConversionScale"] = Json::Null;
+        assert!(!serde_json::from_value::<Profile>(null_scale).unwrap().valid());
+        let mut null_height = serde_json::to_value(&gated).unwrap();
+        null_height["leafConversionMaxHeight"] = Json::Null;
+        let parsed: Profile = serde_json::from_value(null_height).unwrap();
+        assert_eq!(parsed.leaf_conversion_max_height, Some(None));
+        assert!(!parsed.valid());
+
+        let mut old_leaf = leaf_conversion_profile(CONFIG_HASH);
+        old_leaf.leaf_conversion_max_height = Some(Some("8".into()));
+        assert!(!old_leaf.valid(), "the ungated leaf profile rejects the new field");
+    }
+
+    #[test]
+    fn leaf_conversion_gated_scale_and_height_change_public_context_digest() {
+        let selector = load_p5()["decisions"][0]["selector"].clone();
+        let base = leaf_conversion_gated_profile(CONFIG_HASH);
+        let mut changed_scale = base.clone();
+        changed_scale.leaf_conversion_scale = Some(Some("0.3".into()));
+        let mut changed_height = base.clone();
+        changed_height.leaf_conversion_max_height = Some(Some("9".into()));
+        let base_request = request_with_profile(selector.clone(), &base);
+        let scale_request = request_with_profile(selector.clone(), &changed_scale);
+        let height_request = request_with_profile(selector, &changed_height);
+        let base_digest = public_context_digest_for_request(&base_request, &base).unwrap();
+        assert_ne!(
+            base_digest,
+            public_context_digest_for_request(&scale_request, &changed_scale).unwrap()
+        );
+        assert_ne!(
+            base_digest,
+            public_context_digest_for_request(&height_request, &changed_height).unwrap()
+        );
+        let state = composed_public_state(&base_request).unwrap();
+        let document = public_context_document(&state, &base_request, &base);
+        assert_eq!(document["profile"]["leafConversionScale"], "0.25");
+        assert_eq!(document["profile"]["leafConversionMaxHeight"], "8");
+    }
+
+    #[test]
+    fn root_value_tiebreak_public_context_binds_its_mode_without_a_scale() {
+        let selector = load_p5()["decisions"][0]["selector"].clone();
+        let tie = root_value_tiebreak_profile(CONFIG_HASH);
+        let request = request_with_profile(selector, &tie);
+        let digest = public_context_digest_for_request(&request, &tie).unwrap();
+        let state = composed_public_state(&request).unwrap();
+        let document = public_context_document(&state, &request, &tie);
+
+        assert_eq!(document["profile"]["profileId"], ROOT_VALUE_TIEBREAK_PROFILE);
+        assert_eq!(document["profile"]["allocationMode"], "root-value-tiebreak-v1");
+        assert!(document["profile"].get("rootValueScale").is_none());
+        let public = public_b_profile();
+        let public_request = request_with_profile(
+            load_p5()["decisions"][0]["selector"].clone(),
+            &public);
+        assert_ne!(
+            digest,
+            public_context_digest_for_request(&public_request, &public).unwrap(),
+            "allocationMode/profile identity is included in the public context"
+        );
+    }
+
     #[test]
     fn context_serializer_golden_preserves_legacy_and_binds_root_mode() {
         let selector = load_p5()["decisions"][0]["selector"].clone();
         let legacy = profile();
         let legacy_request = request_with_profile(selector.clone(), &legacy);
         let legacy_digest = public_context_digest_for_request(&legacy_request, &legacy).unwrap();
+        let champion = public_b_profile();
+        let champion_request = request_with_profile(selector.clone(), &champion);
+        let champion_state = composed_public_state(&champion_request).unwrap();
+        let champion_document = public_context_document(&champion_state, &champion_request, &champion);
+        assert!(champion_document["profile"].get("rootValueScale").is_none());
         let root = {
             let mut value = legacy.clone();
             value.profile_id = ROOT_OBJECTIVE_PROFILE.into();
@@ -1793,6 +2301,79 @@ mod tests {
             "1d54056f9bfd9800636fade93c091e8fd4c9186cd96956b1923b357325008d10"
         );
     }
+
+    #[test]
+    fn root_value_mix_scale_changes_public_context_digest() {
+        let selector = load_p5()["decisions"][0]["selector"].clone();
+        let mut scale_zero = root_value_mix_profile(CONFIG_HASH);
+        scale_zero.root_value_scale = Some(Some("0".into()));
+        let mut scale_three_tenths = scale_zero.clone();
+        scale_three_tenths.root_value_scale = Some(Some("0.3".into()));
+        let request_zero = request_with_profile(selector.clone(), &scale_zero);
+        let request_three_tenths = request_with_profile(selector, &scale_three_tenths);
+
+        assert!(scale_zero.valid() && scale_three_tenths.valid());
+        assert_ne!(
+            public_context_digest_for_request(&request_zero, &scale_zero).unwrap(),
+            public_context_digest_for_request(&request_three_tenths, &scale_three_tenths).unwrap(),
+        );
+        let state = composed_public_state(&request_three_tenths).unwrap();
+        let document = public_context_document(&state, &request_three_tenths, &scale_three_tenths);
+        assert_eq!(document["profile"]["rootValueScale"], "0.3");
+    }
+
+    #[test]
+    fn champion_profile_rejects_present_null_conversion_scale_fields() {
+        let champion = public_b_profile();
+        assert!(champion.valid());
+
+        for field in ["leafConversionScale", "leafConversionMaxHeight", "rootValueScale"] {
+            let mut document = serde_json::to_value(&champion).unwrap();
+            document[field] = Json::Null;
+            let parsed: Profile = serde_json::from_value(document).unwrap();
+            assert!(
+                if field == "leafConversionScale" {
+                    parsed.leaf_conversion_scale == Some(None)
+                } else if field == "leafConversionMaxHeight" {
+                    parsed.leaf_conversion_max_height == Some(None)
+                } else {
+                    parsed.root_value_scale == Some(None)
+                },
+                "{field} must retain present-null"
+            );
+            assert!(!parsed.valid(), "champion profile rejects {field}: null");
+        }
+    }
+
+    #[test]
+    fn leaf_conversion_scale_changes_public_context_digest() {
+        let selector = load_p5()["decisions"][0]["selector"].clone();
+        let mut scale_zero = leaf_conversion_profile(CONFIG_HASH);
+        scale_zero.leaf_conversion_scale = Some(Some("0".into()));
+        let mut scale_three_tenths = scale_zero.clone();
+        scale_three_tenths.leaf_conversion_scale = Some(Some("0.3".into()));
+        let request_zero = request_with_profile(selector.clone(), &scale_zero);
+        let request_three_tenths = request_with_profile(selector, &scale_three_tenths);
+
+        assert!(scale_zero.valid() && scale_three_tenths.valid());
+        assert_ne!(
+            public_context_digest_for_request(&request_zero, &scale_zero).unwrap(),
+            public_context_digest_for_request(&request_three_tenths, &scale_three_tenths).unwrap(),
+        );
+        let state = composed_public_state(&request_three_tenths).unwrap();
+        let document = public_context_document(&state, &request_three_tenths, &scale_three_tenths);
+        assert_eq!(document["profile"]["leafConversionScale"], "0.3");
+        let champion = public_b_profile();
+        let champion_request =
+            request_with_profile(load_p5()["decisions"][0]["selector"].clone(), &champion);
+        let champion_state = composed_public_state(&champion_request).unwrap();
+        assert!(
+            public_context_document(&champion_state, &champion_request, &champion)["profile"]
+                .get("leafConversionScale")
+                .is_none()
+        );
+    }
+
     #[test]
     fn rejects_root_amounts_and_fail_open_selector_inputs() {
         let p = profile();
@@ -2441,17 +3022,35 @@ mod tests {
         timed
     }
 
+    fn timed_gated_leaf_conversion_profile(selections: u64) -> Profile {
+        let mut timed = leaf_conversion_gated_profile(CONFIG_HASH);
+        timed.budget.mode = TIME_BUDGET_MODE.into();
+        timed.budget.max_millis = 250;
+        timed.budget.selections = selections;
+        timed
+    }
+
     #[test]
-    fn time_budget_is_public_only_host_clocked_and_capped() {
+    fn time_budget_is_public_or_gated_host_clocked_and_capped() {
         let timed = timed_public_profile(512);
         assert!(timed.valid());
+        let gated = timed_gated_leaf_conversion_profile(512);
+        assert!(gated.valid());
         let mut long = timed.clone();
         long.budget.max_millis = 30_000;
         assert!(!long.valid());
+        let mut long_gated = gated.clone();
+        long_gated.budget.max_millis = 30_000;
+        assert!(!long_gated.valid());
         let mut profile_a = timed.clone();
         profile_a.profile_id = A_PROFILE.into();
         profile_a.seed = "1395802947".into();
         assert!(!profile_a.valid());
+        let mut other_profile = core_allspin_profile(CONFIG_HASH);
+        assert!(other_profile.valid());
+        other_profile.budget.mode = TIME_BUDGET_MODE.into();
+        other_profile.budget.max_millis = 250;
+        assert!(!other_profile.valid());
         assert!(timed.budget_met(1) && timed.budget_met(512));
         assert!(!timed.budget_met(0) && !timed.budget_met(513));
         assert!(public_b_profile().budget_met(public_b_profile().budget.selections));
@@ -2497,6 +3096,9 @@ mod tests {
         reordered["start"]["queue"][19] = json!("T");
         reordered["selector"]["pieces"]["known"][18] = json!("Z");
         assert!(admit(&reordered, &public).is_err());
+        let gated = leaf_conversion_gated_profile(CONFIG_HASH);
+        assert!(admit(&long_queue_request(&gated, 28), &gated).is_ok());
+        assert!(admit(&long_queue_request(&gated, 29), &gated).is_err());
         // Other profiles keep the 14-piece contract.
         let composed = composed_b_profile();
         assert!(admit(&long_queue_request(&composed, 14), &composed).is_ok());
@@ -2797,6 +3399,48 @@ mod tests {
     }
 
     #[test]
+    fn gated_leaf_conversion_rerank_matches_fresh_for_normal_and_rescue_positions() {
+        let mut original: Json = serde_json::from_str(include_str!(
+            "../../../../fixtures/diagnostics/f14-public-search-rescue-request.json"
+        ))
+        .expect("saved F14 search rescue fixture");
+        let profile = leaf_conversion_gated_profile(CONFIG_HASH);
+        original["execution"] = json!(profile);
+        original["requestId"] = json!("gated-rerank-source");
+        original["positionId"] = json!("gated-rerank-source-position");
+        original["generation"] = json!(2);
+        original["selector"]["incoming"] = json!({ "pendingRows": 0, "dueThisLockRows": 0 });
+        let (baseline, retained) = run_f14_driver_with_retained(&profile, original.clone());
+        assert_eq!(baseline["status"], "move", "{baseline}");
+        let retained = retained.expect("gated search retained its root result");
+
+        for (name, pending_rows, rescue_applied) in [("normal", 0, false), ("rescue", 19, true)] {
+            let mut target = original.clone();
+            target["requestId"] = json!(format!("gated-rerank-{name}"));
+            target["positionId"] = json!(format!("gated-rerank-{name}-position"));
+            target["generation"] = json!(3);
+            target["selector"]["incoming"] =
+                json!({ "pendingRows": pending_rows, "dueThisLockRows": 0 });
+            let reranked = rerank_retained(
+                target.clone(),
+                &retained.request,
+                &retained.profile,
+                &retained.outcome,
+            );
+            let fresh = run_f14_driver(&profile, target);
+            assert_eq!(
+                reranked["ranking"]["rescueApplied"], rescue_applied,
+                "{name}: {reranked}"
+            );
+            let mut actual = reranked;
+            let mut expected = fresh;
+            without_timing_fields(&mut actual);
+            without_timing_fields(&mut expected);
+            assert_eq!(actual, expected, "gated rerank case {name}");
+        }
+    }
+
+    #[test]
     fn public_b_rerank_matches_fresh_search_when_a_next_piece_is_revealed() {
         let source: Json = serde_json::from_str(include_str!(
             "../../../../fixtures/diagnostics/f14-public-search-rescue-request.json"
@@ -2819,7 +3463,8 @@ mod tests {
             target["generation"] = json!(3);
             target["selector"]["pieces"]["known"] = json!(known[..revealed]);
             target["selector"]["incoming"] = json!({ "pendingRows": incoming.0, "dueThisLockRows": incoming.1 });
-            let reranked = rerank_retained(target.clone(), &retained.request, &retained.profile, &retained.outcome);
+            let reranked = rerank_retained(target.clone(), &retained.request, &retained.profile, &retained.outcome,
+            );
             let mut actual = reranked.clone();
             let mut expected = run_f14_driver(&profile, target);
             without_timing_fields(&mut actual);
@@ -2831,7 +3476,8 @@ mod tests {
         changed["requestId"] = json!("rerank-next-start");
         changed["start"]["hold"] = json!("T");
         changed["selector"]["pieces"]["hold"] = json!("T");
-        let refused = rerank_retained(changed, &retained.request, &retained.profile, &retained.outcome);
+        let refused = rerank_retained(changed, &retained.request, &retained.profile, &retained.outcome,
+        );
         assert_eq!(refused["reason"], "rerank-mismatch", "{refused}");
     }
 

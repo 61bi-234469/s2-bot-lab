@@ -220,6 +220,7 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
                     target,
                     mv: child.mv,
                     cached_eval: eval + child.reward,
+                    root_bonus: super::RootOrderAdjustment::NONE,
                     reward: child.reward,
                     root_priority: child.root_priority,
                 });

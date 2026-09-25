@@ -85,15 +85,20 @@ export async function createCc2WasmSession({ wasmBytes, config = null, selection
       // Invalid admission is returned as the native-shaped decision response
       // from f14_start, so callers can preserve the native error contract.
       if (started?.type === "f14_decision") return started;
-      let progress = invoke({ op: "work", selections: 8 });
       // A time budget is clocked here, like CC2's THINK TIME: work until the
       // deadline, then rank what the search has (the WASM module has no clock).
+      // The 8-selection unit bounds how far past the deadline one unit can run.
+      // A selection budget has no deadline, so it takes larger units: the
+      // search result is the same, and each unit is one JSON round trip.
       if (profile?.budget?.mode === "time") {
+        let progress = invoke({ op: "work", selections: 8 });
         const deadline = startedAt + profile.budget.maxMillis;
         while (!progress.complete && performance.now() < deadline) progress = invoke({ op: "work", selections: 8 });
-      } else {
-        while (!progress.complete) progress = invoke({ op: "work", selections: 8 });
+        const response = invoke({ op: progress.complete ? "f14_finish" : "f14_finish_early" });
+        return validateF14Response(response);
       }
+      let progress = invoke({ op: "work", selections: 64 });
+      while (!progress.complete) progress = invoke({ op: "work", selections: 64 });
       const response = invoke({ op: progress.complete ? "f14_finish" : "f14_finish_early" });
       return validateF14Response(response);
     },

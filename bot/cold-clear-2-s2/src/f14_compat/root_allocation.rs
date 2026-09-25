@@ -17,6 +17,10 @@ use super::{selection_score, CompatError, RankedCandidate};
 pub(crate) const PREFIX_VIEW_SCHEMA: &str = "f14-root-prefix-view/v1";
 pub(crate) const ALLOCATION_MODE: &str = "conversion-permutation-v1";
 pub(crate) const ROOT_VALUE_MODE: &str = "f14-core-allspin-rootvalue/1";
+pub(crate) const ROOT_VALUE_MIX_MODE: &str = "root-value-mix-v1";
+pub(crate) const ROOT_VALUE_TIEBREAK_MODE: &str = "root-value-tiebreak-v1";
+pub(crate) const LEAF_CONVERSION_MODE: &str = "leaf-conversion-v1";
+pub(crate) const LEAF_CONVERSION_GATED_MODE: &str = "leaf-conversion-gated-v1";
 pub(crate) const PREFIX_LIMIT: usize = 16;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

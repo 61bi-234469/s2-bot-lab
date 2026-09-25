@@ -13,7 +13,7 @@ import { guiStateToCc2NativeStart } from '../src-js/cc2-s2-native-start.mjs';
 import { decisionStateToSyntheticGui } from '../src-js/s2-amount-only-decision-state.mjs';
 import { handicapColumnHeights } from '../src-js/gui-1p-handicap-garbage.mjs';
 import { listS2AmountOnlyPublicReachablePlacements } from '../src-js/s2-amount-only-public-candidates.mjs';
-import { createPublicCompatProfile } from '../src-js/public-compat-request.mjs';
+import { defaultBotParameters } from '../src-js/bot-parameters.mjs';
 
 const tap = (frame, key) => ['keydown', 'keyup'].map(type => ({ frame, type, data: { key, subframe: 0 } }));
 const config = { left: 'human', right: 'cc2-s2-f14', seed: 42, maxTurns: null };
@@ -38,13 +38,23 @@ function fakeCoreDecision(request, selectedCc2Rank) {
   const placements = listS2AmountOnlyPublicReachablePlacements(request.selector)
     .filter(placement => !placement.usedHold && placement.rotation === 'spawn').slice(0, 4);
   const identities = placements.map(placement => canonicalize(canonicalPlacementToGuiMove(placement)));
-  return { status: 'move', reason: 'selection-budget', selectedIdentity: identities[selectedCc2Rank],
+  const rescueApplied = selectedCc2Rank !== 0;
+  return { status: 'move', reason: 'selection-budget', profileId: request.execution.profileId,
+    diagnostics: { finalOrderPolicyId: 'cc2-rank-order/1', postStageRerankCalls: 1,
+      postStageConversionComputeCalls: placements.length, postStageConversionAddCalls: placements.length },
+    selectedIdentity: identities[selectedCc2Rank],
     selectedMove: JSON.parse(identities[selectedCc2Rank]), selectedPlacement: placements[selectedCc2Rank],
-    ranking: { returnedIdentities: identities, identities: [identities[selectedCc2Rank], ...identities.filter((_, rank) => rank !== selectedCc2Rank)], selectedCc2Rank,
-      candidates: identities.map((_, cc2Rank) => ({ cc2Rank, solvent: true, selectionScore: -cc2Rank })) } };
+    // cc2-rank-order/1: the core's order is CC2 order; a rescue selects the
+    // first solvent rank after an insolvent rank 0.
+    ranking: { returnedIdentities: identities, identities: [...identities],
+      selectedCc2Rank, rescueApplied,
+      candidates: identities.map((_, cc2Rank) => {
+        const solvent = !rescueApplied || cc2Rank >= selectedCc2Rank;
+        return { cc2Rank, solvent, solvency: solvent ? 1 : -1, selectionScore: -cc2Rank };
+      }) } };
 }
 
-test('champion INPUT asks the F14 profile-B core and locks its selected move', async () => {
+test('champion INPUT asks the gated F14 core and locks its selected move', async () => {
   let proposals = 0;
   let decided;
   let core;
@@ -62,12 +72,35 @@ test('champion INPUT asks the F14 profile-B core and locks its selected move', a
     for (let i = 0; i < 5; i++) await flush();
   }
   assert.equal(proposals, 0, 'the champion never asks a CC2 proposal process');
-  assert.deepEqual(decided.profile, createPublicCompatProfile());
-  assert.equal(decided.request.execution.profileId, 'f14-amount-only-compat-b/1');
+  assert.equal(decided.profile.profileId, 'f14-leaf-conversion-gated-b/1');
+  assert.equal(decided.request.execution.profileId, decided.profile.profileId);
   assert.equal(resolved.status, 'planned', JSON.stringify(resolved));
   assert.equal(resolved.selection.adoptionRank, 0);
   const pose = placement => [placement.piece, placement.rotation, placement.x, placement.y, placement.usedHold];
   assert.deepEqual(pose(resolved.placement), pose(core.selectedPlacement));
+});
+
+test('champion INPUT always builds a gated F14 request from default parameters', async () => {
+  let decided;
+  let resolved;
+  const handlers = createGuiInputMatchHandlers({ runtime: {
+    propose: () => assert.fail('the champion never asks a CC2 proposal process'),
+    decideF14: async payload => { decided = payload; return fakeCoreDecision(payload.request, 0); },
+    resolveInput: async payload => (resolved = resolveInputJob(payload)),
+    closeSessions: async () => {},
+  } });
+  const parameters = defaultBotParameters('cc2-s2-champion');
+  const start = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
+    ...config, right: 'cc2-s2-champion', rightParameters: parameters,
+  } });
+  assert.equal(start.status, 200, JSON.stringify(start.body));
+  for (let frame = 1; frame <= 4 && resolved === undefined; frame++) {
+    await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: { sessionId: start.body.sessionId, frame } });
+    for (let i = 0; i < 5; i++) await flush();
+  }
+  assert.equal(decided.profile.profileId, 'f14-leaf-conversion-gated-b/1');
+  assert.equal(decided.request.execution.profileId, decided.profile.profileId);
+  assert.equal(resolved.status, 'planned', JSON.stringify(resolved));
 });
 
 for (const rerankMismatch of [false, true])
@@ -137,12 +170,18 @@ test(`champion INPUT ${rerankMismatch ? 'falls back on rerank mismatch' : 'reran
   const pose = placement => [placement.piece, placement.rotation, placement.x, placement.y, placement.usedHold];
   assert.deepEqual(pose(lastPlan.placement), pose(expected.selectedPlacement));
   assert.equal(view.bots[1].inputExecution.championReranks, rerankMismatch ? 0 : 1);
+  assert.equal(view.bots[1].inputExecution.championSpeculationHits, 0,
+    'this incoming-only re-finalization is not a next-piece speculation hit');
   assert.equal(view.bots[1].inputExecution.inputPlanReuses, !rerankMismatch && sameTarget ? 1 : 0);
   await handlers.handle({ method: 'POST', path: '/api/input-match/close', body: { sessionId: started.sessionId } });
 });
 
 test('champion INPUT treats a core with no legal placement as no controller input', async () => {
-  for (const empty of [{ status: 'root-no-move', reason: 'no-legal-placement' }, { status: 'error', reason: 'empty-candidates' }]) {
+  for (const empty of [
+    { status: 'root-no-move', reason: 'no-legal-placement' },
+    { status: 'error', reason: 'empty-candidates' },
+  ].map(response => ({ ...response, profileId: 'f14-leaf-conversion-gated-b/1',
+    diagnostics: { finalOrderPolicyId: 'cc2-rank-order/1' } }))) {
     const handlers = createGuiInputMatchHandlers({ runtime: {
       propose: () => assert.fail('the champion never asks a CC2 proposal process'),
       decideF14: async () => empty,

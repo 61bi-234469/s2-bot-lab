@@ -46,11 +46,13 @@ export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
     parameters: CC2_PARAMETERS,
   }),
   "cc2-s2-champion": Object.freeze({
-    description: "いま開発中でいちばん強いBot（champion）です。調整途中の版で、公式に検証済み（release-qualified）ではありません。既定（SELECTION 512・THINK TIME OFF・QUEUE 14）が現チャンピオンそのものの設定です。",
+    description: "開発中のchampionです。F14 gated leaf-conversion profile (kappa=0.25, H=8, cc2-rank-order/1) を使用し、root rescue を保持します。開発専用で、release-qualified ではありません。最終順序は CC2 順（rerank なし）で、rescue だけが rank 0 以外を選びます。",
     // The F14 core runs at most 1,000,000 selections and needs a NEXT piece.
-    parameters: Object.freeze(CC2_PARAMETERS.map((parameter) =>
-      parameter.key === "selectionLimit" ? Object.freeze({ ...parameter, maximum: 1_000_000 })
-        : parameter.key === "queueDepth" ? Object.freeze({ ...parameter, minimum: 2 }) : parameter)),
+    parameters: Object.freeze([
+      ...CC2_PARAMETERS.map((parameter) =>
+        parameter.key === "selectionLimit" ? Object.freeze({ ...parameter, maximum: 1_000_000 })
+          : parameter.key === "queueDepth" ? Object.freeze({ ...parameter, minimum: 2 }) : parameter),
+    ]),
   }),
   "cc2-s2-champion-legacy": Object.freeze({
     description: "比較用：F14コア導入前のチャンピオンのINPUT判断経路（CC2候補＋旧F14評価）です。TTRM INPUTと非INPUTの両方で選べます。現在のS2実行ファイルとspawn-integrity-v2設定を使い、ローカルはnative、ブラウザ版はWASMで候補を生成します。当時のバイナリ全体の復元ではありません。INPUT時の入力操作は現チャンピオンと共通です。",
@@ -81,7 +83,8 @@ export function botParameterCapability(botType) {
 export function defaultBotParameters(botType) {
   const definition = definitionFor(botType);
   return Object.freeze(Object.fromEntries(
-    definition.parameters.map((parameter) => [parameter.key, parameter.defaultValue]),
+    definition.parameters.filter((parameter) => parameter.omitDefault !== true)
+      .map((parameter) => [parameter.key, parameter.defaultValue]),
   ));
 }
 
@@ -89,6 +92,12 @@ export function normalizeBotParameters(botType, input = {}) {
   const definition = definitionFor(botType);
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
     throw new Error(`${botType} parameters must be an object`);
+  }
+  // Older saved champion settings carried an ENGINE selector. Its value no
+  // longer changes the route, so silently discard that key during migration.
+  if (botType === "cc2-s2-champion" && Object.hasOwn(input, "engineProfile")) {
+    input = { ...input };
+    delete input.engineProfile;
   }
   const known = new Set(definition.parameters.map((parameter) => parameter.key));
   const unknown = Object.keys(input).find((key) => !known.has(key));
@@ -98,6 +107,13 @@ export function normalizeBotParameters(botType, input = {}) {
     const value = input[parameter.key] ?? parameter.defaultValue;
     if (parameter.type === "boolean") {
       if (typeof value !== "boolean") throw new Error(`${parameter.key} must be a boolean`);
+      return [parameter.key, value];
+    }
+    if (parameter.type === "enum") {
+      const allowed = parameter.options?.map(({ value: option }) => option) ?? [];
+      if (typeof value !== "string" || !allowed.includes(value)) {
+        throw new Error(`${parameter.key} must be one of ${allowed.join(", ")}`);
+      }
       return [parameter.key, value];
     }
     if (parameter.type === "number") {
@@ -111,6 +127,11 @@ export function normalizeBotParameters(botType, input = {}) {
     }
     return [parameter.key, value];
   }));
+  for (const parameter of definition.parameters) {
+    if (parameter.omitDefault === true && normalized[parameter.key] === parameter.defaultValue) {
+      delete normalized[parameter.key];
+    }
+  }
   if ("selectionEnabled" in normalized && !normalized.selectionEnabled && !normalized.thinkTimeEnabled) {
     throw new Error("SELECTION and THINK TIME cannot both be disabled");
   }

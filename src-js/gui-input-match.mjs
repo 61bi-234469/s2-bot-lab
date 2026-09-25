@@ -15,7 +15,7 @@ import { HANDICAP_GARBAGE_ID, handicapColumnHeights, handicapGarbageCells,
   handicapRecord, normalizeHandicapGarbage } from './gui-1p-handicap-garbage.mjs';
 import { normalizeTurnMatch } from './gui-turn-match.mjs';
 import { championInputMoves, createChampionInputRequest, predictChampionNextRequest } from './input-champion-decision.mjs';
-import { assertChampionParameters, championVisibleState, createChampionProfile } from './champion-parameters.mjs';
+import { assertChampionParameters, assertGatedChampionResponse, championVisibleState, createChampionProfile } from './champion-parameters.mjs';
 
 const IDS = ['left', 'right'];
 const KEYS = new Set(['moveLeft', 'moveRight', 'softDrop', 'hardDrop', 'rotateCW', 'rotateCCW', 'rotate180', 'hold']);
@@ -481,6 +481,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
             delete session.speculations[id];
             decided = await runtime.decideF14(payload);
           }
+          assertGatedChampionResponse(payload.request, decided);
           // No legal placement is no controller input, as for CC2. The core
           // reports it as root-no-move before search or empty-candidates after
           // it; the champion screen runner counts both as terminal.
@@ -488,6 +489,9 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
             ? { identity, state: savedState, status: 'no-input', coreDecision: true,
               evidence: { status: decided.status, reason: decided.reason } }
             : { identity, state: savedState, coreDecision: true, moves: championInputMoves(decided, initial.decision.pieces),
+              // The core's spin witness for its selected move; the planner
+              // reuses it instead of repeating the public reach search.
+              preferredWitness: structuredClone(decided.selectedPlacement ?? null),
               next: speculationRequest(initial.decision, payload, decided, parameters) };
         } else try { response = await runtime.propose({ sessionKey, engine: type, state,
           selectionLimit: parameters.selectionEnabled ? parameters.selectionLimit : null,
@@ -534,6 +538,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
       const cached = session.cachedPlans[id];
       const resolved = await runtime.resolveInput({ request, movement: latest.movement, startFrame,
         reuse: cached && equal(cached.identity, identity) ? cached.reuse : null,
+        preferredWitness: proposed.preferredWitness ?? null,
         timeProgression: session.round.timeProgression, naturalGravity: session.round.naturalGravity });
       if (!live(session)) return;
       const diagnostics = session.diagnostics[id];
