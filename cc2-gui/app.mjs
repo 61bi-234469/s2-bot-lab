@@ -1,4 +1,4 @@
-import { INPUT_BOT_PROFILES } from '/shared/input-bot-contract.mjs';
+import { INPUT_BOT_PROFILES, INPUT_QUEUE_DEPTH_MAXIMUM, INPUT_QUEUE_DEPTH_MINIMUM } from '/shared/input-bot-contract.mjs';
 import {
   applyS2Transition,
   clearLabel,
@@ -94,7 +94,7 @@ const BOT_SIDES = Object.freeze(["left", "right"]);
    being absent: the grid below each field keeps its height, so the arena does
    not jump when the first view arrives or after RESET. */
 const EMPTY_MATCH_METRICS = calculatePlayerMetrics({ pieces: 0, attack: 0, garbageCleared: 0, elapsedFrames: 0 });
-const INPUT_EXECUTION_PROFILE = "s2-input-execution/1";
+const INPUT_EXECUTION_PROFILE = "s2-input-execution/2";
 const INPUT_MATCH_ENDPOINT = "/api/input-match";
 const INPUT_SUPPORTED_TYPES = new Set(["human", ...Object.keys(INPUT_BOT_PROFILES)]);
 /* The 1P stall penalty. Its identifiers and stored preference keys keep the
@@ -385,7 +385,8 @@ function applyStoredPreferences() {
   elements["think-value"].textContent = elements["think-ms"].value;
 }
 
-/* Input execution can expose current + 14 NEXT pieces. Persist the cap for
+/* Input execution exposes current + up to 19 NEXT pieces (the Triangle
+   queue as it stands). Persist the cap for
    every admitted bot on both sides so switching bots while input mode remains
    enabled cannot restore an invalid queue depth. */
 function clampInputQueueDepths() {
@@ -393,8 +394,8 @@ function clampInputQueueDepths() {
   let changed = false;
   for (const side of BOT_SIDES) for (const botType of Object.keys(INPUT_BOT_PROFILES)) {
     const values = botParameters[side][botType];
-    if (values?.queueDepth <= 15) continue;
-    botParameters[side][botType] = { ...values, queueDepth: 15 };
+    if (values?.queueDepth === undefined || (values.queueDepth >= INPUT_QUEUE_DEPTH_MINIMUM && values.queueDepth <= INPUT_QUEUE_DEPTH_MAXIMUM)) continue;
+    botParameters[side][botType] = { ...values, queueDepth: Math.min(INPUT_QUEUE_DEPTH_MAXIMUM, Math.max(INPUT_QUEUE_DEPTH_MINIMUM, values.queueDepth)) };
     changed = true;
   }
   return changed;
@@ -602,7 +603,10 @@ function botParameterRow(parameter, values, { nested = false, describe = true, s
     input.type = "number";
     input.min = parameter.minimum;
     input.max = parameter.maximum;
-    if (parameter.key === "queueDepth" && inputModeSelected()) input.max = Math.min(15, parameter.maximum);
+    if (parameter.key === "queueDepth" && inputModeSelected()) {
+      input.min = Math.max(INPUT_QUEUE_DEPTH_MINIMUM, parameter.minimum);
+      input.max = Math.min(INPUT_QUEUE_DEPTH_MAXIMUM, parameter.maximum);
+    }
     input.step = parameter.step;
     input.value = values[parameter.key];
   }

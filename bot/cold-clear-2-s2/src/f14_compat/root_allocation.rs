@@ -21,6 +21,8 @@ pub(crate) const ROOT_VALUE_MIX_MODE: &str = "root-value-mix-v1";
 pub(crate) const ROOT_VALUE_TIEBREAK_MODE: &str = "root-value-tiebreak-v1";
 pub(crate) const LEAF_CONVERSION_MODE: &str = "leaf-conversion-v1";
 pub(crate) const LEAF_CONVERSION_GATED_MODE: &str = "leaf-conversion-gated-v1";
+pub(crate) const LEAF_CONVERSION_PRESSURE_GATED_MODE: &str = "leaf-conversion-pressure-gated-v1";
+pub(crate) const LEAF_CONVERSION_GATED_B2B_CHARGE_MODE: &str = "leaf-conversion-gated-b2b-charge-v1";
 pub(crate) const PREFIX_LIMIT: usize = 16;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

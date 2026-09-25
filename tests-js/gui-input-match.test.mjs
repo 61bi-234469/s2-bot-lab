@@ -364,7 +364,7 @@ test('input GUI preserves native B2B payload, bounds THINK TIME and accumulates 
     }, closeSessions: async () => {},
   } });
   const rejected = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: { ...config, rightParameters: { queueDepth: 28 } } });
-  assert.match(rejected.body.error, /QUEUE DEPTH up to 15/);
+  assert.match(rejected.body.error, /QUEUE DEPTH 2-20 \(current \+ 1 to 19 NEXT\)/);
   const { body: started } = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
     ...config, rightParameters: { pps: 7, queueDepth: 15, thinkTimeEnabled: true, thinkMs: 1000 },
   } });

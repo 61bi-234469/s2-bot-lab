@@ -11,7 +11,9 @@ use super::reach::{
 use super::root_allocation::{
     PrefixViewSignature, RootCandidateFacts, RootCandidateFactsCache, RootLocalAblation,
     RootPrefixView, RootRejectedFacts, RootSnapshotBinding, ALLOCATION_MODE,
-    LEAF_CONVERSION_GATED_MODE, LEAF_CONVERSION_MODE, PREFIX_LIMIT, ROOT_VALUE_MIX_MODE,
+    LEAF_CONVERSION_GATED_MODE, LEAF_CONVERSION_MODE, LEAF_CONVERSION_PRESSURE_GATED_MODE,
+    LEAF_CONVERSION_GATED_B2B_CHARGE_MODE,
+    PREFIX_LIMIT, ROOT_VALUE_MIX_MODE,
     ROOT_VALUE_MODE, ROOT_VALUE_TIEBREAK_MODE,
 };
 use super::{
@@ -397,6 +399,8 @@ pub(crate) enum AllocationMode {
     RootValueTiebreakV1,
     LeafConversionV1,
     LeafConversionGatedV1,
+    LeafConversionPressureGatedV1,
+    LeafConversionGatedB2bChargeV1,
 }
 
 impl AllocationMode {
@@ -408,6 +412,8 @@ impl AllocationMode {
             Self::RootValueTiebreakV1 => ROOT_VALUE_TIEBREAK_MODE,
             Self::LeafConversionV1 => LEAF_CONVERSION_MODE,
             Self::LeafConversionGatedV1 => LEAF_CONVERSION_GATED_MODE,
+            Self::LeafConversionPressureGatedV1 => LEAF_CONVERSION_PRESSURE_GATED_MODE,
+            Self::LeafConversionGatedB2bChargeV1 => LEAF_CONVERSION_GATED_B2B_CHARGE_MODE,
         }
     }
 }
@@ -916,6 +922,17 @@ impl RootObjectiveSession {
 
     pub(crate) fn allocation_mode(&self) -> AllocationMode {
         self.allocation_mode
+    }
+
+    pub(crate) fn uses_pressure_gated_leaf_conversion(&self) -> bool {
+        self.allocation_mode == AllocationMode::LeafConversionPressureGatedV1
+    }
+
+    /// Public pending incoming rows of the root request, added to the
+    /// leaf-conversion gate height only by the pressure-gated mode.
+    pub(crate) fn leaf_conversion_root_pressure_rows(&self) -> Option<u32> {
+        self.uses_pressure_gated_leaf_conversion()
+            .then_some(self.context.state.incoming.pending_rows)
     }
 
     pub(crate) fn uses_root_values(&self) -> bool {

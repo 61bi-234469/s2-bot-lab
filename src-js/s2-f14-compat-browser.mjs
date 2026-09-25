@@ -8,9 +8,13 @@ export const CORE_ALLSPIN_PROFILE = "f14-core-allspin-b/1";
 export const RANK_ORDER_PROFILE = "f14-rank-order-b/1";
 export const ROOT_OBJECTIVE_PROFILE = "f14-root-objective-b/1";
 export const ROOT_LEAF_CONVERSION_GATED_PROFILE = "f14-leaf-conversion-gated-b/1";
+export const ROOT_LEAF_CONVERSION_PRESSURE_GATED_PROFILE = "f14-leaf-conversion-pressure-gated-b/1";
+export const ROOT_LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE = "f14-leaf-conversion-gated-b2b-charge-b/1";
 export const POST_SPIN_POLICY_OFF = "non-t-spin-prior-off/1";
 export const FINAL_ORDER_POLICY_CC2 = "cc2-rank-order/1";
 export const LEAF_CONVERSION_GATED_MODE = "leaf-conversion-gated-v1";
+export const LEAF_CONVERSION_PRESSURE_GATED_MODE = "leaf-conversion-pressure-gated-v1";
+export const LEAF_CONVERSION_GATED_B2B_CHARGE_MODE = "leaf-conversion-gated-b2b-charge-v1";
 export const F14_COMPAT_CONFIG_HASH =
   "sha256:12665e92fa86934d82b5fd909b1248954e267d4e5c8fcafb0c23024938d1a769";
 
@@ -72,6 +76,71 @@ export function createF14LeafConversionGatedProfile({
   });
 }
 
+export function createF14LeafConversionPressureGatedProfile({
+  scale,
+  maxHeight,
+  maxMillis = 30_000,
+  seed = "5994928009864282113",
+  configHash = F14_COMPAT_CONFIG_HASH,
+} = {}) {
+  if (configHash !== F14_COMPAT_CONFIG_HASH) {
+    throw new Error("leaf-conversion-pressure-gated profile requires the champion compat config hash");
+  }
+  if (!Number.isSafeInteger(maxMillis) || maxMillis < 0 || maxMillis > 300_000) {
+    throw new Error("F14 leaf-conversion-pressure-gated maxMillis is outside profile budget bounds");
+  }
+  if (typeof scale !== "string"
+      || !/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/u.test(scale)
+      || !Number.isFinite(Number(scale))) {
+    throw new Error("F14 leaf-conversion-pressure-gated scale must be a finite decimal string");
+  }
+  if (typeof maxHeight !== "string" || !/^(?:[1-9]|[1-3]\d|40)$/u.test(maxHeight)) {
+    throw new Error("F14 leaf-conversion-pressure-gated maxHeight must be a decimal integer string from 1 to 40");
+  }
+  const seedString = String(seed);
+  if (!/^\d+$/.test(seedString) || BigInt(seedString) > 0xffff_ffff_ffff_ffffn
+      || BigInt(seedString).toString() !== seedString) {
+    throw new Error("F14 leaf-conversion-pressure-gated seed must be a canonical u64 decimal string");
+  }
+  return Object.freeze({
+    profileId: ROOT_LEAF_CONVERSION_PRESSURE_GATED_PROFILE,
+    configHash,
+    seed: seedString,
+    workerConcurrency: 1,
+    budget: Object.freeze({ mode: "selection", selections: 512, maxMillis }),
+    allocationMode: LEAF_CONVERSION_PRESSURE_GATED_MODE,
+    leafConversionScale: scale,
+    leafConversionMaxHeight: maxHeight,
+    finalOrderPolicyId: FINAL_ORDER_POLICY_CC2,
+  });
+}
+
+export function createF14LeafConversionGatedB2bChargeProfile({
+  scale,
+  maxHeight,
+  b2bChargeScale,
+  maxMillis = 30_000,
+  seed = "5994928009864282113",
+  configHash = F14_COMPAT_CONFIG_HASH,
+} = {}) {
+  if (typeof b2bChargeScale !== "string"
+      || !/^(?:0|[1-9]\d*)(?:\.\d*[1-9])?$/u.test(b2bChargeScale)
+      || !Number.isFinite(Number(b2bChargeScale))
+      || Number(b2bChargeScale) < 0
+      || !Number.isFinite(Math.fround(Number(b2bChargeScale)))) {
+    throw new Error("F14 b2bChargeScale must be a canonical finite nonnegative decimal string");
+  }
+  const gated = createF14LeafConversionGatedProfile({
+    scale, maxHeight, maxMillis, seed, configHash,
+  });
+  return Object.freeze({
+    ...gated,
+    profileId: ROOT_LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE,
+    allocationMode: LEAF_CONVERSION_GATED_B2B_CHARGE_MODE,
+    b2bChargeScale,
+  });
+}
+
 export function boardCellsToTbpBoard(cells) {
   if (typeof cells !== "string" || cells.length !== 400) throw new Error("F14 start board cells must be 400 characters");
   const board = [];
@@ -130,10 +199,13 @@ const F14_COMPOSED_FACT_KEYS = [...F14_EXTENDED_SCORE_KEYS, "qualifies", "renCom
 
 function assertF14CandidateScores(response) {
   if (![F14_PUBLIC_PROFILE, CORE_ALLSPIN_PROFILE, RANK_ORDER_PROFILE, ROOT_LEAF_CONVERSION_GATED_PROFILE,
+    ROOT_LEAF_CONVERSION_PRESSURE_GATED_PROFILE, ROOT_LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE,
     "f14-composed-ranking-b/1", ROOT_OBJECTIVE_PROFILE].includes(response.profileId)) return;
   const candidates = response.ranking?.candidates;
   if (candidates === undefined) {
-    if (response.profileId === RANK_ORDER_PROFILE || response.profileId === ROOT_LEAF_CONVERSION_GATED_PROFILE) {
+    if (response.profileId === RANK_ORDER_PROFILE || response.profileId === ROOT_LEAF_CONVERSION_GATED_PROFILE
+        || response.profileId === ROOT_LEAF_CONVERSION_PRESSURE_GATED_PROFILE
+        || response.profileId === ROOT_LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE) {
       throw new Error("missing F14 rank-order ranking candidates");
     }
     return;
@@ -149,6 +221,8 @@ function assertF14CandidateScores(response) {
     if (response.profileId === "f14-composed-ranking-b/1" || response.profileId === ROOT_OBJECTIVE_PROFILE) {
       if (stableJson(keys) !== stableJson(composedShape)) throw new Error("invalid F14 composed ranking candidate shape");
     } else if (response.profileId === RANK_ORDER_PROFILE || response.profileId === ROOT_LEAF_CONVERSION_GATED_PROFILE
+        || response.profileId === ROOT_LEAF_CONVERSION_PRESSURE_GATED_PROFILE
+        || response.profileId === ROOT_LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE
         ? stableJson(keys) !== stableJson(extendedShape)
         : stableJson(keys) !== stableJson(oldShape) && stableJson(keys) !== stableJson(extendedShape)) {
       throw new Error("invalid F14 public ranking candidate shape");
@@ -208,6 +282,57 @@ export function assertF14LeafConversionGatedProfile(profile) {
   }
 }
 
+export function assertF14LeafConversionPressureGatedProfile(profile) {
+  try {
+    const budget = profile?.budget;
+    if (budget == null || typeof budget !== "object" || Array.isArray(budget)
+        || budget.mode !== "selection"
+        || !Number.isSafeInteger(budget.selections) || budget.selections < 1 || budget.selections > 1_000_000
+        || !Number.isSafeInteger(budget.maxMillis) || budget.maxMillis < 0 || budget.maxMillis > 300_000) {
+      throw new Error("invalid selection profile budget");
+    }
+    const base = createF14LeafConversionPressureGatedProfile({
+      scale: profile?.leafConversionScale,
+      maxHeight: profile?.leafConversionMaxHeight,
+      seed: profile?.seed,
+      configHash: profile?.configHash,
+      maxMillis: budget.maxMillis,
+    });
+    const expected = { ...base, budget: {
+      mode: budget.mode, selections: budget.selections, maxMillis: budget.maxMillis,
+    } };
+    if (stableJson(profile) !== stableJson(expected)) throw new Error("profile fields do not match the admitted profile");
+  } catch (error) {
+    throw new Error(`invalid F14 leaf-conversion-pressure-gated profile: ${error.message}`);
+  }
+}
+
+export function assertF14LeafConversionGatedB2bChargeProfile(profile) {
+  try {
+    const budget = profile?.budget;
+    if (budget == null || typeof budget !== "object" || Array.isArray(budget)
+        || budget.mode !== "selection"
+        || !Number.isSafeInteger(budget.selections) || budget.selections < 1 || budget.selections > 1_000_000
+        || !Number.isSafeInteger(budget.maxMillis) || budget.maxMillis < 0 || budget.maxMillis > 300_000) {
+      throw new Error("invalid selection profile budget");
+    }
+    const base = createF14LeafConversionGatedB2bChargeProfile({
+      scale: profile?.leafConversionScale,
+      maxHeight: profile?.leafConversionMaxHeight,
+      b2bChargeScale: profile?.b2bChargeScale,
+      seed: profile?.seed,
+      configHash: profile?.configHash,
+      maxMillis: budget.maxMillis,
+    });
+    const expected = { ...base, budget: {
+      mode: budget.mode, selections: budget.selections, maxMillis: budget.maxMillis,
+    } };
+    if (stableJson(profile) !== stableJson(expected)) throw new Error("profile fields do not match the admitted profile");
+  } catch (error) {
+    throw new Error(`invalid F14 leaf-conversion-gated-b2b-charge profile: ${error.message}`);
+  }
+}
+
 export function assertF14Response(request, response) {
   if (response?.type !== "f14_decision" || response.schemaVersion !== 1
       || response.requestId !== request.requestId || response.positionId !== request.positionId
@@ -221,7 +346,19 @@ export function assertF14Response(request, response) {
   assertStrategicBoundary(response.boundaryAudit);
   if (!["move", "root-no-move", "incomplete", "unsupported", "error"].includes(response.status)) throw new Error("invalid F14 status");
   if (response.profileId === ROOT_LEAF_CONVERSION_GATED_PROFILE) assertF14LeafConversionGatedProfile(request.execution);
-  if (response.profileId === RANK_ORDER_PROFILE || response.profileId === ROOT_LEAF_CONVERSION_GATED_PROFILE) {
+  if (response.profileId === ROOT_LEAF_CONVERSION_PRESSURE_GATED_PROFILE) {
+    assertF14LeafConversionPressureGatedProfile(request.execution);
+  }
+  if (response.profileId === ROOT_LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE) {
+    assertF14LeafConversionGatedB2bChargeProfile(request.execution);
+  }
+  if (response.profileId !== ROOT_LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE
+      && Object.hasOwn(request.execution ?? {}, "b2bChargeScale")) {
+    throw new Error("b2bChargeScale is only admitted for the gated B2B charge profile");
+  }
+  if (response.profileId === RANK_ORDER_PROFILE || response.profileId === ROOT_LEAF_CONVERSION_GATED_PROFILE
+      || response.profileId === ROOT_LEAF_CONVERSION_PRESSURE_GATED_PROFILE
+      || response.profileId === ROOT_LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE) {
     const diagnostics = response.diagnostics;
     const fields = ["postStageConversionComputeCalls", "postStageConversionAddCalls", "postStageRerankCalls"];
     if (diagnostics == null || typeof diagnostics !== "object" || Array.isArray(diagnostics)

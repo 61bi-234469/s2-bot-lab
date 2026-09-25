@@ -743,27 +743,81 @@ pub fn advance_f14_amount_only(
         .map_err(|_| CompatError::InvalidIncoming);
     }
     let spin = parse_f14_spin(&lock.spin)?;
-    let combo_after = u8::try_from(lock.combo_after).map_err(|_| CompatError::ChainOutOfU8)?;
-    let b2b_after = u8::try_from(lock.b2b_after).map_err(|_| CompatError::ChainOutOfU8)?;
-    let b2b_before = u8::try_from(lock.b2b_before).map_err(|_| CompatError::ChainOutOfU8)?;
-    let outgoing = amount_only_search_attack(
-        lock.lines,
-        spin,
-        lock.perfect_clear,
-        combo_after,
-        b2b_after,
-        b2b_before,
-    )
-    .unwrap_or(0);
-    if lock.lines == 0 && outgoing != 0 {
-        return Err(CompatError::InconsistentSearchAttack);
-    }
-    advance_amount_only(
+    advance_f14_amount_only_nonempty(
         pending,
         due,
         lock.lines,
         spin,
         lock.perfect_clear,
+        lock.combo_after,
+        lock.b2b_after,
+        lock.b2b_before,
+    )
+}
+
+/// Search already has the canonical spin enum, so it can run the amount-only
+/// projection without allocating a public spin string for each child.
+pub(crate) fn advance_f14_amount_only_with_spin(
+    incoming: F14Incoming,
+    lines: u32,
+    spin: Spin,
+    perfect_clear: bool,
+    combo_after: u32,
+    b2b_after: u32,
+    b2b_before: u32,
+) -> Result<AmountDelta, CompatError> {
+    let pending = require_u8(incoming.pending_rows)?;
+    let due = require_u8(incoming.due_this_lock_rows)?;
+    if due > pending {
+        return Err(CompatError::InvalidIncoming);
+    }
+    if pending == 0 && due == 0 {
+        return advance_amount_only(0, 0, lines, Spin::None, false, 0, 0, 0)
+            .map_err(|_| CompatError::InvalidIncoming);
+    }
+    advance_f14_amount_only_nonempty(
+        pending,
+        due,
+        lines,
+        spin,
+        perfect_clear,
+        combo_after,
+        b2b_after,
+        b2b_before,
+    )
+}
+
+fn advance_f14_amount_only_nonempty(
+    pending: u8,
+    due: u8,
+    lines: u32,
+    spin: Spin,
+    perfect_clear: bool,
+    combo_after: u32,
+    b2b_after: u32,
+    b2b_before: u32,
+) -> Result<AmountDelta, CompatError> {
+    let combo_after = u8::try_from(combo_after).map_err(|_| CompatError::ChainOutOfU8)?;
+    let b2b_after = u8::try_from(b2b_after).map_err(|_| CompatError::ChainOutOfU8)?;
+    let b2b_before = u8::try_from(b2b_before).map_err(|_| CompatError::ChainOutOfU8)?;
+    let outgoing = amount_only_search_attack(
+        lines,
+        spin,
+        perfect_clear,
+        combo_after,
+        b2b_after,
+        b2b_before,
+    )
+    .unwrap_or(0);
+    if lines == 0 && outgoing != 0 {
+        return Err(CompatError::InconsistentSearchAttack);
+    }
+    advance_amount_only(
+        pending,
+        due,
+        lines,
+        spin,
+        perfect_clear,
         combo_after,
         b2b_after,
         b2b_before,

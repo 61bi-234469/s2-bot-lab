@@ -277,12 +277,13 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
       }
     }
   }
-  const engine = new Engine(config);
   if (canonicalProfile === INPUT_EXECUTION_PROFILE.id) {
-    // Queue#shift replenishes before consuming; keep one extra item buffered
-    // so the public queue still exposes the profile's full NEXT window after a shift.
-    engine.queue.minLength = INPUT_EXECUTION_PROFILE.publicNext + 1;
+    // Set before the Engine spawns its first piece. Queue#shift replenishes
+    // before consuming, so after every spawn the public queue holds 13-19 NEXT:
+    // the Triangle model's queue, exposed as it stands.
+    config.queue = { ...config.queue, minLength: INPUT_EXECUTION_PROFILE.queueMinimum };
   }
+  const engine = new Engine(config);
   // The referee comparison runs under the rules this round is actually played
   // under: a fixed-rules round is compared against the static-time ruleset, so
   // the Engine and the S2 Simulator agree about attack past the S2 margin.
@@ -558,7 +559,7 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
         cell.stallPenalty === true ? 'P' : cell.mino.length === 1 ? cell.mino.toUpperCase() : 'G')),
         lastPlaced: engine.board.state.flatMap((row, y) => row.flatMap((cell, x) => lastPlacedBlocks.has(cell) ? [[x, y]] : [])),
         current: engine.falling.symbol.toUpperCase(), hold: engine.held?.toUpperCase() ?? null,
-        next: Array.from(engine.queue).slice(0, 14).map(value => value.toUpperCase()),
+        next: Array.from(engine.queue).map(value => value.toUpperCase()),
         activeCells: engine.falling.absoluteBlocks.map(cell => [...cell]),
         holdAvailable: !engine.holdLocked, toppedOut: engine.toppedOut,
         stats: structuredClone(engine.stats), lastLock: structuredClone(locks.at(-1) ?? null),
@@ -579,7 +580,7 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
           cells: engine.board.state.flatMap(row => row.map(cell => cell === null ? '_' :
             cell.mino.length === 1 ? cell.mino.toUpperCase() : 'G')).join('') },
         pieces: { current: engine.falling.symbol.toUpperCase(), hold: engine.held?.toUpperCase() ?? null,
-          holdAvailable: !engine.holdLocked, known: Array.from(engine.queue).slice(0, INPUT_EXECUTION_PROFILE.publicNext).map(value => value.toUpperCase()), fidelity: 'exact' },
+          holdAvailable: !engine.holdLocked, known: Array.from(engine.queue).map(value => value.toUpperCase()), fidelity: 'exact' },
         chain: { combo: Math.max(0, engine.stats.combo + 1), b2b: Math.max(0, engine.stats.b2b + 1), fidelity: 'exact' },
         time: { logicalFrame: engine.frame, piecesPlaced: engine.stats.pieces, frameSemantics: 'engine-frame', fidelity: 'exact' },
         garbage: triangleSnapshotToCanonical(engine.garbageQueue.snapshot(), { capState: { consumedThisTick: 0 }, fidelity: 'exact' }),

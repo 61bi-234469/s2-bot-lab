@@ -1,6 +1,7 @@
 import { createInputExecutionRound, assertInputPlanLock } from './input-execution-round.mjs';
 import { decisionStateToSyntheticGui } from './s2-amount-only-decision-state.mjs';
-import { isInputBotType } from './input-bot-contract.mjs';
+import { INPUT_QUEUE_DEPTH_MAXIMUM, INPUT_QUEUE_DEPTH_MINIMUM, isInputBotType } from './input-bot-contract.mjs';
+import { INPUT_EXECUTION_PROFILE } from './replay/engine-config.mjs';
 import { INPUT_DECISION_REQUEST_ID } from './input-decision-request.mjs';
 import { normalizeBotParameters } from './bot-parameters.mjs';
 import { guiStateToCc2NativeStart } from './cc2-s2-native-start.mjs';
@@ -20,6 +21,21 @@ import { assertChampionParameters, assertGatedChampionResponse, championVisibleS
 const IDS = ['left', 'right'];
 const KEYS = new Set(['moveLeft', 'moveRight', 'softDrop', 'hardDrop', 'rotateCW', 'rotateCCW', 'rotate180', 'hold']);
 const equal = (a, b) => canonicalize(a) === canonicalize(b);
+export function isChampionInputSpeculationHit(speculation, request) {
+  if (!speculation?.start || !request?.start || !equal(speculation.execution, request.execution)) return false;
+  if (speculation.queuePrefix !== 1) {
+    return speculation.queuePrefix === 0 && equal(speculation.start, request.start);
+  }
+  const retainedQueue = speculation.start?.queue;
+  const requestedQueue = request.start?.queue;
+  if (!Array.isArray(retainedQueue) || !Array.isArray(requestedQueue) ||
+      requestedQueue.length !== retainedQueue.length + 1 ||
+      retainedQueue.some((piece, index) => piece !== requestedQueue[index]) ||
+      speculation.start.randomizer?.type !== 'seven_bag' ||
+      !Array.isArray(speculation.start.randomizer.bag_state) ||
+      speculation.start.randomizer.bag_state.length !== 0) return false;
+  return equal({ ...speculation.start, queue: requestedQueue }, request.start);
+}
 const paceFrame = value => Math.ceil(value - 1e-9);
 const pieceIdentity = state => ({ board: state.decision.board, pieces: state.decision.pieces,
   chain: state.decision.chain, piecesPlaced: state.decision.lockTime.piecesPlaced });
@@ -83,7 +99,10 @@ function lockCount(session, id) {
 /** Shared local/Pages input owner. Only the synchronous step path mutates a
  * round; asynchronous jobs receive public copies and can publish plans for a
  * future, checked boundary. */
-export function createGuiInputMatchHandlers({ runtime, now = () => performance.now() }) {
+// `championQueuePrefixSpeculation` enables the one-piece queue-prefix
+// speculation at QUEUE 14: the search runs one piece short of the real queue,
+// so it can rarely change a decision. It stays off by default.
+export function createGuiInputMatchHandlers({ runtime, now = () => performance.now(), championQueuePrefixSpeculation = false }) {
   let current = null;
   let generation = 0;
   const ok = body => ({ status: 200, body });
@@ -114,7 +133,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           // stays inside the exportable profile.
           const timeProgression = body.timeProgression ?? true;
           if (typeof timeProgression !== 'boolean') throw new Error('invalid TIME PROGRESSION setting');
-          if (IDS.some(id => types[id] !== 'human' && parameters[id].queueDepth > 15)) throw new Error('TTRM INPUT supports QUEUE DEPTH up to 15 (current + 14 NEXT)');
+          if (IDS.some(id => types[id] !== 'human' && (parameters[id].queueDepth < INPUT_QUEUE_DEPTH_MINIMUM || parameters[id].queueDepth > INPUT_QUEUE_DEPTH_MAXIMUM))) throw new Error(`TTRM INPUT supports QUEUE DEPTH ${INPUT_QUEUE_DEPTH_MINIMUM}-${INPUT_QUEUE_DEPTH_MAXIMUM} (current + 1 to ${INPUT_EXECUTION_PROFILE.publicNextMaximum} NEXT)`);
           if (body.maxTurns != null && (!Number.isSafeInteger(body.maxTurns) || body.maxTurns < 1 || body.maxTurns > 10000)) throw new Error('invalid MAX TURNS');
           if (current) current.closed = true;
           const sessionId = `input-${++generation}`;
@@ -383,7 +402,12 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
   function speculationRequest(decision, payload, decided, parameters) {
     if (typeof runtime.speculateF14 !== 'function' || payload.profile.budget.mode !== 'selection') return null;
     try {
-      return predictChampionNextRequest(decision, payload.request, decided, { profile: payload.profile, queueDepth: parameters.queueDepth });
+      return predictChampionNextRequest(decision, payload.request, decided, {
+        profile: payload.profile,
+        queueDepth: parameters.queueDepth,
+        queueRefillsByBag: INPUT_EXECUTION_PROFILE.id === 's2-input-execution/2',
+        queuePrefixSpeculation: championQueuePrefixSpeculation,
+      });
     } catch {
       return null;
     }
@@ -391,12 +415,13 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
   // Runs once this piece is planned on the core's selection, so its own rerank
   // basis is no longer needed. Failure only loses the head start.
   function speculate(session, id, sessionKey, type, proposed) {
-    const request = proposed.next;
+    const { request, queuePrefix } = proposed.next;
     proposed.next = null;
-    const speculation = { start: request.start, execution: request.execution };
+    const speculation = { start: request.start, execution: request.execution, queuePrefix };
     session.speculations[id] = speculation;
     session.diagnostics[id].championSpeculations++;
-    runtime.speculateF14({ sessionKey, type, engine: { botType: type, engineId: type }, request, profile: request.execution })
+    runtime.speculateF14({ sessionKey, type, engine: { botType: type, engineId: type }, request,
+      profile: request.execution, inputSpeculation: queuePrefix === 1 })
       .then(response => { if (response?.status !== 'move' && session.speculations[id] === speculation) delete session.speculations[id]; },
         () => { if (session.speculations[id] === speculation) delete session.speculations[id]; });
   }
@@ -462,8 +487,8 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           // being moved serves it when `start` came true; the core checks
           // that and reranks from this request, exactly as a fresh decision.
           const speculated = session.speculations[id];
-          const speculationHit = speculated !== undefined && equal(speculated.start, payload.request.start) &&
-            equal(speculated.execution, payload.request.execution);
+          const speculationHit = isChampionInputSpeculationHit(speculated, payload.request);
+          const inputQueuePrefixHit = speculationHit && speculated.queuePrefix === 1;
           if ((canRerank || speculationHit) && typeof runtime.rerankF14 === 'function') {
             try {
               const reranked = await runtime.rerankF14(payload);
@@ -481,14 +506,17 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
             delete session.speculations[id];
             decided = await runtime.decideF14(payload);
           }
-          assertGatedChampionResponse(payload.request, decided);
+          assertGatedChampionResponse(payload.request, decided, { allowQueuePrefix: usedRerank && inputQueuePrefixHit });
           // No legal placement is no controller input, as for CC2. The core
           // reports it as root-no-move before search or empty-candidates after
           // it; the champion screen runner counts both as terminal.
           proposed = decided.status === 'root-no-move' || (decided.status === 'error' && decided.reason === 'empty-candidates')
             ? { identity, state: savedState, status: 'no-input', coreDecision: true,
               evidence: { status: decided.status, reason: decided.reason } }
-            : { identity, state: savedState, coreDecision: true, moves: championInputMoves(decided, initial.decision.pieces),
+            : { identity, state: savedState, coreDecision: true, moves: championInputMoves(decided, {
+                ...initial.decision.pieces,
+                allowQueuePrefix: usedRerank && inputQueuePrefixHit,
+              }),
               // The core's spin witness for its selected move; the planner
               // reuses it instead of repeating the public reach search.
               preferredWitness: structuredClone(decided.selectedPlacement ?? null),
@@ -533,7 +561,11 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
       const request = { id: INPUT_DECISION_REQUEST_ID, sessionKey, type,
         engine: { botType: type, engineId: type }, decision: latest.decision,
         moves: structuredClone(proposed.moves) };
-      const startFrame = Math.max(session.round.frame + (session.leadFrames[id] ?? 2), dueFrame);
+      // The one-frame headroom after a miss (late or mismatched result) applies
+      // to this piece only. It is added here, not kept in leadFrames, so an
+      // adopted plan does not pass it on to the next piece.
+      const leadFrames = (session.leadFrames[id] ?? 2) + ((session.misses[id] ?? 0) > 0 ? 1 : 0);
+      const startFrame = Math.max(session.round.frame + leadFrames, dueFrame);
       const resolveStarted = now();
       const cached = session.cachedPlans[id];
       const resolved = await runtime.resolveInput({ request, movement: latest.movement, startFrame,
@@ -563,9 +595,10 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
       // A busy host may advance several logical frames in one step. Include
       // that observed progress, rather than repeatedly missing with a budget
       // derived only from wall time at an assumed 60 Hz.
+      // A late result also counts as a miss below, so its headroom comes from
+      // `misses` at the next resolve.
       session.leadFrames[id] = Math.min(120, Math.max(1, Math.ceil(planningMs * 60 / 1000),
-        session.round.frame - latest.movement.frame) +
-        (session.round.frame > startFrame || (session.misses[id] ?? 0) > 0 ? 1 : 0));
+        session.round.frame - latest.movement.frame));
       // After the plan, so the search never delays it (Pages resolves in the
       // same worker), and only when the planner took the core's selection.
       if (proposed.next && outcome === 'preferred') speculate(session, id, sessionKey, type, proposed);
@@ -611,7 +644,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
         garbage: { pending: player.pendingRows, packets: player.pendingChunks },
         metrics: calculatePlayerMetrics({ pieces: stats.turns, attack: stats.attack, garbageCleared: stats.garbageCleared, elapsedFrames: frame }) };
     });
-    return { executionProfile: 's2-input-execution/1', sessionId: session.sessionId,
+    return { executionProfile: INPUT_EXECUTION_PROFILE.id, sessionId: session.sessionId,
       status: session.round.status, humanSide: session.types.left === 'human' ? 'left' : null,
       turnNumber: Math.max(...bots.map(bot => bot.stats.turns)), bots, config: session.config,
       clock: { logicalFrame: frame }, metricElapsedMs: frame * 1000 / 60, nextStepFrames: 1,

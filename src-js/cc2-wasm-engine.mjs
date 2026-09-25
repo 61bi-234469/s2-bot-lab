@@ -80,8 +80,24 @@ export async function createCc2WasmSession({ wasmBytes, config = null, selection
       return { suggestion, peakMemoryBytes: exports.memory.buffer.byteLength };
     },
     async decideF14({ request, profile }) {
+      return runF14Search({ request, profile, startOp: "f14_start" });
+    },
+    async speculateInputF14({ request, profile }) {
+      return runF14Search({ request, profile, startOp: "f14_input_speculate_start" });
+    },
+    async rerankF14({ request, profile: _profile }) {
+      const response = invoke({ op: "f14_rerank", request });
+      return validateF14Response(response);
+    },
+    async close() {
+      if (!closed) invoke({ op: "stop" });
+      closed = true;
+    },
+  });
+
+  function runF14Search({ request, profile, startOp }) {
       const startedAt = performance.now();
-      const started = invoke({ op: "f14_start", profile, request });
+      const started = invoke({ op: startOp, profile, request });
       // Invalid admission is returned as the native-shaped decision response
       // from f14_start, so callers can preserve the native error contract.
       if (started?.type === "f14_decision") return started;
@@ -101,16 +117,7 @@ export async function createCc2WasmSession({ wasmBytes, config = null, selection
       while (!progress.complete) progress = invoke({ op: "work", selections: 64 });
       const response = invoke({ op: progress.complete ? "f14_finish" : "f14_finish_early" });
       return validateF14Response(response);
-    },
-    async rerankF14({ request, profile: _profile }) {
-      const response = invoke({ op: "f14_rerank", request });
-      return validateF14Response(response);
-    },
-    async close() {
-      if (!closed) invoke({ op: "stop" });
-      closed = true;
-    },
-  });
+  }
 }
 
 function validateF14Response(response) {

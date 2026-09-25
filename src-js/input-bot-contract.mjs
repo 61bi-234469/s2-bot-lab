@@ -13,6 +13,16 @@ export const INPUT_BOT_PROFILES = Object.freeze(Object.fromEntries([
   ['cc2-s2-champion-legacy', 'f14-amount-only/1'],
 ].map(([type, selector]) => [type, Object.freeze({ id: INPUT_BOT_CONTRACT_ID, type, selector })])));
 
+/** Deepest QUEUE DEPTH (current piece included) an INPUT bot may request: the
+ * current piece plus the most NEXT the Triangle queue can hold (19). A deeper
+ * request than the public queue offers at a spawn searches what is public.
+ * Bound to `INPUT_EXECUTION_PROFILE.publicNextMaximum + 1` by the profile test. */
+export const INPUT_QUEUE_DEPTH_MAXIMUM = 20;
+/** Shallowest QUEUE DEPTH an INPUT bot may request: the current piece and one
+ * NEXT. With the current piece alone a native CC2 INPUT search never answers and
+ * the F14 core traps, so 1 is refused for every INPUT bot. */
+export const INPUT_QUEUE_DEPTH_MINIMUM = 2;
+
 export function isInputBotType(type) {
   return Object.hasOwn(INPUT_BOT_PROFILES, type);
 }

@@ -1,6 +1,10 @@
 import S2_MANIFEST from "../../rulesets/tetrio-s2-v19-beta-1-5-0-observed.json" with { type: "json" };
 
-export const INPUT_EXECUTION_PROFILE_ID = "s2-input-execution/1";
+// `/1` (until 2026-09-25) kept the Engine queue at 15 pieces and exposed exactly
+// 14 NEXT. `/2` exposes the queue the Triangle Engine model holds: its 14-piece
+// minimum is replenished one 7-bag at a time before a spawn takes a piece, so
+// after a spawn 13-19 NEXT are public (current + 13 is always available).
+export const INPUT_EXECUTION_PROFILE_ID = "s2-input-execution/2";
 export const INPUT_EXECUTION_HANDLING = Object.freeze({
   arr: 0, das: 0, dcd: 0, sdf: 41, safelock: false,
   cancel: true, may20g: true, irs: "off", ihs: "off",
@@ -9,7 +13,9 @@ export const INPUT_EXECUTION_HANDLING = Object.freeze({
 export const INPUT_EXECUTION_PROFILE = Object.freeze({
   id: INPUT_EXECUTION_PROFILE_ID,
   rulesetId: S2_MANIFEST.id,
-  publicNext: 14,
+  queueMinimum: 14,
+  publicNextMinimum: 13,
+  publicNextMaximum: 19,
   handling: INPUT_EXECUTION_HANDLING,
 });
 

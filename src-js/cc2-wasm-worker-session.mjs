@@ -38,6 +38,7 @@ export async function createCc2WasmWorkerSession({ wasmBytes }) {
   let closing = null;
   return Object.freeze({
     decideF14: ({ request, profile }) => call('decideF14', { request, profile }),
+    speculateInputF14: ({ request, profile }) => call('speculateInputF14', { request, profile }),
     rerankF14: ({ request, profile }) => call('rerankF14', { request, profile }),
     close() {
       closing ??= call('close').catch(() => {}).finally(() => worker.terminate());

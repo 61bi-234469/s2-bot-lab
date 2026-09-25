@@ -45,6 +45,10 @@ fn allocation_mode_for(profile_id: &str, allocation_mode: Option<&str>) -> Alloc
         AllocationMode::LeafConversionV1
     } else if profile_id == f14::LEAF_CONVERSION_GATED_PROFILE {
         AllocationMode::LeafConversionGatedV1
+    } else if profile_id == f14::LEAF_CONVERSION_PRESSURE_GATED_PROFILE {
+        AllocationMode::LeafConversionPressureGatedV1
+    } else if profile_id == f14::LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE {
+        AllocationMode::LeafConversionGatedB2bChargeV1
     } else if allocation_mode == Some("conversion-permutation-v1") {
         AllocationMode::PermutationV1
     } else {
@@ -358,7 +362,9 @@ mod root_allocation_mode_tests {
     use crate::f14_compat::transport::{
         A_PROFILE, COMPOSED_A, COMPOSED_B, CORE_ALLSPIN_PROFILE, PUBLIC_PROFILE,
         RANK_ORDER_PROFILE, ROOT_OBJECTIVE_PROFILE, ROOT_VALUE_MIX_PROFILE,
-        LEAF_CONVERSION_GATED_PROFILE, LEAF_CONVERSION_PROFILE, ROOT_VALUE_TIEBREAK_PROFILE,
+        LEAF_CONVERSION_GATED_PROFILE, LEAF_CONVERSION_PRESSURE_GATED_PROFILE,
+        LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE,
+        LEAF_CONVERSION_PROFILE, ROOT_VALUE_TIEBREAK_PROFILE,
     };
 
     #[test]
@@ -385,6 +391,20 @@ mod root_allocation_mode_tests {
                 Some("leaf-conversion-gated-v1")
             ),
             AllocationMode::LeafConversionGatedV1
+        );
+        assert_eq!(
+            allocation_mode_for(
+                LEAF_CONVERSION_PRESSURE_GATED_PROFILE,
+                Some("leaf-conversion-pressure-gated-v1")
+            ),
+            AllocationMode::LeafConversionPressureGatedV1
+        );
+        assert_eq!(
+            allocation_mode_for(
+                LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE,
+                Some("leaf-conversion-gated-b2b-charge-v1")
+            ),
+            AllocationMode::LeafConversionGatedB2bChargeV1
         );
         for profile_id in [
             A_PROFILE,

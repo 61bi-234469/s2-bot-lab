@@ -265,7 +265,7 @@ test("champion INPUT match locks the WASM F14 core selection, also under incomin
     f14SessionFor: () => createCc2WasmSession({ wasmBytes }) });
   const decisions = [];
   const plans = [];
-  const handlers = createGuiInputMatchHandlers({ runtime: {
+  const handlers = createGuiInputMatchHandlers({ championQueuePrefixSpeculation: true, runtime: {
     ...runtime,
     decideF14: async (payload) => { const response = await runtime.decideF14(payload); decisions.push({ payload, response }); return response; },
     // An incoming-only change, or the next piece whose `start` a speculative
@@ -308,11 +308,19 @@ test("champion INPUT match locks the WASM F14 core selection, also under incomin
     assert.ok(champion.championSpeculationHits > champion.championSpeculations / 2, JSON.stringify(champion));
     assert.ok(champion.championSpeculationHits > 0,
       "a gated retained-search speculation was reused instead of triggering a fresh-search fallback");
+    // A one-piece queue-prefix speculation searched one piece
+    // fewer than the real request and must say so; it is not a fresh answer.
+    const prefixReranks = decisions.filter(({ response }) => response.search?.searchedQueueLength !== undefined);
+    for (const { payload, response } of prefixReranks) {
+      assert.equal(response.search.searchedQueueLength, payload.request.start.queue.length - 1);
+      assert.equal(response.search.queueLength, response.search.searchedQueueLength);
+    }
     // A fresh core session answers the same request identically, also for
-    // the re-ranked (speculative or incoming-only) decisions.
+    // the other re-ranked (exact speculative or incoming-only) decisions.
+    const exact = decisions.filter(({ response }) => response.search?.searchedQueueLength === undefined);
     const fresh = await createCc2WasmSession({ wasmBytes });
     try {
-      for (const { payload, response } of [...decisions.slice(0, 5), ...decisions.filter((decision) => decision.reranked).slice(0, 20)]) {
+      for (const { payload, response } of [...exact.slice(0, 5), ...exact.filter((decision) => decision.reranked).slice(0, 20)]) {
         const again = await fresh.decideF14({ request: payload.request, profile: payload.profile });
         assert.equal(firstResponseMismatch(again, response), null);
       }
@@ -414,7 +422,7 @@ test("champion THINK TIME and QUEUE DEPTH decide through the WASM core", { skip:
   } finally { await session.close(); }
 });
 
-test("champion INPUT match honours THINK TIME and a 15-piece QUEUE DEPTH", { skip: !existsSync(wasmPath), timeout: 120_000 }, async () => {
+test("champion INPUT match honours THINK TIME and a QUEUE DEPTH beyond 14", { skip: !existsSync(wasmPath), timeout: 120_000 }, async () => {
   const wasmBytes = readFileSync(wasmPath);
   const runtime = createNativeInputRuntime({ engineFor: () => assert.fail("the champion never starts a CC2 process"),
     f14SessionFor: () => createCc2WasmSession({ wasmBytes }) });
@@ -424,7 +432,7 @@ test("champion INPUT match honours THINK TIME and a 15-piece QUEUE DEPTH", { ski
   try {
     const start = await handlers.handle({ method: "POST", path: "/api/input-match/start", body: {
       left: "human", right: "cc2-s2-champion", seed: 42, maxTurns: null,
-      rightParameters: { ...defaultBotParameters("cc2-s2-champion"), ppsEnabled: false, thinkTimeEnabled: true, thinkMs: 80, queueDepth: 15 } } });
+      rightParameters: { ...defaultBotParameters("cc2-s2-champion"), ppsEnabled: false, thinkTimeEnabled: true, thinkMs: 80, queueDepth: 20 } } });
     assert.equal(start.status, 200, JSON.stringify(start.body));
     let view = start.body;
     for (let frame = 1; frame < 600 && view.bots[1].stats.turns < 1; frame++) {
@@ -434,7 +442,9 @@ test("champion INPUT match honours THINK TIME and a 15-piece QUEUE DEPTH", { ski
     assert.equal(view.bots[1].stats.turns, 1);
     assert.equal(requests[0].profile.budget.mode, "time");
     assert.equal(requests[0].profile.budget.maxMillis, 80);
-    // INPUT shows the current piece and 14 NEXT, so 15 is its deepest queue.
-    assert.equal(requests[0].request.start.queue.length, 15);
+    // A depth beyond 14 searches every public piece up to QUEUE DEPTH: the
+    // Triangle queue holds 13-19 NEXT after a spawn.
+    const { known } = requests[0].request.selector.pieces;
+    assert.equal(requests[0].request.start.queue.length, Math.min(20, 1 + known.length));
   } finally { await runtime.closeSessions(); }
 });

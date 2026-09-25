@@ -31,6 +31,10 @@ test("the worker F14 session decides and reranks like the in-process session wit
         assert.equal(firstResponseMismatch(expected, actual), null);
         assert.ok(ticks > 0, "event loop was blocked during the worker search");
 
+        const inputOptedLocal = await local.speculateInputF14({ request, profile });
+        const inputOptedWorker = await worker.speculateInputF14({ request, profile });
+        assert.equal(firstResponseMismatch(inputOptedLocal, inputOptedWorker), null);
+
         const reranked = { ...request, selector: { ...request.selector, incoming: { pendingRows: 3, dueThisLockRows: 1 } } };
         assert.equal(firstResponseMismatch(await local.rerankF14({ request: reranked, profile }),
           await worker.rerankF14({ request: reranked, profile })), null);

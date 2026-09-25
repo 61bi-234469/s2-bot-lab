@@ -16,12 +16,13 @@ import {
 // Execute the production event/pump functions with a controlled browser clock
 // and deferred fetch. No second implementation of their scheduling policy.
 const source = readFileSync(new URL('../cc2-gui/app.mjs', import.meta.url), 'utf8');
-test('enabling TTRM INPUT caps all admitted bot queues on both sides', () => {
+test('enabling TTRM INPUT bounds all admitted bot queues on both sides to 2-20', () => {
   const types = ['cc2-raw', 'cc2-chouhy', 'cc2-s2-f14', 'cc2-s2-champion'];
   const app = vm.createContext({
     BOT_SIDES: ['left', 'right'], INPUT_BOT_PROFILES: Object.fromEntries(types.map(type => [type, {}])),
+    INPUT_QUEUE_DEPTH_MINIMUM: 2, INPUT_QUEUE_DEPTH_MAXIMUM: 20,
     botParameters: Object.fromEntries(['left', 'right'].map(side => [side,
-      Object.fromEntries(types.map((type, index) => [type, { queueDepth: index % 2 ? 15 : 28, marker: side }]))])),
+      Object.fromEntries(types.map((type, index) => [type, { queueDepth: [28, 1, 15, 21][index], marker: side }]))])),
     inputModeSelected: () => app.enabled,
   });
   vm.runInContext(source.match(/function clampInputQueueDepths\([\s\S]*?^}/m)[0], app);
@@ -30,8 +31,9 @@ test('enabling TTRM INPUT caps all admitted bot queues on both sides', () => {
   assert.equal(app.botParameters.left['cc2-raw'].queueDepth, 28);
   app.enabled = true;
   assert.equal(app.clampInputQueueDepths(), true);
-  for (const side of app.BOT_SIDES) for (const type of types) {
-    assert.equal(app.botParameters[side][type].queueDepth, 15);
+  for (const side of app.BOT_SIDES) for (const [index, type] of types.entries()) {
+    // Out-of-range depths move to the nearest INPUT bound; in-range ones stay.
+    assert.equal(app.botParameters[side][type].queueDepth, [20, 2, 15, 20][index]);
     assert.equal(app.botParameters[side][type].marker, side);
   }
   assert.equal(app.clampInputQueueDepths(), false);

@@ -341,10 +341,7 @@ pub fn run_integrated(profile: s2_transport::Profile) -> std::io::Result<()> { s
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run_f14(profile: f14_compat::transport::Profile) -> std::io::Result<()> {
-    let mut config: BotConfig = serde_json::from_str(profile.config_bytes()).expect("f14 bot config");
-    config.search_seed = profile.seed_u64().expect("validated seed");
-    config.search_selection_limit = profile.budget.selections;
-    config.enable_s2_amount_only_incoming = false;
+    let config = profile.search_bot_config().expect("validated f14 bot config");
     let config = Arc::new(config);
     let bot = Arc::new(BotSyncronizer::new());
     spawn_workers(&bot);
