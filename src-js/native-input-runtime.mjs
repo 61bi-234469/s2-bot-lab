@@ -71,12 +71,16 @@ export function createNativeInputRuntime({ engineFor, f14SessionFor = null }) {
     },
     /** Searches a predicted next request on the live F14 session; the core
      * retains the result for a later rerankF14 of the real request. */
-    async speculateF14({ sessionKey, type, engine, request, profile }) {
+    async speculateF14({ sessionKey, type, engine, request, profile, inputSpeculation = false }) {
       if (engine?.botType !== type || engine?.engineId !== type) throw new Error(`CC2 F14 engine identity mismatch for ${type}`);
       const entry = sessions.get(sessionKey);
       if (!entry || entry.closed || entry.engine !== type || !entry.f14) throw new Error('F14 INPUT speculation is unavailable');
       const session = await entry.initializing;
       if (sessions.get(sessionKey) !== entry || entry.closed) throw new Error('input session replaced');
+      if (inputSpeculation) {
+        if (typeof session.speculateInputF14 !== 'function') throw new Error('F14 INPUT prefix speculation is unavailable');
+        return session.speculateInputF14({ request, profile });
+      }
       return session.decideF14({ request, profile });
     },
     resolveInput(payload) {

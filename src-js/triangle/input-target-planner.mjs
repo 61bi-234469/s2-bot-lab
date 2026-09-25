@@ -32,7 +32,7 @@ export function planInputTarget(request, movement, candidate, {
   const { decision } = request;
   if (decision.board.width !== 10 || decision.board.height !== 40 || decision.board.visibleHeight !== 20 ||
       typeof decision.board.cells !== 'string' || !/^[IJLOSTZG_]{400}$/.test(decision.board.cells) ||
-      !Array.isArray(decision.pieces.known) || decision.pieces.known.length > INPUT_EXECUTION_PROFILE.publicNext ||
+      !Array.isArray(decision.pieces.known) || decision.pieces.known.length > INPUT_EXECUTION_PROFILE.publicNextMaximum ||
       decision.pieces.known.some(value => !/^[IJLOSTZ]$/.test(value)) ||
       decision.pieces.holdAvailable !== !movement.holdLocked) throw new Error('invalid input target public board/pieces');
   if (decision.rulesetId !== INPUT_EXECUTION_PROFILE.rulesetId ||
@@ -290,7 +290,7 @@ export function forecastInputBoundary(request, movement, frame, { timeProgressio
       request.decision.lockTime.logicalFrame !== movement.frame) throw new Error('invalid input forecast frame');
   const { board, pieces } = request.decision;
   if (board.width !== 10 || board.height !== 40 || board.visibleHeight !== 20 || !/^[IJLOSTZG_]{400}$/.test(board.cells) ||
-      !Array.isArray(pieces.known) || pieces.known.length > 14 || pieces.known.some(value => !/^[IJLOSTZ]$/.test(value)) ||
+      !Array.isArray(pieces.known) || pieces.known.length > INPUT_EXECUTION_PROFILE.publicNextMaximum || pieces.known.some(value => !/^[IJLOSTZ]$/.test(value)) ||
       pieces.current?.toLowerCase() !== movement.falling.symbol ||
       JSON.stringify(movement.handling) !== JSON.stringify(INPUT_EXECUTION_PROFILE.handling)) throw new Error('invalid input forecast profile');
   const engine = neutralEngine(request.decision, movement, timeProgression, naturalGravity);

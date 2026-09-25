@@ -1,6 +1,7 @@
 import { completedInputRoundRecording } from "../input-execution-round.mjs";
 import { parseTtrm } from "./ttrm-parser.mjs";
 import { simulatePlayerRound } from "./ttrm-simulator.mjs";
+import { INPUT_EXECUTION_PROFILE_ID } from "./engine-config.mjs";
 
 export class BotMatchTtrmError extends Error {
   constructor(stage, message, lockIndex = null) {
@@ -22,7 +23,7 @@ export function buildExecutedInputTtrm(round) {
   catch (error) { throw new BotMatchTtrmError('provenance', error.message); }
   const { players: sessions, terminal } = owned;
   if (!Array.isArray(sessions) || sessions.length !== 2 || sessions.some(session =>
-    session.profile !== 's2-input-execution/1')) {
+    session.profile !== INPUT_EXECUTION_PROFILE_ID)) {
     throw new BotMatchTtrmError('provenance', 'two finished input-profile sessions are required');
   }
   // A round opened from an externally placed start position cannot be rebuilt

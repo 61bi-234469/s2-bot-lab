@@ -15,11 +15,13 @@ use super::{BotOptions, Mode, ModeSwitch, Statistics};
 use crate::dag::{ChildData, Dag, Evaluation, LegacyRootSnapshot};
 use crate::data::*;
 use crate::f14_compat::{
-    advance_f14_amount_only, advance_f14_chain, classify_conversion_for_policy,
+    advance_f14_amount_only_with_spin, advance_f14_chain, classify_conversion_for_policy,
     select::{PublicRootLockContext, RootObjectiveSession},
-    CompatError, F14Incoming, F14LockPublic, PostSpinPolicy, ADJUSTMENT_SCALE,
-    F12_MIN_B2B_BEFORE, F12_MIN_RELEASE_VALUE,
+    CompatError, F14Incoming, PostSpinPolicy, ADJUSTMENT_SCALE, F12_MIN_B2B_BEFORE,
+    F12_MIN_RELEASE_VALUE,
 };
+#[cfg(test)]
+use crate::f14_compat::{advance_f14_amount_only, F14LockPublic};
 use crate::movegen::{find_moves, find_moves_complete_with_entry, RootEntry};
 
 pub struct Freestyle {
@@ -140,6 +142,8 @@ impl Freestyle {
         let leaf_conversion_scale = observation.and_then(|root| root.leaf_conversion_scale());
         let leaf_conversion_max_height =
             observation.and_then(|root| root.leaf_conversion_max_height());
+        let leaf_conversion_root_pressure_rows =
+            observation.and_then(|root| root.leaf_conversion_root_pressure_rows());
         let mut new_stats = Statistics::default();
         new_stats.selections += 1;
 
@@ -253,11 +257,15 @@ impl Freestyle {
                         if let (Some(scale), Some(max_height)) =
                             (leaf_conversion_scale, leaf_conversion_max_height)
                         {
+                            let gate_height = leaf_conversion_gate_height(
+                                occupied_height(&state.board),
+                                leaf_conversion_root_pressure_rows,
+                            );
                             add_leaf_conversion_reward_when_safe(
                                 &mut reward,
                                 Some(scale),
                                 max_height,
-                                occupied_height(&state.board),
+                                gate_height,
                                 || {
                                     legacy_conversion_facts(
                                         combo_before,
@@ -699,15 +707,15 @@ fn legacy_conversion_facts(
         pending_rows: u32::from(pending_rows),
         due_this_lock_rows: u32::from(due_rows),
     };
-    let actual_lock = F14LockPublic {
-        lines: info.lines_cleared,
-        spin: spin.to_owned(),
-        perfect_clear: info.perfect_clear,
+    let actual = advance_f14_amount_only_with_spin(
+        incoming,
+        info.lines_cleared,
+        info.placement.spin,
+        info.perfect_clear,
         combo_after,
         b2b_after,
         b2b_before,
-    };
-    let actual = advance_f14_amount_only(incoming, &actual_lock)?;
+    )?;
     if actual.cancelled_rows != info.cancelled_rows
         || actual.outgoing_after_cancel != info.outgoing_after_cancel
     {
@@ -725,12 +733,15 @@ fn legacy_conversion_facts(
         info.perfect_clear,
         1,
     )?;
-    let no_ren_lock = F14LockPublic {
-        combo_after: no_ren_chain.combo_after,
-        b2b_after: no_ren_chain.b2b_after,
-        ..actual_lock.clone()
-    };
-    let no_ren = advance_f14_amount_only(incoming, &no_ren_lock)?;
+    let no_ren = advance_f14_amount_only_with_spin(
+        incoming,
+        info.lines_cleared,
+        info.placement.spin,
+        info.perfect_clear,
+        no_ren_chain.combo_after,
+        no_ren_chain.b2b_after,
+        b2b_before,
+    )?;
     let no_ren_realised = f64::from(no_ren.outgoing_after_cancel + no_ren.cancelled_rows);
 
     // Match the post-stage's B2B-withheld projection. Legacy search does not
@@ -745,12 +756,15 @@ fn legacy_conversion_facts(
         info.perfect_clear,
         1,
     )?;
-    let withheld_lock = F14LockPublic {
-        b2b_after: withheld_chain.b2b_after,
-        b2b_before: 0,
-        ..actual_lock
-    };
-    let withheld = advance_f14_amount_only(incoming, &withheld_lock)?;
+    let withheld = advance_f14_amount_only_with_spin(
+        incoming,
+        info.lines_cleared,
+        info.placement.spin,
+        info.perfect_clear,
+        withheld_chain.combo_after,
+        withheld_chain.b2b_after,
+        0,
+    )?;
     let withheld_realised = f64::from(withheld.outgoing_after_cancel + withheld.cancelled_rows);
 
     Ok(LegacyConversionFacts {
@@ -837,6 +851,17 @@ fn add_leaf_conversion_reward_when_safe(
         return Ok(());
     }
     add_leaf_conversion_reward(reward, scale, project_facts)
+}
+
+/// Height compared with the leaf-conversion cap. The pressure-gated mode adds
+/// the root request's public pending incoming rows (a public row-count scalar);
+/// the F14 route searches with amount-only incoming disabled, so the search
+/// state itself never carries pending or tanked rows.
+fn leaf_conversion_gate_height(post_lock_height: u32, root_pressure_rows: Option<u32>) -> u32 {
+    match root_pressure_rows {
+        Some(rows) => post_lock_height.saturating_add(rows),
+        None => post_lock_height,
+    }
 }
 
 impl Evaluation for Eval {
@@ -1758,6 +1783,51 @@ mod amount_exchange_tests {
         .unwrap();
         assert!(!projected, "unsafe board height skips conversion projections");
         assert_eq!(above_cap.value.0.to_bits(), native.value.0.to_bits());
+    }
+
+    #[test]
+    fn pressure_gated_leaf_conversion_adds_root_public_pending_rows() {
+        let facts = LegacyConversionFacts {
+            piece: "I",
+            combo_before: 4,
+            combo_after: 5,
+            b2b_before: 2,
+            b2b_after: 3,
+            lines: 4,
+            spin: "none",
+            cancelled: 0.0,
+            ren_combat_gain: 2.0,
+            setup_witnessed: false,
+            surge_sent: 0,
+            release_value: 0.0,
+        };
+        let native = Reward {
+            value: OrderedFloat(-3.25),
+        };
+
+        let occupied_height = 6;
+        assert_eq!(leaf_conversion_gate_height(occupied_height, None), occupied_height);
+        assert_eq!(leaf_conversion_gate_height(occupied_height, Some(0)), occupied_height);
+        assert_eq!(leaf_conversion_gate_height(u32::MAX, Some(3)), u32::MAX);
+        let overloaded_height = leaf_conversion_gate_height(occupied_height, Some(3));
+        assert!(occupied_height <= 8, "the occupied board alone is within the cap");
+        assert_eq!(overloaded_height, 9);
+        let mut suppressed = native;
+        let mut projected = false;
+        add_leaf_conversion_reward_when_safe(&mut suppressed, Some(0.25), 8, overloaded_height, || {
+            projected = true;
+            Ok(facts)
+        })
+        .unwrap();
+        assert!(!projected, "pressure above the cap skips conversion projections");
+        assert_eq!(suppressed.value.0.to_bits(), native.value.0.to_bits());
+
+        let capped_height = leaf_conversion_gate_height(5, Some(3));
+        assert_eq!(capped_height, 8);
+        let mut applied = native;
+        add_leaf_conversion_reward_when_safe(&mut applied, Some(0.25), 8, capped_height, || Ok(facts))
+            .unwrap();
+        assert_eq!(applied.value.0, native.value.0 + 3.5);
     }
 
     fn projected_conversion_info(

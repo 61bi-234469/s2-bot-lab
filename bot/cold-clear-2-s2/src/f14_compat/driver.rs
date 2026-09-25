@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde_json::Value as Json;
 
-use crate::bot::{BotConfig, Statistics};
+use crate::bot::Statistics;
 use crate::tbp::MoveInfo;
 
 use super::inproc::{self, FinishEnd, Prepared};
@@ -24,6 +24,7 @@ pub(crate) struct F14RerankState {
     pub(crate) request: Json,
     pub(crate) profile: Profile,
     pub(crate) outcome: FinishedRootOutcome,
+    pub(crate) input_speculation: bool,
 }
 
 /// Sync-free F14 lifecycle shared by the native-shaped WASM adapter and tests.
@@ -32,22 +33,31 @@ pub(crate) struct F14Driver {
     pub(crate) stats: Statistics,
     pub(crate) limit: u64,
     pub(crate) ended: Option<FinishEnd>,
+    input_speculation: bool,
 }
 
 impl F14Driver {
     pub(crate) fn start(profile: Profile, request: Json) -> Result<Self, Json> {
+        Self::start_with_input_speculation(profile, request, false)
+    }
+
+    pub(crate) fn start_input_speculation(profile: Profile, request: Json) -> Result<Self, Json> {
+        Self::start_with_input_speculation(profile, request, true)
+    }
+
+    fn start_with_input_speculation(
+        profile: Profile,
+        request: Json,
+        input_speculation: bool,
+    ) -> Result<Self, Json> {
         // Keep this admission check before every other start-side operation. It
         // is the same first check performed by inproc::prepare and the native
         // job, including the response identity and error ordering.
         f14::admit(&request, &profile)?;
 
-        let mut config: BotConfig = serde_json::from_str(profile.config_bytes())
+        let config = profile
+            .search_bot_config()
             .map_err(|_| f14::error(&request, "error", "invalid-input"))?;
-        config.search_seed = profile
-            .seed_u64()
-            .ok_or_else(|| f14::error(&request, "error", "invalid-input"))?;
-        config.search_selection_limit = profile.budget.selections;
-        config.enable_s2_amount_only_incoming = false;
 
         let token = request
             .get("generation")
@@ -67,6 +77,7 @@ impl F14Driver {
             stats: Statistics::default(),
             limit,
             ended: None,
+            input_speculation,
         })
     }
 
@@ -207,6 +218,7 @@ impl F14Driver {
                 request: retained_request,
                 profile: retained_profile,
                 outcome,
+                input_speculation: self.input_speculation,
             }),
             _ => None,
         };

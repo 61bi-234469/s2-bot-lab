@@ -2,3 +2,5 @@
 fixtures/tuning/cc2-s2-spawn-integrity-substrate-v2.json text eol=crlf
 fixtures/tuning/cc2-s2-r3-core-allspin-v1-candidate.json text eol=crlf
 fixtures/tuning/cc2-s2-s1a-mini-spin-single-06.json text eol=lf
+tests-js/input-champion-bag-state.test.mjs text eol=lf
+tests-js/input-champion-prefix-speculation.test.mjs text eol=lf

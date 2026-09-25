@@ -162,7 +162,7 @@ pub fn diagnose_s2_conversion_shadow(raw: serde_json::Value) -> Result<serde_jso
 /// JS checker validates the independent-review and baseline bindings.
 pub fn diagnose_s2_root_allocation(raw: serde_json::Value) -> Result<serde_json::Value, String> {
     use crate::f14_compat::select::{RootAllocationTraceSink, RootObservation};
-    use crate::f14_compat::transport::{Budget, F14StartGate, Profile, CONFIG, CONFIG_HASH, ROOT_OBJECTIVE_PROFILE};
+    use crate::f14_compat::transport::{Budget, F14StartGate, Profile, CONFIG_HASH, ROOT_OBJECTIVE_PROFILE};
     use crate::sync::{f14_decide_job_with_observation, BotSyncronizer};
     use parking_lot::Mutex;
     use serde_json::{json, Value};
@@ -193,7 +193,7 @@ pub fn diagnose_s2_root_allocation(raw: serde_json::Value) -> Result<serde_json:
     if !(1..=300_000).contains(&max_millis) {
         return Err("invalid diagnostic maxMillis".into());
     }
-    let mut profile = Profile {
+    let profile = Profile {
         profile_id: ROOT_OBJECTIVE_PROFILE.to_owned(),
         config_hash: CONFIG_HASH.to_owned(),
         seed: "5994928009864282113".to_owned(),
@@ -208,6 +208,7 @@ pub fn diagnose_s2_root_allocation(raw: serde_json::Value) -> Result<serde_json:
         root_value_scale: None,
         leaf_conversion_scale: None,
         leaf_conversion_max_height: None,
+        b2b_charge_scale: None,
         final_order_policy_id: None,
     };
     if !profile.valid() {
@@ -219,10 +220,7 @@ pub fn diagnose_s2_root_allocation(raw: serde_json::Value) -> Result<serde_json:
         .map_err(|error| format!("invalid public context: {error:?}"))?;
     let derived_bytes = serde_json::to_vec(&request).map_err(|e| e.to_string())?;
     let derived_hash = format!("sha256:{}", digest_hex(Sha256::digest(&derived_bytes).into()));
-    let mut config: BotConfig = serde_json::from_str(CONFIG).map_err(|e| e.to_string())?;
-    config.search_seed = profile.seed_u64().ok_or_else(|| "invalid root seed".to_owned())?;
-    config.search_selection_limit = profile.budget.selections;
-    config.enable_s2_amount_only_incoming = false;
+    let config = profile.search_bot_config().map_err(|error| error.to_string())?;
     let config = Arc::new(config);
     let synchronizer = Arc::new(BotSyncronizer::new());
     let worker = Arc::clone(&synchronizer);

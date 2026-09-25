@@ -436,12 +436,7 @@ mod tests {
     }
 
     fn root_config() -> std::sync::Arc<crate::bot::BotConfig> {
-        let mut config: crate::bot::BotConfig =
-            serde_json::from_str(crate::f14_compat::transport::CONFIG).unwrap();
-        config.search_seed = 5_994_928_009_864_282_113_u64;
-        config.search_selection_limit = 512;
-        config.enable_s2_amount_only_incoming = false;
-        std::sync::Arc::new(config)
+        std::sync::Arc::new(root_profile().search_bot_config().unwrap())
     }
 
     #[test]
@@ -526,12 +521,7 @@ mod tests {
     }
 
     fn f14_config() -> std::sync::Arc<crate::bot::BotConfig> {
-        let mut config: crate::bot::BotConfig =
-            serde_json::from_str(crate::f14_compat::transport::CONFIG).unwrap();
-        config.search_seed = 1395802947;
-        config.search_selection_limit = 8;
-        config.enable_s2_amount_only_incoming = false;
-        std::sync::Arc::new(config)
+        std::sync::Arc::new(f14_profile().search_bot_config().unwrap())
     }
 
     fn cancel_during(
@@ -781,7 +771,7 @@ mod tests {
     #[test]
     fn amount_and_public_missing_core_outcome_is_not_ready() {
         use crate::f14_compat::transport::{
-            F14StartGate, A_PROFILE, CAS_CONFIG, CAS_CONFIG_HASH, CONFIG_HASH,
+            F14StartGate, A_PROFILE, CAS_CONFIG_HASH, CONFIG_HASH,
             CORE_ALLSPIN_PROFILE, POST_SPIN_POLICY_OFF, PUBLIC_PROFILE,
         };
         use parking_lot::Mutex;
@@ -802,19 +792,12 @@ mod tests {
             request["requestId"] = serde_json::json!(format!("f14-{profile_id}-not-ready"));
             request["positionId"] = request["requestId"].clone();
             request["execution"] = serde_json::to_value(&profile).unwrap();
-            let config_bytes = if profile_id == CORE_ALLSPIN_PROFILE {
-                CAS_CONFIG
-            } else {
+            if profile_id != CORE_ALLSPIN_PROFILE {
                 assert_eq!(profile.config_hash, CONFIG_HASH);
-                crate::f14_compat::transport::CONFIG
-            };
+            }
             let mut config: Arc<crate::bot::BotConfig> =
-                Arc::new(serde_json::from_str(config_bytes).unwrap());
-            Arc::get_mut(&mut config).unwrap().search_seed = profile.seed_u64().unwrap();
+                Arc::new(profile.search_bot_config().unwrap());
             Arc::get_mut(&mut config).unwrap().search_selection_limit = 8;
-            Arc::get_mut(&mut config)
-                .unwrap()
-                .enable_s2_amount_only_incoming = false;
             let bot = std::sync::Arc::new(BotSyncronizer::new());
             let worker_bot = bot.clone();
             std::thread::spawn(move || worker_bot.work_loop());
@@ -1232,6 +1215,18 @@ pub(crate) fn run_f14(
         vec![f14::A_PROFILE, f14::PUBLIC_PROFILE, f14::LEAF_CONVERSION_PROFILE]
     } else if profile.profile_id == f14::LEAF_CONVERSION_GATED_PROFILE {
         vec![f14::A_PROFILE, f14::PUBLIC_PROFILE, f14::LEAF_CONVERSION_GATED_PROFILE]
+    } else if profile.profile_id == f14::LEAF_CONVERSION_PRESSURE_GATED_PROFILE {
+        vec![
+            f14::A_PROFILE,
+            f14::PUBLIC_PROFILE,
+            f14::LEAF_CONVERSION_PRESSURE_GATED_PROFILE,
+        ]
+    } else if profile.profile_id == f14::LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE {
+        vec![
+            f14::A_PROFILE,
+            f14::PUBLIC_PROFILE,
+            f14::LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE,
+        ]
     } else if profile.is_composed() {
         vec![
             f14::A_PROFILE,

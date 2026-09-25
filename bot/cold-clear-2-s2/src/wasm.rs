@@ -37,6 +37,10 @@ enum Request {
         profile: Profile,
         request: Value,
     },
+    F14InputSpeculateStart {
+        profile: Profile,
+        request: Value,
+    },
     F14Rerank {
         request: Value,
     },
@@ -119,6 +123,20 @@ fn handle_request(request: Request) -> Result<Value, &'static str> {
             F14_DRIVER.with(|slot| *slot.borrow_mut() = Some(driver));
             Ok(Value::Null)
         }
+        Request::F14InputSpeculateStart { profile, request } => {
+            RETAINED_F14.with(|slot| *slot.borrow_mut() = None);
+            let driver = match F14Driver::start_input_speculation(profile, request) {
+                Ok(driver) => driver,
+                Err(response) => {
+                    DRIVER.with(|slot| *slot.borrow_mut() = None);
+                    F14_DRIVER.with(|slot| *slot.borrow_mut() = None);
+                    return Ok(response);
+                }
+            };
+            DRIVER.with(|slot| *slot.borrow_mut() = None);
+            F14_DRIVER.with(|slot| *slot.borrow_mut() = Some(driver));
+            Ok(Value::Null)
+        }
         Request::Work { selections } => {
             if selections == 0 || selections > 1024 { return Err("work-selections"); }
             if let Some(progress) = F14_DRIVER.with(|slot| {
@@ -180,6 +198,7 @@ fn handle_request(request: Request) -> Result<Value, &'static str> {
                     &retained.request,
                     &retained.profile,
                     &retained.outcome,
+                    retained.input_speculation,
                 )),
                 None => Ok(f14::rerank_without_retained(request)),
             }

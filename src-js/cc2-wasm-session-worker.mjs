@@ -8,7 +8,7 @@ ready.then(() => parentPort.postMessage({ id: 0 }), error => parentPort.postMess
 parentPort.on('message', async ({ id, op, payload }) => {
   try {
     const session = await ready;
-    if (!['decideF14', 'rerankF14', 'close'].includes(op)) throw new Error(`unknown CC2 WASM worker op: ${op}`);
+    if (!['decideF14', 'speculateInputF14', 'rerankF14', 'close'].includes(op)) throw new Error(`unknown CC2 WASM worker op: ${op}`);
     parentPort.postMessage({ id, value: await session[op](payload) });
   } catch (error) {
     parentPort.postMessage({ id, error: error?.message ?? String(error) });

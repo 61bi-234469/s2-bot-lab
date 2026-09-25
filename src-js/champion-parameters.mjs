@@ -95,10 +95,21 @@ export function resolveChampionDecision({ state, gui, request, response, paramet
     verification: { status: "degraded", reasons: comparison.reasons, transition, comparison } };
 }
 
-export function assertGatedChampionResponse(request, response) {
+export function assertGatedChampionResponse(request, response, { allowQueuePrefix = false } = {}) {
   if (request.execution?.profileId !== ROOT_LEAF_CONVERSION_GATED_PROFILE ||
       response?.profileId !== ROOT_LEAF_CONVERSION_GATED_PROFILE) {
     throw new Error("champion decision must use the gated leaf-conversion profile");
+  }
+  if (allowQueuePrefix && response.status === "move") {
+    const requestedLength = request.start?.queue?.length;
+    const searchedLength = requestedLength - 1;
+    if (!Number.isSafeInteger(requestedLength) || requestedLength < 2 ||
+        response.search?.queueLength !== searchedLength ||
+        response.search?.searchedQueueLength !== searchedLength) {
+      throw new Error("champion INPUT prefix rerank has invalid searched queue length");
+    }
+  } else if (Object.hasOwn(response?.search ?? {}, "searchedQueueLength")) {
+    throw new Error("champion decision unexpectedly reports a prefix search");
   }
   const diagnostics = response.diagnostics;
   if (diagnostics?.finalOrderPolicyId !== "cc2-rank-order/1") {

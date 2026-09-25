@@ -11,7 +11,7 @@ use super::select::{
     RootObjectiveSession, SnapshotBinding, EFFECTIVE_WEIGHTS,
 };
 use super::{CompatError, FinalOrderPolicy, PostSpinPolicy, F14_RULESET_ID, QUEUE_LIMIT};
-use crate::bot::Statistics;
+use crate::bot::{BotConfig, Statistics};
 use crate::data::Placement;
 use crate::time::Instant;
 use serde::{Deserialize, Serialize};
@@ -39,6 +39,9 @@ pub const ROOT_VALUE_MIX_PROFILE: &str = "f14-root-value-mix-b/1";
 pub const ROOT_VALUE_TIEBREAK_PROFILE: &str = "f14-root-value-tiebreak-b/1";
 pub const LEAF_CONVERSION_PROFILE: &str = "f14-leaf-conversion-b/1";
 pub const LEAF_CONVERSION_GATED_PROFILE: &str = "f14-leaf-conversion-gated-b/1";
+pub const LEAF_CONVERSION_PRESSURE_GATED_PROFILE: &str = "f14-leaf-conversion-pressure-gated-b/1";
+pub const LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE: &str =
+    "f14-leaf-conversion-gated-b2b-charge-b/1";
 pub const RANK_ORDER_PROFILE: &str = "f14-rank-order-b/1";
 pub const ROOT_OBJECTIVE_PROFILE: &str = "f14-root-objective-b/1";
 pub const POST_SPIN_POLICY_OFF: &str = "non-t-spin-prior-off/1";
@@ -94,6 +97,12 @@ pub struct Profile {
         skip_serializing_if = "Option::is_none"
     )]
     pub leaf_conversion_max_height: Option<Option<String>>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_optional_string",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub b2b_charge_scale: Option<Option<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub final_order_policy_id: Option<String>,
 }
@@ -117,6 +126,11 @@ impl Profile {
             && (1..=1_000_000).contains(&self.budget.selections)
             && (0..=300_000).contains(&self.budget.max_millis);
         if !common {
+            return false;
+        }
+        if self.profile_id != LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE
+            && self.b2b_charge_scale.is_some()
+        {
             return false;
         }
         match self.profile_id.as_str() {
@@ -183,6 +197,27 @@ impl Profile {
                     && self.root_value_scale.is_none()
                     && self.leaf_conversion_scale_f64().is_some()
                     && self.leaf_conversion_max_height_u32().is_some()
+                    && self.final_order_policy_id.as_deref() == Some(FINAL_ORDER_POLICY_CC2)
+                    && self.config_hash == CONFIG_HASH
+            }
+            LEAF_CONVERSION_PRESSURE_GATED_PROFILE => {
+                self.post_spin_policy_id.is_none()
+                    && self.allocation_mode.as_deref()
+                        == Some(super::root_allocation::LEAF_CONVERSION_PRESSURE_GATED_MODE)
+                    && self.root_value_scale.is_none()
+                    && self.leaf_conversion_scale_f64().is_some()
+                    && self.leaf_conversion_max_height_u32().is_some()
+                    && self.final_order_policy_id.as_deref() == Some(FINAL_ORDER_POLICY_CC2)
+                    && self.config_hash == CONFIG_HASH
+            }
+            LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE => {
+                self.post_spin_policy_id.is_none()
+                    && self.allocation_mode.as_deref()
+                        == Some(super::root_allocation::LEAF_CONVERSION_GATED_B2B_CHARGE_MODE)
+                    && self.root_value_scale.is_none()
+                    && self.leaf_conversion_scale_f64().is_some()
+                    && self.leaf_conversion_max_height_u32().is_some()
+                    && self.b2b_charge_scale_f32().is_some()
                     && self.final_order_policy_id.as_deref() == Some(FINAL_ORDER_POLICY_CC2)
                     && self.config_hash == CONFIG_HASH
             }
@@ -266,6 +301,27 @@ impl Profile {
         ((1..=40).contains(&height) && value == height.to_string()).then_some(height)
     }
 
+    pub(crate) fn b2b_charge_scale_f32(&self) -> Option<f32> {
+        let value = self.b2b_charge_scale.as_ref()?.as_deref()?;
+        if !canonical_nonnegative_decimal(value) {
+            return None;
+        }
+        let scale = value.parse::<f32>().ok()?;
+        (scale.is_finite() && scale >= 0.0).then_some(scale)
+    }
+
+    pub(crate) fn apply_search_config_overrides(&self, config: &mut BotConfig) {
+        if self.profile_id == LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE {
+            let scale = self
+                .b2b_charge_scale_f32()
+                .expect("admitted B2B charge profile has a valid scale");
+            config.enable_s2_b2b_surge = true;
+            config.freestyle_weights.s2_b2b_surge = 1.0;
+            config.freestyle_weights.s2_b2b_charge = scale;
+            config.freestyle_weights.s2_b2b_charge_cap_rows = 12;
+        }
+    }
+
     pub fn is_public_amount(&self) -> bool {
         matches!(
             self.profile_id.as_str(),
@@ -276,6 +332,8 @@ impl Profile {
                 | ROOT_VALUE_TIEBREAK_PROFILE
                 | LEAF_CONVERSION_PROFILE
                 | LEAF_CONVERSION_GATED_PROFILE
+                | LEAF_CONVERSION_PRESSURE_GATED_PROFILE
+                | LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE
                 | RANK_ORDER_PROFILE
                 | COMPOSED_B
                 | ROOT_OBJECTIVE_PROFILE
@@ -298,6 +356,8 @@ impl Profile {
                 A_PROFILE | PUBLIC_PROFILE | CORE_ALLSPIN_PROFILE | ROOT_VALUE_PROFILE
                     | ROOT_VALUE_MIX_PROFILE | ROOT_VALUE_TIEBREAK_PROFILE | LEAF_CONVERSION_PROFILE
                     | LEAF_CONVERSION_GATED_PROFILE
+                    | LEAF_CONVERSION_PRESSURE_GATED_PROFILE
+                    | LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE
                     | RANK_ORDER_PROFILE
             )
     }
@@ -339,6 +399,15 @@ impl Profile {
         }
     }
 
+    pub(crate) fn search_bot_config(&self) -> Result<BotConfig, serde_json::Error> {
+        let mut config: BotConfig = serde_json::from_str(self.config_bytes())?;
+        config.search_seed = self.seed_u64().expect("admitted F14 profile has a valid seed");
+        config.search_selection_limit = self.budget.selections;
+        config.enable_s2_amount_only_incoming = false;
+        self.apply_search_config_overrides(&mut config);
+        Ok(config)
+    }
+
     pub fn advertised_feature(&self) -> &'static str {
         if self.profile_id == CORE_ALLSPIN_PROFILE || self.profile_id == ROOT_VALUE_PROFILE {
             CORE_ALLSPIN_FEATURE
@@ -348,6 +417,28 @@ impl Profile {
             FEATURE
         }
     }
+}
+
+fn canonical_nonnegative_decimal(value: &str) -> bool {
+    if value == "0" {
+        return true;
+    }
+    let (integer, _) = value.split_once('.').unwrap_or((value, ""));
+    if integer.is_empty()
+        || !integer.bytes().all(|byte| byte.is_ascii_digit())
+        || (integer.len() > 1 && integer.starts_with('0'))
+    {
+        return false;
+    }
+    if let Some((_, fraction)) = value.split_once('.') {
+        if fraction.is_empty()
+            || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+            || fraction.ends_with('0')
+        {
+            return false;
+        }
+    }
+    integer != "0" || value.contains('.')
 }
 
 fn id(value: &str) -> bool {
@@ -681,7 +772,11 @@ pub fn admit(raw: &Json, profile: &Profile) -> Result<(), Json> {
         Some(value) => value,
         None => return Err(error(raw, "error", "invalid-input")),
     };
-    let queue_limit = if profile.profile_id == PUBLIC_PROFILE || profile.profile_id == LEAF_CONVERSION_GATED_PROFILE {
+    let queue_limit = if profile.profile_id == PUBLIC_PROFILE
+        || profile.profile_id == LEAF_CONVERSION_GATED_PROFILE
+        || profile.profile_id == LEAF_CONVERSION_PRESSURE_GATED_PROFILE
+        || profile.profile_id == LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE
+    {
         PUBLIC_QUEUE_LIMIT
     } else {
         QUEUE_LIMIT
@@ -787,10 +882,21 @@ pub(crate) fn rerank_without_retained(raw: Json) -> Json {
     if let Err(response) = admit(&raw, &profile) {
         return response;
     }
-    if profile.profile_id != PUBLIC_PROFILE && profile.profile_id != LEAF_CONVERSION_GATED_PROFILE {
+    if !supports_retained_rerank(&profile.profile_id) {
         return error(&raw, "unsupported", "f14-rerank-unsupported");
     }
     error(&raw, "unavailable", "rerank-unavailable")
+}
+
+/// The pressure-gated profile's search depends on the root request's public
+/// pending rows, so a search retained under different incoming rows cannot be
+/// reused; callers fall back to a fresh decision.
+fn supports_retained_rerank(profile_id: &str) -> bool {
+    profile_id == PUBLIC_PROFILE || profile_id == LEAF_CONVERSION_GATED_PROFILE
+}
+
+fn input_queue_prefix_allowed(input_speculation: bool, profile_id: &str) -> bool {
+    input_speculation && profile_id == LEAF_CONVERSION_GATED_PROFILE
 }
 
 pub(crate) fn rerank_retained(
@@ -798,16 +904,25 @@ pub(crate) fn rerank_retained(
     original_request: &Json,
     profile: &Profile,
     retained: &FinishedRootOutcome,
+    input_speculation: bool,
 ) -> Json {
     if let Err(response) = admit(&raw, profile) {
         return response;
     }
-    if profile.profile_id != PUBLIC_PROFILE && profile.profile_id != LEAF_CONVERSION_GATED_PROFILE {
+    if !supports_retained_rerank(&profile.profile_id) {
         return error(&raw, "unsupported", "f14-rerank-unsupported");
     }
-    if !rerank_request_compatible(original_request, &raw) {
-        return error(&raw, "error", "rerank-mismatch");
-    }
+    let allow_input_queue_prefix =
+        input_queue_prefix_allowed(input_speculation, &profile.profile_id);
+    let prefix_search_length =
+        match rerank_request_compatible(original_request, &raw, allow_input_queue_prefix) {
+            Some(RerankRequestMatch::Exact) => None,
+            Some(RerankRequestMatch::InputQueuePrefix) => original_request
+                .pointer("/start/queue")
+                .and_then(Json::as_array)
+                .map(Vec::len),
+            None => return error(&raw, "error", "rerank-mismatch"),
+        };
 
     match retained {
         FinishedRootOutcome::NoCandidates {
@@ -917,7 +1032,7 @@ pub(crate) fn rerank_retained(
                 Err(compat_error) => return compat_error_response(&raw, compat_error),
             };
             let moves = decision.native_moves.clone();
-            decide_limited_with_core_admitted(
+            let mut response = decide_limited_with_core_admitted(
                 raw,
                 profile,
                 &moves,
@@ -929,7 +1044,14 @@ pub(crate) fn rerank_retained(
                 None,
                 token,
                 Some(decision),
-            )
+            );
+            if let Some(searched_queue_length) = prefix_search_length {
+                if response["status"] == "move" {
+                    response["search"]["queueLength"] = json!(searched_queue_length);
+                    response["search"]["searchedQueueLength"] = json!(searched_queue_length);
+                }
+            }
+            response
         }
     }
 }
@@ -943,30 +1065,54 @@ fn raw_generation(raw: &Json) -> u64 {
 /// from the rerank request. Besides incoming and time, the selector's known
 /// pieces may differ, so a search run for the next piece before its last NEXT
 /// piece is revealed (the queue already holds it) serves the real request.
-fn rerank_request_compatible(original: &Json, rerank: &Json) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RerankRequestMatch {
+    Exact,
+    InputQueuePrefix,
+}
+
+fn rerank_request_compatible(
+    original: &Json,
+    rerank: &Json,
+    allow_input_queue_prefix: bool,
+) -> Option<RerankRequestMatch> {
     let Some(original_selector) = original.get("selector").and_then(Json::as_object) else {
-        return false;
+        return None;
     };
     let Some(original_known) = original_selector
         .get("pieces")
         .and_then(|pieces| pieces.get("known"))
     else {
-        return false;
+        return None;
     };
     let Some(original_incoming) = original_selector.get("incoming") else {
-        return false;
+        return None;
     };
     let Some(original_time) = original_selector.get("time") else {
-        return false;
+        return None;
     };
     let Some(rerank_selector) = rerank.get("selector").and_then(Json::as_object) else {
-        return false;
+        return None;
     };
     if !rerank_selector.contains_key("incoming") || !rerank_selector.contains_key("time") {
-        return false;
+        return None;
     }
     let mut expected = original.clone();
     let mut actual = rerank.clone();
+    let start_match = if actual.get("start") == expected.get("start") {
+        RerankRequestMatch::Exact
+    } else if allow_input_queue_prefix && input_queue_prefix_start_matches(&expected, &actual) {
+        let Some(original_start) = expected.get("start") else {
+            return None;
+        };
+        let Some(actual_start) = actual.get_mut("start") else {
+            return None;
+        };
+        *actual_start = original_start.clone();
+        RerankRequestMatch::InputQueuePrefix
+    } else {
+        return None;
+    };
     for key in ["requestId", "positionId", "generation"] {
         if let Some(object) = expected.as_object_mut() {
             object.remove(key);
@@ -979,7 +1125,7 @@ fn rerank_request_compatible(original: &Json, rerank: &Json) -> bool {
         .get_mut("selector")
         .and_then(Json::as_object_mut)
     else {
-        return false;
+        return None;
     };
     actual_selector.insert("incoming".to_owned(), original_incoming.clone());
     actual_selector.insert("time".to_owned(), original_time.clone());
@@ -987,13 +1133,55 @@ fn rerank_request_compatible(original: &Json, rerank: &Json) -> bool {
         .get_mut("pieces")
         .and_then(Json::as_object_mut)
     else {
-        return false;
+        return None;
     };
     if !actual_pieces.contains_key("known") {
-        return false;
+        return None;
     }
     actual_pieces.insert("known".to_owned(), original_known.clone());
-    actual == expected
+    (actual == expected).then_some(start_match)
+}
+
+fn input_queue_prefix_start_matches(retained_request: &Json, real_request: &Json) -> bool {
+    let Some(retained_start) = retained_request.get("start") else {
+        return false;
+    };
+    let Some(real_start) = real_request.get("start") else {
+        return false;
+    };
+    if retained_start
+        .pointer("/randomizer/type")
+        .and_then(Json::as_str)
+        != Some("seven_bag")
+    {
+        return false;
+    }
+    let Some(retained_bag) = retained_start
+        .pointer("/randomizer/bag_state")
+        .and_then(Json::as_array)
+    else {
+        return false;
+    };
+    if !retained_bag.is_empty() {
+        return false;
+    }
+    let Some(retained_queue) = retained_start.get("queue").and_then(Json::as_array) else {
+        return false;
+    };
+    let Some(real_queue) = real_start.get("queue").and_then(Json::as_array) else {
+        return false;
+    };
+    if real_queue.len() != retained_queue.len() + 1
+        || retained_queue
+            .iter()
+            .zip(real_queue)
+            .any(|(left, right)| left != right)
+    {
+        return false;
+    }
+    let mut comparable_real_start = real_start.clone();
+    comparable_real_start["queue"] = Json::Array(retained_queue.clone());
+    comparable_real_start == *retained_start
 }
 
 fn attach_diagnostics(
@@ -1047,6 +1235,8 @@ fn attach_diagnostics(
         || profile.profile_id == ROOT_VALUE_TIEBREAK_PROFILE
         || profile.profile_id == LEAF_CONVERSION_PROFILE
         || profile.profile_id == LEAF_CONVERSION_GATED_PROFILE
+        || profile.profile_id == LEAF_CONVERSION_PRESSURE_GATED_PROFILE
+        || profile.profile_id == LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE
     {
         // B keeps the measured earlier transport wire, while composed keeps the
         // frozen transport-thread zeros; only B therefore reads core-carried
@@ -1067,6 +1257,8 @@ fn attach_diagnostics(
             || profile.profile_id == ROOT_VALUE_TIEBREAK_PROFILE
             || profile.profile_id == LEAF_CONVERSION_PROFILE
             || profile.profile_id == LEAF_CONVERSION_GATED_PROFILE
+            || profile.profile_id == LEAF_CONVERSION_PRESSURE_GATED_PROFILE
+            || profile.profile_id == LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE
         {
             response["diagnostics"]["finalOrderPolicyId"] = json!(FINAL_ORDER_POLICY_CC2);
         }
@@ -1241,7 +1433,9 @@ pub(crate) fn decide_limited_with_legacy_selector(
                 PUBLIC_PROFILE | CORE_ALLSPIN_PROFILE | ROOT_VALUE_PROFILE | ROOT_VALUE_MIX_PROFILE
                 | ROOT_VALUE_TIEBREAK_PROFILE
                 | LEAF_CONVERSION_PROFILE
-                | LEAF_CONVERSION_GATED_PROFILE => {
+                | LEAF_CONVERSION_GATED_PROFILE
+                | LEAF_CONVERSION_PRESSURE_GATED_PROFILE
+                | LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE => {
                     select_f14_public_limited(&state, &move_values, options, limits)
                 }
                 _ => Err(CompatError::InvalidSelector),
@@ -1302,6 +1496,9 @@ fn public_context_document(state: &F14PublicState, request: &Json, profile: &Pro
     }
     if let Some(Some(max_height)) = profile.leaf_conversion_max_height.as_ref() {
         profile_document["leafConversionMaxHeight"] = json!(max_height);
+    }
+    if let Some(Some(scale)) = profile.b2b_charge_scale.as_ref() {
+        profile_document["b2bChargeScale"] = json!(scale);
     }
     if let Some(policy) = profile.final_order_policy_id.as_deref() {
         profile_document["finalOrderPolicyId"] = json!(policy);
@@ -1543,6 +1740,115 @@ fn selected_placement_json(selected: &super::select::F14SelectedCandidate) -> Js
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pressure_gated_profile_rejects_retained_rerank() {
+        assert!(super::supports_retained_rerank(super::PUBLIC_PROFILE));
+        assert!(super::supports_retained_rerank(super::LEAF_CONVERSION_GATED_PROFILE));
+        assert!(!super::supports_retained_rerank(super::LEAF_CONVERSION_PRESSURE_GATED_PROFILE));
+        assert!(!super::supports_retained_rerank(
+            super::LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE
+        ));
+    }
+
+    fn prefix_compatibility_requests() -> (Json, Json) {
+        let queue = vec![
+            "I", "O", "T", "S", "Z", "J", "L", "T", "S", "Z", "J", "L", "I", "O",
+        ];
+        let retained = json!({
+            "requestId": "prefix-source",
+            "positionId": "prefix-source-position",
+            "generation": 1,
+            "execution": { "profileId": super::LEAF_CONVERSION_GATED_PROFILE },
+            "start": {
+                "board": "public-board",
+                "queue": queue[..13],
+                "hold": null,
+                "combo": 0,
+                "back_to_back": false,
+                "b2b": 0,
+                "randomizer": { "type": "seven_bag", "bag_state": [] }
+            },
+            "selector": {
+                "pieces": { "current": queue[0], "known": queue[1..13], "hold": null },
+                "incoming": { "pendingRows": 0, "dueThisLockRows": 0 },
+                "time": { "logicalFrame": 0 }
+            }
+        });
+        let mut real = retained.clone();
+        real["requestId"] = json!("prefix-target");
+        real["positionId"] = json!("prefix-target-position");
+        real["generation"] = json!(2);
+        real["start"]["queue"] = json!(queue);
+        real["selector"]["pieces"]["known"] =
+            json!(["O", "T", "S", "Z", "J", "L", "T", "S", "Z", "J", "L", "I", "O"]);
+        real["selector"]["incoming"] = json!({ "pendingRows": 3, "dueThisLockRows": 0 });
+        real["selector"]["time"]["logicalFrame"] = json!(10);
+        (retained, real)
+    }
+
+    #[test]
+    fn input_queue_prefix_admission_is_opt_in_and_exactly_one_piece() {
+        let (retained, real) = prefix_compatibility_requests();
+        assert!(super::input_queue_prefix_allowed(
+            true,
+            super::LEAF_CONVERSION_GATED_PROFILE
+        ));
+        assert!(!super::input_queue_prefix_allowed(
+            false,
+            super::LEAF_CONVERSION_GATED_PROFILE
+        ));
+        assert!(!super::input_queue_prefix_allowed(
+            true,
+            super::PUBLIC_PROFILE
+        ));
+        assert_eq!(
+            super::rerank_request_compatible(&retained, &real, true),
+            Some(super::RerankRequestMatch::InputQueuePrefix)
+        );
+        assert_eq!(
+            super::rerank_request_compatible(&retained, &real, false),
+            None
+        );
+
+        let mut two_missing = real.clone();
+        two_missing["start"]["queue"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!("T"));
+        assert_eq!(
+            super::rerank_request_compatible(&retained, &two_missing, true),
+            None
+        );
+
+        let mut different_prefix_piece = real.clone();
+        different_prefix_piece["start"]["queue"][2] = json!("I");
+        assert_eq!(
+            super::rerank_request_compatible(&retained, &different_prefix_piece, true),
+            None
+        );
+
+        let mut nonempty_bag = retained.clone();
+        nonempty_bag["start"]["randomizer"]["bag_state"] = json!(["O"]);
+        assert_eq!(
+            super::rerank_request_compatible(&nonempty_bag, &real, true),
+            None
+        );
+
+        let mut changed_start_field = real.clone();
+        changed_start_field["start"]["hold"] = json!("T");
+        assert_eq!(
+            super::rerank_request_compatible(&retained, &changed_start_field, true),
+            None
+        );
+
+        let mut changed_execution = real;
+        changed_execution["execution"]["seed"] = json!("1");
+        assert_eq!(
+            super::rerank_request_compatible(&retained, &changed_execution, true),
+            None
+        );
+    }
+
     use super::*;
     use crate::data::Placement;
     use crate::f14_compat::driver::F14Driver;
@@ -1577,6 +1883,7 @@ mod tests {
             root_value_scale: None,
             leaf_conversion_scale: None,
             leaf_conversion_max_height: None,
+            b2b_charge_scale: None,
             final_order_policy_id: None,
         }
     }
@@ -1597,6 +1904,7 @@ mod tests {
             root_value_scale: None,
             leaf_conversion_scale: None,
             leaf_conversion_max_height: None,
+            b2b_charge_scale: None,
             final_order_policy_id: None,
         }
     }
@@ -1617,6 +1925,7 @@ mod tests {
             root_value_scale: None,
             leaf_conversion_scale: None,
             leaf_conversion_max_height: None,
+            b2b_charge_scale: None,
             final_order_policy_id: Some(FINAL_ORDER_POLICY_CC2.into()),
         }
     }
@@ -1637,6 +1946,7 @@ mod tests {
             root_value_scale: Some(Some("0.5".into())),
             leaf_conversion_scale: None,
             leaf_conversion_max_height: None,
+            b2b_charge_scale: None,
             final_order_policy_id: Some(FINAL_ORDER_POLICY_CC2.into()),
         }
     }
@@ -1657,6 +1967,7 @@ mod tests {
             root_value_scale: None,
             leaf_conversion_scale: None,
             leaf_conversion_max_height: None,
+            b2b_charge_scale: None,
             final_order_policy_id: Some(FINAL_ORDER_POLICY_CC2.into()),
         }
     }
@@ -1677,6 +1988,7 @@ mod tests {
             root_value_scale: None,
             leaf_conversion_scale: Some(Some("0.5".into())),
             leaf_conversion_max_height: None,
+            b2b_charge_scale: None,
             final_order_policy_id: Some(FINAL_ORDER_POLICY_CC2.into()),
         }
     }
@@ -1697,6 +2009,53 @@ mod tests {
             root_value_scale: None,
             leaf_conversion_scale: Some(Some("0.25".into())),
             leaf_conversion_max_height: Some(Some("8".into())),
+            b2b_charge_scale: None,
+            final_order_policy_id: Some(FINAL_ORDER_POLICY_CC2.into()),
+        }
+    }
+
+    fn leaf_conversion_pressure_gated_profile(config_hash: &str) -> Profile {
+        Profile {
+            profile_id: LEAF_CONVERSION_PRESSURE_GATED_PROFILE.into(),
+            config_hash: config_hash.into(),
+            seed: "5994928009864282113".into(),
+            worker_concurrency: 1,
+            budget: Budget {
+                mode: "selection".into(),
+                selections: 512,
+                max_millis: 30_000,
+            },
+            post_spin_policy_id: None,
+            allocation_mode: Some(
+                super::super::root_allocation::LEAF_CONVERSION_PRESSURE_GATED_MODE.into(),
+            ),
+            root_value_scale: None,
+            leaf_conversion_scale: Some(Some("0.25".into())),
+            leaf_conversion_max_height: Some(Some("8".into())),
+            b2b_charge_scale: None,
+            final_order_policy_id: Some(FINAL_ORDER_POLICY_CC2.into()),
+        }
+    }
+
+    fn leaf_conversion_gated_b2b_charge_profile(config_hash: &str) -> Profile {
+        Profile {
+            profile_id: LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE.into(),
+            config_hash: config_hash.into(),
+            seed: "5994928009864282113".into(),
+            worker_concurrency: 1,
+            budget: Budget {
+                mode: "selection".into(),
+                selections: 512,
+                max_millis: 30_000,
+            },
+            post_spin_policy_id: None,
+            allocation_mode: Some(
+                super::super::root_allocation::LEAF_CONVERSION_GATED_B2B_CHARGE_MODE.into(),
+            ),
+            root_value_scale: None,
+            leaf_conversion_scale: Some(Some("0.25".into())),
+            leaf_conversion_max_height: Some(Some("8".into())),
+            b2b_charge_scale: Some(Some("0.5".into())),
             final_order_policy_id: Some(FINAL_ORDER_POLICY_CC2.into()),
         }
     }
@@ -1749,12 +2108,7 @@ mod tests {
     }
 
     fn job_config(profile: &Profile) -> Arc<crate::bot::BotConfig> {
-        let mut config: crate::bot::BotConfig =
-            serde_json::from_str(profile.config_bytes()).unwrap();
-        config.search_seed = profile.seed_u64().unwrap();
-        config.search_selection_limit = profile.budget.selections;
-        config.enable_s2_amount_only_incoming = false;
-        Arc::new(config)
+        Arc::new(profile.search_bot_config().unwrap())
     }
 
     fn run_production_job(profile: &Profile, request: Json) -> Json {
@@ -2173,6 +2527,13 @@ mod tests {
                 "{} rejects leafConversionMaxHeight",
                 other.profile_id
             );
+            let mut null_height = serde_json::to_value(other.clone()).unwrap();
+            null_height["leafConversionMaxHeight"] = Json::Null;
+            assert!(
+                !serde_json::from_value::<Profile>(null_height).unwrap().valid(),
+                "{} rejects explicit-null leafConversionMaxHeight",
+                other.profile_id
+            );
         }
     }
 
@@ -2240,6 +2601,176 @@ mod tests {
         let document = public_context_document(&state, &base_request, &base);
         assert_eq!(document["profile"]["leafConversionScale"], "0.25");
         assert_eq!(document["profile"]["leafConversionMaxHeight"], "8");
+    }
+
+    #[test]
+    fn leaf_conversion_pressure_gated_profile_is_selection_only_and_height_bound() {
+        let pressure = leaf_conversion_pressure_gated_profile(CONFIG_HASH);
+        assert!(pressure.valid());
+        assert!(pressure.is_public_amount() && pressure.uses_core_decision());
+        assert_eq!(pressure.leaf_conversion_scale_f64(), Some(0.25));
+        assert_eq!(pressure.leaf_conversion_max_height_u32(), Some(8));
+        assert_eq!(
+            pressure.decision_stage().legacy_selector_options().final_order_policy,
+            FinalOrderPolicy::Cc2RankOrder
+        );
+
+        let mut missing_height = pressure.clone();
+        missing_height.leaf_conversion_max_height = None;
+        assert!(!missing_height.valid());
+        for value in ["0", "41", "01", "8.0", " 8"] {
+            let mut bad_height = pressure.clone();
+            bad_height.leaf_conversion_max_height = Some(Some(value.into()));
+            assert!(!bad_height.valid(), "reject pressure gate height {value:?}");
+        }
+        let mut wrong_config = pressure.clone();
+        wrong_config.config_hash = CAS_CONFIG_HASH.into();
+        assert!(!wrong_config.valid());
+        let mut time_budget = pressure.clone();
+        time_budget.budget.mode = TIME_BUDGET_MODE.into();
+        time_budget.budget.max_millis = 1_000;
+        assert!(!time_budget.valid(), "pressure-gated profile rejects time budget mode");
+
+        let mut null_height = serde_json::to_value(&pressure).unwrap();
+        null_height["leafConversionMaxHeight"] = Json::Null;
+        assert!(!serde_json::from_value::<Profile>(null_height).unwrap().valid());
+    }
+
+    #[test]
+    fn leaf_conversion_pressure_gated_scale_and_height_change_public_context_digest() {
+        let selector = load_p5()["decisions"][0]["selector"].clone();
+        let base = leaf_conversion_pressure_gated_profile(CONFIG_HASH);
+        let mut changed_height = base.clone();
+        changed_height.leaf_conversion_max_height = Some(Some("9".into()));
+        let base_request = request_with_profile(selector.clone(), &base);
+        let height_request = request_with_profile(selector, &changed_height);
+        let base_digest = public_context_digest_for_request(&base_request, &base).unwrap();
+        assert_ne!(
+            base_digest,
+            public_context_digest_for_request(&height_request, &changed_height).unwrap()
+        );
+        let state = composed_public_state(&base_request).unwrap();
+        let document = public_context_document(&state, &base_request, &base);
+        assert_eq!(document["profile"]["allocationMode"], "leaf-conversion-pressure-gated-v1");
+        assert_eq!(document["profile"]["leafConversionScale"], "0.25");
+        assert_eq!(document["profile"]["leafConversionMaxHeight"], "8");
+    }
+
+    #[test]
+    fn gated_b2b_charge_profile_requires_canonical_nonnegative_scale_and_selection_budget() {
+        let charge = leaf_conversion_gated_b2b_charge_profile(CONFIG_HASH);
+        assert!(charge.valid());
+        assert!(charge.is_public_amount() && charge.uses_core_decision());
+        assert_eq!(charge.leaf_conversion_scale_f64(), Some(0.25));
+        assert_eq!(charge.leaf_conversion_max_height_u32(), Some(8));
+        assert_eq!(charge.b2b_charge_scale_f32(), Some(0.5));
+        assert_eq!(
+            charge.decision_stage().legacy_selector_options().final_order_policy,
+            FinalOrderPolicy::Cc2RankOrder
+        );
+
+        let mut missing = charge.clone();
+        missing.b2b_charge_scale = None;
+        assert!(!missing.valid());
+        for value in ["NaN", "Infinity", "-0.5", "+0.5", "01", "0.50", "1e-1", "0.0"] {
+            let mut invalid = charge.clone();
+            invalid.b2b_charge_scale = Some(Some(value.into()));
+            assert!(!invalid.valid(), "reject B2B charge scale {value:?}");
+        }
+        let mut null_scale = serde_json::to_value(&charge).unwrap();
+        null_scale["b2bChargeScale"] = Json::Null;
+        let parsed: Profile = serde_json::from_value(null_scale).unwrap();
+        assert_eq!(parsed.b2b_charge_scale, Some(None));
+        assert!(!parsed.valid());
+
+        let mut time_budget = charge.clone();
+        time_budget.budget.mode = TIME_BUDGET_MODE.into();
+        time_budget.budget.max_millis = 1_000;
+        assert!(!time_budget.valid());
+
+        let mut composed_a = profile();
+        composed_a.profile_id = COMPOSED_A.into();
+        let mut root_value = core_allspin_profile(CAS_CONFIG_HASH);
+        root_value.profile_id = ROOT_VALUE_PROFILE.into();
+        let mut other_profiles = vec![
+            profile(),
+            public_b_profile(),
+            composed_a,
+            composed_b_profile(),
+            core_allspin_profile(CONFIG_HASH),
+            root_value,
+            root_value_mix_profile(CONFIG_HASH),
+            root_value_tiebreak_profile(CONFIG_HASH),
+            leaf_conversion_profile(CONFIG_HASH),
+            leaf_conversion_gated_profile(CONFIG_HASH),
+            leaf_conversion_pressure_gated_profile(CONFIG_HASH),
+            root_profile(),
+            rank_order_profile(CONFIG_HASH),
+        ];
+        for other in &mut other_profiles {
+            other.b2b_charge_scale = Some(Some("0.5".into()));
+            assert!(!other.valid(), "{} rejects b2bChargeScale", other.profile_id);
+            let mut null_field = serde_json::to_value(other.clone()).unwrap();
+            null_field["b2bChargeScale"] = Json::Null;
+            let parsed: Profile = serde_json::from_value(null_field).unwrap();
+            assert_eq!(parsed.b2b_charge_scale, Some(None));
+            assert!(!parsed.valid(), "{} rejects explicit null", other.profile_id);
+        }
+    }
+
+    #[test]
+    fn gated_b2b_charge_config_applies_exact_overrides_and_leaves_gated_profile_unchanged() {
+        let charge = leaf_conversion_gated_b2b_charge_profile(CONFIG_HASH);
+        let configured = charge.search_bot_config().unwrap();
+        assert!(configured.enable_s2_b2b_surge);
+        assert_eq!(configured.freestyle_weights.s2_b2b_surge, 1.0);
+        assert_eq!(configured.freestyle_weights.s2_b2b_charge, 0.5);
+        assert_eq!(configured.freestyle_weights.s2_b2b_charge_cap_rows, 12);
+
+        let mut r_only = charge.clone();
+        r_only.b2b_charge_scale = Some(Some("0".into()));
+        let r_only_config = r_only.search_bot_config().unwrap();
+        assert!(r_only_config.enable_s2_b2b_surge);
+        assert_eq!(r_only_config.freestyle_weights.s2_b2b_surge, 1.0);
+        assert_eq!(r_only_config.freestyle_weights.s2_b2b_charge, 0.0);
+        assert_eq!(r_only_config.freestyle_weights.s2_b2b_charge_cap_rows, 12);
+
+        let gated = leaf_conversion_gated_profile(CONFIG_HASH);
+        let gated_config = gated.search_bot_config().unwrap();
+        let champion: BotConfig = serde_json::from_str(CONFIG).unwrap();
+        assert_eq!(gated_config.enable_s2_b2b_surge, champion.enable_s2_b2b_surge);
+        assert_eq!(
+            gated_config.freestyle_weights.s2_b2b_surge,
+            champion.freestyle_weights.s2_b2b_surge
+        );
+        assert_eq!(
+            gated_config.freestyle_weights.s2_b2b_charge,
+            champion.freestyle_weights.s2_b2b_charge
+        );
+        assert_eq!(
+            gated_config.freestyle_weights.s2_b2b_charge_cap_rows,
+            champion.freestyle_weights.s2_b2b_charge_cap_rows
+        );
+        assert!(!gated_config.enable_s2_b2b_surge);
+    }
+
+    #[test]
+    fn gated_b2b_charge_scale_changes_public_context_digest() {
+        let selector = load_p5()["decisions"][0]["selector"].clone();
+        let base = leaf_conversion_gated_b2b_charge_profile(CONFIG_HASH);
+        let mut changed = base.clone();
+        changed.b2b_charge_scale = Some(Some("0.75".into()));
+        let base_request = request_with_profile(selector.clone(), &base);
+        let changed_request = request_with_profile(selector, &changed);
+        let base_digest = public_context_digest_for_request(&base_request, &base).unwrap();
+        assert_ne!(
+            base_digest,
+            public_context_digest_for_request(&changed_request, &changed).unwrap()
+        );
+        let state = composed_public_state(&base_request).unwrap();
+        let document = public_context_document(&state, &base_request, &base);
+        assert_eq!(document["profile"]["allocationMode"], "leaf-conversion-gated-b2b-charge-v1");
+        assert_eq!(document["profile"]["b2bChargeScale"], "0.5");
     }
 
     #[test]
@@ -3374,6 +3905,7 @@ mod tests {
                 &retained.request,
                 &retained.profile,
                 &retained.outcome,
+                false,
             );
             let fresh = run_f14_driver(&profile, target.clone());
             let mut actual = reranked.clone();
@@ -3426,6 +3958,7 @@ mod tests {
                 &retained.request,
                 &retained.profile,
                 &retained.outcome,
+                false,
             );
             let fresh = run_f14_driver(&profile, target);
             assert_eq!(
@@ -3438,6 +3971,63 @@ mod tests {
             without_timing_fields(&mut expected);
             assert_eq!(actual, expected, "gated rerank case {name}");
         }
+    }
+
+    #[test]
+    fn input_prefix_rerank_reports_the_retained_queue_length_and_requires_opt_in() {
+        let source: Json = serde_json::from_str(include_str!(
+            "../../../../fixtures/diagnostics/f14-public-search-rescue-request.json"
+        ))
+        .expect("saved F14 search rescue fixture");
+        let profile = leaf_conversion_gated_profile(CONFIG_HASH);
+        let mut real = source;
+        real["execution"] = json!(profile);
+        real["requestId"] = json!("input-prefix-real");
+        real["positionId"] = json!("input-prefix-real-position");
+        real["generation"] = json!(3);
+        real["selector"]["incoming"] = json!({ "pendingRows": 0, "dueThisLockRows": 0 });
+        let queue = real["start"]["queue"].as_array().unwrap().clone();
+        assert_eq!(queue.len(), 14);
+        real["selector"]["pieces"]["known"] = json!(queue[1..]);
+
+        let mut prefix = real.clone();
+        prefix["requestId"] = json!("input-prefix-speculation");
+        prefix["positionId"] = json!("input-prefix-speculation-position");
+        prefix["generation"] = json!(2);
+        prefix["start"]["queue"] = json!(queue[..13]);
+        prefix["selector"]["pieces"]["known"] = json!(queue[1..13]);
+        prefix["start"]["randomizer"] = json!({ "type": "seven_bag", "bag_state": [] });
+
+        let mut driver =
+            F14Driver::start_input_speculation(profile.clone(), prefix.clone()).unwrap();
+        while !driver.work(64).complete {}
+        let (speculated, retained) = driver.finish_with_retained();
+        assert_eq!(speculated["status"], "move", "{speculated}");
+        let retained = retained.expect("INPUT prefix search retained its result");
+        assert!(retained.input_speculation);
+
+        let reranked = rerank_retained(
+            real.clone(),
+            &retained.request,
+            &retained.profile,
+            &retained.outcome,
+            retained.input_speculation,
+        );
+        assert_eq!(reranked["status"], "move", "{reranked}");
+        assert_eq!(reranked["search"]["queueLength"], 13);
+        assert_eq!(reranked["search"]["searchedQueueLength"], 13);
+
+        let without_opt_in = rerank_retained(
+            real,
+            &retained.request,
+            &retained.profile,
+            &retained.outcome,
+            false,
+        );
+        assert_eq!(
+            without_opt_in["reason"], "rerank-mismatch",
+            "{without_opt_in}"
+        );
     }
 
     #[test]
@@ -3463,7 +4053,7 @@ mod tests {
             target["generation"] = json!(3);
             target["selector"]["pieces"]["known"] = json!(known[..revealed]);
             target["selector"]["incoming"] = json!({ "pendingRows": incoming.0, "dueThisLockRows": incoming.1 });
-            let reranked = rerank_retained(target.clone(), &retained.request, &retained.profile, &retained.outcome,
+            let reranked = rerank_retained(target.clone(), &retained.request, &retained.profile, &retained.outcome, false,
             );
             let mut actual = reranked.clone();
             let mut expected = run_f14_driver(&profile, target);
@@ -3476,7 +4066,7 @@ mod tests {
         changed["requestId"] = json!("rerank-next-start");
         changed["start"]["hold"] = json!("T");
         changed["selector"]["pieces"]["hold"] = json!("T");
-        let refused = rerank_retained(changed, &retained.request, &retained.profile, &retained.outcome,
+        let refused = rerank_retained(changed, &retained.request, &retained.profile, &retained.outcome, false,
         );
         assert_eq!(refused["reason"], "rerank-mismatch", "{refused}");
     }
@@ -3502,7 +4092,7 @@ mod tests {
             changed,
             &retained.request,
             &retained.profile,
-            &retained.outcome,
+            &retained.outcome, false,
         );
         assert_eq!(response["status"], "error");
         assert_eq!(response["reason"], "rerank-mismatch");
@@ -3538,7 +4128,7 @@ mod tests {
             target.clone(),
             &retained.request,
             &retained.profile,
-            &retained.outcome,
+            &retained.outcome, false,
         );
         let mut fresh_driver = F14Driver::start(profile.clone(), target.clone()).unwrap();
         fresh_driver.work(16);
