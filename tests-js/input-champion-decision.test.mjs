@@ -17,7 +17,8 @@ import { firstResponseMismatch } from "../scripts/f14-response-comparator.mjs";
 import { applyTransition } from "../src-js/transition.mjs";
 import { defaultBotParameters, normalizeBotParameters } from "../src-js/bot-parameters.mjs";
 import { fullStateKey } from "../src-js/state-keys.mjs";
-import { createChampionBaseProfile, createChampionProfile, createChampionRequest, resolveChampionDecision } from "../src-js/champion-parameters.mjs";
+import { F14_CORE_BOT_TYPES, createChampionBaseProfile, createChampionProfile, createChampionRequest, f14CoreEngineId,
+  resolveChampionDecision } from "../src-js/champion-parameters.mjs";
 
 // Pending garbage on the canonical state; the request carries only its row counts.
 function withPendingGarbage(state, turn) {
@@ -327,6 +328,15 @@ test("champion INPUT match locks the WASM F14 core selection, also under incomin
   } finally {
     await runtime.closeSessions();
   }
+});
+
+test("local F14-core engine ids carry a base-profile digest, so gated profiles sharing a profileId differ", () => {
+  const ids = F14_CORE_BOT_TYPES.map((type) => f14CoreEngineId("role", type));
+  assert.equal(new Set(ids).size, ids.length);
+  const champion = f14CoreEngineId("role", "cc2-s2-champion");
+  const previous = f14CoreEngineId("role", "cc2-s2-champion-previous");
+  for (const id of [champion, previous]) assert.match(id, /^role\/f14-leaf-conversion-gated-b\/1\+[0-9a-f]{12}$/u);
+  assert.notEqual(champion, previous);
 });
 
 test("champion GUI parameters always build the gated leaf-conversion profile and request", () => {

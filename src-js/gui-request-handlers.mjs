@@ -50,7 +50,7 @@ import { lockedPieceCells, toS2GuiState, createGame, extendSeededQueue,
 const HUMAN_BOT = Object.freeze({ id: "human", available: true, ...botParameterCapability("human") });
 // The GUI offers exactly the bots TTRM INPUT admits; the local server offers the same set.
 const CC2_LABELS = Object.freeze(Object.fromEntries(["cc2-raw", "cc2-chouhy", "cc2-s2-f14",
-  "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion"]
+  "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion"]
   .map((id) => [id, BOT_PARAMETER_DEFINITIONS[id].label])));
 /**
  * Transport-neutral browser API. Native CC2 engines are deliberately absent;

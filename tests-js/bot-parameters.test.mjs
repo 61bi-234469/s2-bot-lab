@@ -111,7 +111,7 @@ test("capabilities are safe to serialize for the GUI", () => {
 // Names describe each bot's design; only the parenthesis marks the current
 // champion. Every introduction gives origin, tuning/intent and character.
 test("GUI bots have design names and a three-part introduction", () => {
-  const bots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion"];
+  const bots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion"];
   for (const id of bots) {
     const { label, description } = botParameterCapability(id);
     assert.doesNotMatch(label, /development champion/);
