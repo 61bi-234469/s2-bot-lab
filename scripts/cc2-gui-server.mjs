@@ -10,7 +10,7 @@ import { createCc2WasmWorkerSession } from "../src-js/cc2-wasm-worker-session.mj
 import { createGuiInputMatchHandlers } from '../src-js/gui-input-match.mjs';
 import { applyQualifiedCc2Suggestion } from "../src-js/gui-request-handlers.mjs";
 import { assertChampionParameters, createChampionProfile, createChampionRequest, isGatedCoreType, resolveChampionDecision } from "../src-js/champion-parameters.mjs";
-import { defaultBotParameters } from "../src-js/bot-parameters.mjs";
+import { BOT_PARAMETER_DEFINITIONS, defaultBotParameters } from "../src-js/bot-parameters.mjs";
 import { isInputBotType } from '../src-js/input-bot-contract.mjs';
 import { createNativeInputRuntime } from '../src-js/native-input-runtime.mjs';
 import {
@@ -90,7 +90,7 @@ const cc2Engines = Object.freeze({
   "cc2-raw": Object.freeze({
     botType: "cc2-raw",
     engineId: "minuskelvin-cold-clear-2/ed8b193",
-    label: "Raw CC2 — MinusKelvin upstream",
+    label: BOT_PARAMETER_DEFINITIONS["cc2-raw"].label,
     repository: "https://github.com/MinusKelvin/cold-clear-2",
     commit: "ed8b19327b6bd1410ddd873d8611485bd45d8fae",
     comparisonSource: "minuskelvin-cc2-final-placement",
@@ -99,7 +99,7 @@ const cc2Engines = Object.freeze({
   "cc2-chouhy": Object.freeze({
     botType: "cc2-chouhy",
     engineId: "chouhy-cold-clear-2/b20a92b",
-    label: "CC2 — chouhy fork (b20a92b)",
+    label: BOT_PARAMETER_DEFINITIONS["cc2-chouhy"].label,
     repository: "https://github.com/chouhy/cold-clear-2",
     commit: "b20a92b0ed3230dd910d0674f7a09c552a34dd46",
     comparisonSource: "chouhy-cc2-final-placement",
@@ -108,7 +108,7 @@ const cc2Engines = Object.freeze({
   "cc2-s2-f14": Object.freeze({
     botType: "cc2-s2-f14",
     engineId: "cold-clear-2-s2-f14-post-tank-solvency-rescue/1",
-    label: "CC2 S2 — F14 post-tank solvency rescue (development)",
+    label: BOT_PARAMETER_DEFINITIONS["cc2-s2-f14"].label,
     repository: "https://github.com/61bi-234469/s2-bot-lab",
     commit: "ed8b193+local-s2-reranker",
     comparisonSource: "cold-clear-2-s2-f14-post-tank-solvency-rescue-final-placement",
@@ -116,32 +116,26 @@ const cc2Engines = Object.freeze({
     binary: options.s2Binary,
     config: loadS2Config("fixtures/tuning/cc2-s2-spin-value-aligned.json"),
   }),
-  "cc2-s2-champion": Object.freeze({
-    botType: "cc2-s2-champion",
-    engineId: "cold-clear-2-s2-development-champion/f14-leaf-conversion-gated-b/1",
-    label: "CC2 S2 — current development champion (not release-qualified)",
+  "cc2-s2-champion-legacy": Object.freeze({
+    botType: "cc2-s2-champion-legacy",
+    engineId: "cold-clear-2-s2/pre-f14-core-input-route/1",
+    label: BOT_PARAMETER_DEFINITIONS["cc2-s2-champion-legacy"].label,
     repository: "https://github.com/61bi-234469/s2-bot-lab",
-    commit: "local-development-champion-f14-leaf-conversion-gated-b",
-    comparisonSource: "cold-clear-2-s2-development-champion-gated-final-placement",
+    commit: "pre-f14-core-input-route-current-s2-binary",
+    comparisonSource: "cold-clear-2-s2-pre-f14-core-final-placement",
     protocolName: "Cold Clear 2 S2",
-    profileSummary: "SPSA-tuned F14 gated leaf-conversion profile (kappa=0.1164, H=8, eight weightOverrides)",
-    binary: options.f14ChampionBinary,
-    wasm: options.f14Wasm,
-    f14Compat: options.f14ChampionBinary !== null,
-    f14WasmCompat: options.f14ChampionBinary === null && options.f14Wasm !== null,
-    wasmSha256: fileSha256IfPresent(options.f14Wasm),
+    binary: options.s2Binary,
     config: loadS2Config("fixtures/tuning/cc2-s2-spawn-integrity-substrate-v2.json"),
   }),
   // The previous champion's gated profile on the champion's core and binary.
   "cc2-s2-champion-previous": Object.freeze({
     botType: "cc2-s2-champion-previous",
     engineId: "cold-clear-2-s2-previous-champion/f14-leaf-conversion-gated-b/1",
-    label: "CC2 S2 — previous gated champion κ0.25 (comparison)",
+    label: BOT_PARAMETER_DEFINITIONS["cc2-s2-champion-previous"].label,
     repository: "https://github.com/61bi-234469/s2-bot-lab",
     commit: "local-previous-champion-f14-leaf-conversion-gated-b",
     comparisonSource: "cold-clear-2-s2-previous-champion-gated-final-placement",
     protocolName: "Cold Clear 2 S2",
-    profileSummary: "F14 gated leaf-conversion profile (kappa=0.25, H=8, default weights; the champion before the SPSA tuning)",
     binary: options.f14ChampionBinary,
     wasm: options.f14Wasm,
     f14Compat: options.f14ChampionBinary !== null,
@@ -149,15 +143,19 @@ const cc2Engines = Object.freeze({
     wasmSha256: fileSha256IfPresent(options.f14Wasm),
     config: loadS2Config("fixtures/tuning/cc2-s2-spawn-integrity-substrate-v2.json"),
   }),
-  "cc2-s2-champion-legacy": Object.freeze({
-    botType: "cc2-s2-champion-legacy",
-    engineId: "cold-clear-2-s2/pre-f14-core-input-route/1",
-    label: "CC2 S2 — previous INPUT champion (comparison)",
+  "cc2-s2-champion": Object.freeze({
+    botType: "cc2-s2-champion",
+    engineId: "cold-clear-2-s2-development-champion/f14-leaf-conversion-gated-b/1",
+    label: BOT_PARAMETER_DEFINITIONS["cc2-s2-champion"].label,
     repository: "https://github.com/61bi-234469/s2-bot-lab",
-    commit: "pre-f14-core-input-route-current-s2-binary",
-    comparisonSource: "cold-clear-2-s2-pre-f14-core-final-placement",
+    commit: "local-development-champion-f14-leaf-conversion-gated-b",
+    comparisonSource: "cold-clear-2-s2-development-champion-gated-final-placement",
     protocolName: "Cold Clear 2 S2",
-    binary: options.s2Binary,
+    binary: options.f14ChampionBinary,
+    wasm: options.f14Wasm,
+    f14Compat: options.f14ChampionBinary !== null,
+    f14WasmCompat: options.f14ChampionBinary === null && options.f14Wasm !== null,
+    wasmSha256: fileSha256IfPresent(options.f14Wasm),
     config: loadS2Config("fixtures/tuning/cc2-s2-spawn-integrity-substrate-v2.json"),
   }),
 });
@@ -551,12 +549,9 @@ const server = createServer(async (request, response) => {
             } : {}),
             ...botParameterCapability(engine.botType),
             ...((engine.f14Compat || engine.f14WasmCompat) ? { fixedDecision: true,
-              execution: createChampionProfile(defaultBotParameters(engine.botType), engine.botType),
-              description: engine.f14WasmCompat
-                ? engine.profileSummary + ", with cc2-rank-order/1 and root rescue retained; development-only, not release-qualified. The final order is CC2 rank order (no rerank); only the rescue veto selects past rank 0. Final placement and INPUT use the WASM artifact (--f14-wasm or the build output); SELECTION and THINK TIME are supported."
-                : engine.profileSummary + ", with cc2-rank-order/1 and root rescue retained; development-only, not release-qualified. The final order is CC2 rank order (no rerank); only the rescue veto selects past rank 0. Final placement uses the pinned gated native profile for SELECTION budgets. INPUT and THINK TIME use the WASM core." } : {}),
+              execution: createChampionProfile(defaultBotParameters(engine.botType), engine.botType) } : {}),
           })),
-          { id: "human", label: "You (1P)", available: true, ...botParameterCapability("human") },
+          { id: "human", available: true, ...botParameterCapability("human") },
         ],
       });
     }
@@ -1287,10 +1282,7 @@ function matchReplayMeta({ match, config, types, botParameters, firstTo, ttrmCom
 
 function matchBotLabel(type) {
   if (cc2Engines[type] !== undefined) return cc2Engines[type].label;
-  return ({
-    "s2-simple": "S2 placement bot",
-    human: "You (1P)",
-  })[type] ?? type;
+  return BOT_PARAMETER_DEFINITIONS[type]?.label ?? type;
 }
 
 function positiveIntegerOrDefault(value, fallback) {

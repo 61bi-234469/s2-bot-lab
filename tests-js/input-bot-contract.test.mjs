@@ -36,7 +36,7 @@ test('raw and chouhy retain proposal order rather than adopting F14 ranking', ()
   }
 });
 
-test('previous INPUT champion restores the legacy F14 selector on saved positions', () => {
+test('former F14 rescue champion restores the legacy F14 selector on saved positions', () => {
   for (const { request } of targets.cases) {
     assert.deepEqual(orderQualifiedInputCandidates({ ...request, type: 'cc2-s2-champion-legacy' }),
       orderQualifiedInputCandidates({ ...request, type: 'cc2-s2-f14' }));

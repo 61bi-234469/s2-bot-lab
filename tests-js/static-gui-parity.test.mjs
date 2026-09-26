@@ -10,6 +10,7 @@ import { resolveGuiStaticSubmission as resolveQualifiedStaticCc2Submission } fro
 import { cc2MoveToCanonicalPlacement } from "../src-js/cc2-s2-adapter.mjs";
 import { canonicalize } from "../scripts/cs1.mjs";
 import { INPUT_BOT_PROFILES } from "../src-js/input-bot-contract.mjs";
+import { BOT_PARAMETER_DEFINITIONS } from "../src-js/bot-parameters.mjs";
 
 const LEGACY_STATIC_ENGINE = "cc2-raw";
 
@@ -108,7 +109,7 @@ async function exerciseStaleOnePlayerProposal(makeSecondError) {
 
 test("static handler lists exactly the INPUT bots and You, unavailable without WASM", async () => {
   const capabilities = await request(createGuiRequestHandlers(), "GET", "/api/bots");
-  assert.deepEqual(capabilities.bots.map((bot) => bot.id), ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion", "cc2-s2-champion-previous", "cc2-s2-champion-legacy", "human"]);
+  assert.deepEqual(capabilities.bots.map((bot) => bot.id), ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-previous", "cc2-s2-champion", "human"]);
   assert.ok(capabilities.bots.filter((bot) => bot.id.startsWith("cc2-")).every((bot) => !bot.available));
   const available = await request(createGuiRequestHandlers({ cc2: { decideF14: async () => { throw new Error("must not run"); } } }), "GET", "/api/bots");
   const champion = available.bots.find((bot) => bot.id === "cc2-s2-champion");
@@ -246,16 +247,28 @@ test("qualified analysis supplies canonical comparison identity after public sel
 
 // The GUI offers only the bots TTRM INPUT admits (plus You on the left), so the
 // public and local hosts show one list and nothing non-OSS can enter it.
-test("selectors offer all INPUT bots with past champions after the current one, newest first", async () => {
+test("selectors offer the upstream bots, then the project bots oldest to newest", async () => {
   const html = await readFile(new URL("../cc2-gui/index.html", import.meta.url), "utf8");
   const optionsFor = (id) => [...(html.match(new RegExp(`<select id="${id}">([\\s\\S]*?)</select>`))?.[1] ?? "")
     .matchAll(/<option value="([^"]+)"/g)].map((match) => match[1]);
-  const orderedBots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion", "cc2-s2-champion-previous", "cc2-s2-champion-legacy"];
+  const orderedBots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-previous", "cc2-s2-champion"];
   assert.deepEqual(new Set(orderedBots), new Set(Object.keys(INPUT_BOT_PROFILES)));
   assert.deepEqual(optionsFor("analysis-bot"), orderedBots);
   assert.doesNotMatch(html, /analysis-engine-profile|analysis-engine-control/);
   assert.deepEqual(optionsFor("left-bot"), [...orderedBots, "human"]);
   assert.deepEqual(optionsFor("right-bot"), orderedBots);
+});
+
+test("static option names and the Pages bot list use the shared bot names and introductions", async () => {
+  const html = await readFile(new URL("../cc2-gui/index.html", import.meta.url), "utf8");
+  for (const [, id, text] of html.matchAll(/<option value="(cc2-[^"]+)"(?: selected)?>([^<]*)<\/option>/g)) {
+    assert.equal(text, BOT_PARAMETER_DEFINITIONS[id].label, id);
+  }
+  const { bots } = await request(createGuiRequestHandlers({ cc2: { decideF14: async () => { throw new Error("must not run"); } } }), "GET", "/api/bots");
+  for (const bot of bots) {
+    assert.equal(bot.label, BOT_PARAMETER_DEFINITIONS[bot.id].label, bot.id);
+    assert.equal(bot.description, BOT_PARAMETER_DEFINITIONS[bot.id].description, bot.id);
+  }
 });
 
 test("bot-vs-bot selectors expose the current champion", async () => {

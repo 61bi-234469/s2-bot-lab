@@ -501,7 +501,7 @@ function openBotSettings(side) {
   elements["bot-settings-side"].textContent = botType === "human" ? `${side.toUpperCase()} PLAYER` : `${side.toUpperCase()} BOT`;
   elements["bot-settings-title"].textContent = capability.label ?? botType;
   const fairNote = fairComparisonEnabled() && botType.startsWith("cc2-")
-    ? " いまは FAIR COMPARISON がONのため、対局中は SELECTION 512・1 PPS に揃えられます。ここでの設定は上書きされず、OFFに戻すと元に戻ります。"
+    ? "\nいまは FAIR COMPARISON がONのため、対局中は SELECTION 512・1 PPS に揃えられます。ここでの設定は上書きされず、OFFに戻すと元に戻ります。"
     : "";
   elements["bot-settings-description"].textContent = `${capability.description ?? ""}${fairNote}`;
   setBotSettingsValidation("");

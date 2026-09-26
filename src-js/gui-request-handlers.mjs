@@ -35,7 +35,7 @@ import {
 } from "./replay/bot-match-recorder.mjs";
 import { buildReplayIR, nowMs } from "./replay/ttrm-simulator.mjs";
 import { MAX_TTRM_TEXT_LENGTH, TtrmError, parseTtrm } from "./replay/ttrm-parser.mjs";
-import { botParameterCapability, defaultBotParameters, fairComparisonBotParameters, normalizeBotParameters } from "./bot-parameters.mjs";
+import { BOT_PARAMETER_DEFINITIONS, botParameterCapability, defaultBotParameters, fairComparisonBotParameters, normalizeBotParameters } from "./bot-parameters.mjs";
 import { matchOutcome, normalizeBotMatchOptions, ppsForCc2Parameters } from "./bot-match-options.mjs";
 import { realtimeCc2ThinkMs } from "./bot-match-options.mjs";
 import { runBotProposals } from "./bot-proposal-runner.mjs";
@@ -47,16 +47,11 @@ import { placementGeometry } from "./triangle/placement-geometry.mjs";
 import { lockedPieceCells, toS2GuiState, createGame, extendSeededQueue,
   QUEUE_MODE_LEGACY_LCG } from "../cc2-gui/game.mjs";
 
-const HUMAN_BOT = Object.freeze({ id: "human", label: "You (1P)", available: true, ...botParameterCapability("human") });
+const HUMAN_BOT = Object.freeze({ id: "human", available: true, ...botParameterCapability("human") });
 // The GUI offers exactly the bots TTRM INPUT admits; the local server offers the same set.
-const CC2_LABELS = Object.freeze({
-  "cc2-raw": "Raw CC2 — MinusKelvin upstream (deterministic port)",
-  "cc2-chouhy": "CC2 — chouhy fork b20a92b (deterministic port)",
-  "cc2-s2-f14": "CC2 S2 — F14 post-tank rescue",
-  "cc2-s2-champion": "CC2 S2 — current development champion (not release-qualified)",
-  "cc2-s2-champion-previous": "CC2 S2 — previous gated champion κ0.25 (comparison)",
-  "cc2-s2-champion-legacy": "CC2 S2 — previous INPUT champion (comparison)",
-});
+const CC2_LABELS = Object.freeze(Object.fromEntries(["cc2-raw", "cc2-chouhy", "cc2-s2-f14",
+  "cc2-s2-champion-legacy", "cc2-s2-champion-previous", "cc2-s2-champion"]
+  .map((id) => [id, BOT_PARAMETER_DEFINITIONS[id].label])));
 /**
  * Transport-neutral browser API. Native CC2 engines are deliberately absent;
  * callers get a stable capability response instead of an import-time failure.
@@ -782,10 +777,7 @@ function staticCc2Capability(id) {
   if (isGatedCoreType(id)) {
     capability.fixedDecision = true;
     capability.execution = createChampionProfile(defaultBotParameters(id), id);
-    capability.description += "Pages では gated leaf-conversion profile を WASM で実行し、SELECTION・THINK TIME・QUEUE DEPTH を適用します。開発専用で release-qualified ではありません。最終順序は CC2 順（rerank なし）で、rescue だけが rank 0 以外を選びます。";
-    return capability;
   }
-  capability.description += " 蜈ｬ髢妓ASM迚医〒繧５HINK TIME繧貞茜逕ｨ縺ｧ縺阪∪縺吶よ怏蜉ｹ譎ゅ・遶ｯ譛ｫ諤ｧ閭ｽ繝ｻ繝悶Λ繧ｦ繧ｶ繝ｻ螳溯｡梧凾雋闕ｷ縺ｫ繧医▲縺ｦ謗｢邏｢驥上→驕ｸ謚樊焔縺悟､牙喧縺励∪縺吶・";
   return capability;
 }
 function cc2SearchBudget(parameters) { return {
