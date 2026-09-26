@@ -1,0 +1,31 @@
+<!doctype html>
+<!-- Source of og-image.png (1200x630 link-preview thumbnail). Re-render with a headless
+     Chromium: msedge --headless=new --hide-scrollbars --window-size=1200,630
+     --screenshot=og-image.png og-image-source.html -->
+<html><head><meta charset="utf-8"><style>
+:root{--bg:#0b0b0b;--line:#333833;--text:#c7ccc7;--muted:#6f766f;--accent:#ffb000;--green:#33d17a;--cyan:#2fc7d4;--red:#e05252}
+html,body{margin:0;width:1200px;height:630px;overflow:hidden;background:var(--bg);color:var(--text);font-family:Consolas,"MS Gothic",monospace}
+.frame{position:absolute;inset:28px;border:1px solid var(--line);display:flex}
+.left{flex:1;padding:56px 56px;display:flex;flex-direction:column}
+.eyebrow{color:var(--accent);font-size:22px;font-weight:700;letter-spacing:.18em}
+h1{margin:18px 0 0;font-size:84px;letter-spacing:.06em;font-weight:700}
+h1 span{color:var(--green)}
+.sub{margin-top:22px;font-size:28px;line-height:1.5;color:var(--text)}
+.tags{margin-top:auto;display:flex;gap:14px;font-size:20px;letter-spacing:.1em}
+.tags div{border:1px solid var(--line);padding:8px 14px;color:var(--muted)}
+.tags div b{color:var(--cyan);font-weight:700}
+.right{width:330px;border-left:1px solid var(--line);display:flex;align-items:center;justify-content:center}
+.field{display:grid;grid-template-columns:repeat(10,22px);grid-auto-rows:22px;gap:2px;border:1px solid var(--line);padding:6px}
+.c{background:#141614}.I{background:#2fc7d4}.O{background:#ffb000}.T{background:#b36ae2}.S{background:#33d17a}.Z{background:#e05252}.L{background:#f08a3c}.J{background:#4a7bd8}.G{background:#4a504a}
+.status{position:absolute;top:52px;right:380px;font-size:18px;letter-spacing:.14em;color:var(--muted);display:flex;align-items:center;gap:10px}
+.status i{width:12px;height:12px;background:var(--green);display:inline-block}
+</style></head><body><div class="frame">
+<div class="left"><div class="eyebrow">TETR.IO SEASON 2</div><h1><span>&gt; </span>s2-bot-lab</h1>
+<div class="sub">Botの着手を、TETR.IO Season 2 の<br>ルールで検証するGUI</div>
+<div class="tags"><div><b>SINGLE</b> ANALYSIS</div><div><b>BOT</b> vs <b>BOT</b> / 1P</div><div><b>REPLAY</b></div></div></div>
+<div class="right"><div class="field" id="f"></div></div>
+<div class="status"><i></i>READY</div></div>
+<script>
+const rows=["..........","..........","..........","....T.....","...TTT....","..........","..........","..........","..........","..........","..........","..........","..........","OO........","OOZZ......","LLLZZ....I","LSS.JJJ..I","SSGGGGJ..I","GGGGG.GGGI","GGGGGG.GGG"];
+const f=document.getElementById('f');for(const r of rows)for(const ch of r){const d=document.createElement('div');d.className='c '+(ch=='.'?'':ch);f.appendChild(d)}
+</script></body></html>
