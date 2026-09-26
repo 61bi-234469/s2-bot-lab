@@ -759,6 +759,30 @@ test('actual consumed P1 inputs export through GUI writer and replay import, inc
   assert.equal(saved.body.players[0].locks.length, view.bots[0].stats.turns);
 });
 
+// The 1P rules (STALL PENALTY, handicap, turn match) judge You (1P) only; a
+// bot-only round with them left ON must still start, with all three off.
+test('a bot-only input round starts with the 1P rules left on and applies none of them', async () => {
+  const handlers = createGuiInputMatchHandlers({ runtime: {
+    propose: () => new Promise(() => {}), closeSessions: async () => {}, resolveInput: resolveInputJob,
+  } });
+  for (const penalty of ['penalty-line', 'forced-lock']) {
+    const started = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
+      ...config, left: 'cc2-raw', right: 'cc2-chouhy',
+      stallLock: { enabled: true, pps: 2, penalty },
+      handicap: { enabled: true }, turnMatch: { enabled: true, order: 'simultaneous' },
+    } });
+    assert.equal(started.status, 200, JSON.stringify(started.body));
+    assert.equal(started.body.humanSide, null);
+    assert.notEqual(started.body.stallPenalty?.enabled, true);
+    const stepped = await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: {
+      sessionId: started.body.sessionId, frame: 90, inputs: [],
+    } });
+    assert.equal(stepped.status, 200, JSON.stringify(stepped.body));
+    assert.equal(stepped.body.stallPenalty?.rows ?? 0, 0);
+    assert.ok(stepped.body.bots.every((bot) => bot.board.every((row) => row.every((cell) => cell === null))));
+  }
+});
+
 test('input STALL penalty lines survive locks and one line is forgiven after five ordinary locks', async () => {
   const handlers = createGuiInputMatchHandlers({ runtime: {
     propose: () => new Promise(() => {}), closeSessions: async () => {}, resolveInput: resolveInputJob,

@@ -58,10 +58,11 @@ function isRerankFallback(value) {
   const message = typeof value === 'string' ? value : value?.message;
   return typeof message === 'string' && /rerank[- ](?:mismatch|unavailable|unsupported)|rerank.*(?:unavailable|not available|not initialized)/i.test(message);
 }
+// STALL PENALTY judges You (1P) only. Like the 1P handicap and turn match, a
+// round without You (1P) has nothing to judge, so a stored ON setting is off.
 const normalizeStallPenalty = (value, humanSide) => {
   const enabled = value?.enabled === true;
-  if (!enabled) return { enabled: false, pps: null, penalty: null };
-  if (humanSide !== 'left') throw new Error('STALL PENALTY requires You (1P) on the left');
+  if (!enabled || humanSide !== 'left') return { enabled: false, pps: null, penalty: null };
   if (!Number.isFinite(value.pps) || value.pps < 0.1 || value.pps > 20) throw new Error('invalid STALL PENALTY PPS');
   if (!['penalty-line', 'forced-lock'].includes(value.penalty)) throw new Error('unsupported STALL PENALTY');
   return { enabled: true, pps: value.pps, penalty: value.penalty };
