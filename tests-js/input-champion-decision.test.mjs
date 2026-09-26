@@ -6,7 +6,6 @@ import { resolve } from "node:path";
 import { createGame, toS2GuiState } from "../cc2-gui/game.mjs";
 import { guiStateToCanonical } from "../src-js/gui-state.mjs";
 import { createPublicCompatProfile, createPublicCompatRequest } from "../src-js/public-compat-request.mjs";
-import { createF14LeafConversionGatedProfile } from "../src-js/s2-f14-compat-browser.mjs";
 import { createS2AmountOnlyDecisionState } from "../src-js/s2-amount-only-decision-state.mjs";
 import { analyzeSimpleS2FinalPlacements } from "../src-js/simple-s2-bot.mjs";
 import { championInputMoves, createChampionInputRequest } from "../src-js/input-champion-decision.mjs";
@@ -18,7 +17,7 @@ import { firstResponseMismatch } from "../scripts/f14-response-comparator.mjs";
 import { applyTransition } from "../src-js/transition.mjs";
 import { defaultBotParameters, normalizeBotParameters } from "../src-js/bot-parameters.mjs";
 import { fullStateKey } from "../src-js/state-keys.mjs";
-import { createChampionProfile, createChampionRequest, resolveChampionDecision } from "../src-js/champion-parameters.mjs";
+import { createChampionBaseProfile, createChampionProfile, createChampionRequest, resolveChampionDecision } from "../src-js/champion-parameters.mjs";
 
 // Pending garbage on the canonical state; the request carries only its row counts.
 function withPendingGarbage(state, turn) {
@@ -39,7 +38,7 @@ test("INPUT champion request equals the final-placement champion request for the
     let state = guiStateToCanonical(toS2GuiState(createGame(seed)));
     for (let turn = 0; turn < 40; turn++) {
       for (const probe of [state, withPendingGarbage(state, turn)]) {
-        const profile = createF14LeafConversionGatedProfile({ scale: "0.25", maxHeight: "8" });
+        const profile = createChampionBaseProfile();
         const expected = createPublicCompatRequest(probe, { requestId: "r", profile });
         const actual = createChampionInputRequest(createS2AmountOnlyDecisionState(probe), { requestId: "r" });
         assert.equal(canonicalize(actual), canonicalize(expected), `seed ${seed} turn ${turn}`);
@@ -238,7 +237,7 @@ test("local INPUT runtime re-finalizes the gated champion search through an exis
     f14SessionFor: () => createCc2WasmSession({ wasmBytes }),
   });
   try {
-    const profile = createF14LeafConversionGatedProfile({ scale: "0.25", maxHeight: "8" });
+    const profile = createChampionBaseProfile();
     const state = withPendingGarbage(guiStateToCanonical(toS2GuiState(createGame(67))), 4);
     const request = createPublicCompatRequest(state, { requestId: 'local-rerank', profile });
     const payload = { sessionKey: 'input-rerank-test/right', type: 'cc2-s2-champion',
@@ -289,7 +288,7 @@ test("champion INPUT match locks the WASM F14 core selection, also under incomin
       await new Promise((resolveWait) => setTimeout(resolveWait, 2));
     }
     assert.ok(view.bots.every((bot) => bot.stats.turns >= 20), JSON.stringify(view.bots.map((bot) => bot.stats.turns)));
-    const gatedProfile = createF14LeafConversionGatedProfile({ scale: "0.25", maxHeight: "8" });
+    const gatedProfile = createChampionBaseProfile();
     assert.ok(decisions.every(({ payload }) => canonicalize(payload.profile) === canonicalize(gatedProfile)));
     assert.ok(decisions.some(({ payload }) => payload.request.selector.incoming.pendingRows > 0), "a decision saw incoming rows");
     const pose = (placement) => [placement.piece, placement.rotation, placement.x, placement.y, placement.usedHold];
@@ -332,7 +331,7 @@ test("champion INPUT match locks the WASM F14 core selection, also under incomin
 
 test("champion GUI parameters always build the gated leaf-conversion profile and request", () => {
   const defaults = defaultBotParameters("cc2-s2-champion");
-  const gatedBase = createF14LeafConversionGatedProfile({ scale: "0.25", maxHeight: "8" });
+  const gatedBase = createChampionBaseProfile();
   assert.equal(canonicalize(createChampionProfile(defaults)), canonicalize(gatedBase));
   for (const seed of [1, 2, 3]) {
     const state = withPendingGarbage(guiStateToCanonical(toS2GuiState(createGame(seed))), seed);

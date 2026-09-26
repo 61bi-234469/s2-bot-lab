@@ -23,7 +23,7 @@ import {
 } from "./gui-1p-handicap-garbage.mjs";
 import { normalizeTurnMatch, turnMatchControllerOptions } from "./gui-turn-match.mjs";
 import { guiStateToCc2NativeStart } from "./cc2-s2-native-start.mjs";
-import { assertChampionParameters, createChampionProfile, createChampionRequest, resolveChampionDecision } from "./champion-parameters.mjs";
+import { assertChampionParameters, createChampionProfile, createChampionRequest, isGatedCoreType, resolveChampionDecision } from "./champion-parameters.mjs";
 import { resolveGuiStaticSubmission as resolveQualifiedStaticCc2Submission } from "./gui-static-public-resolver.mjs";
 import { createGuiStaticDecisionRequest as createS2AmountOnlyDecisionRequest, isGuiStaticType as isAdr062QualifiedStaticType } from "./s2-amount-only-decision-state.mjs";
 import { applyTransition } from "./transition.mjs";
@@ -54,6 +54,7 @@ const CC2_LABELS = Object.freeze({
   "cc2-chouhy": "CC2 — chouhy fork b20a92b (deterministic port)",
   "cc2-s2-f14": "CC2 S2 — F14 post-tank rescue",
   "cc2-s2-champion-legacy": "CC2 S2 — previous INPUT champion (comparison)",
+  "cc2-s2-champion-previous": "CC2 S2 — previous gated champion κ0.25 (comparison)",
   "cc2-s2-champion": "CC2 S2 — current development champion (not release-qualified)",
 });
 /**
@@ -94,10 +95,10 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
         if (!isAdr062QualifiedStaticType(engine)) return fail(422, { error: "ADR-062-qualified resolver required" });
         try {
           const parameters = normalizeBotParameters(engine, body.parameters);
-          if (engine === "cc2-s2-champion") {
+          if (isGatedCoreType(engine)) {
             assertChampionParameters(parameters);
             const state = guiStateToCanonical(body.state);
-            const decision = await decideChampion("analysis", state, body.state, parameters);
+            const decision = await decideChampion("analysis", state, body.state, parameters, engine);
             return ok({
               engine: publicEngine(engine),
               info: { name: "Cold Clear 2 S2", version: "F14 gated leaf-conversion WASM" },
@@ -117,7 +118,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       }
       if (method === "POST" && path === "/api/apply-s2") {
         if (body.engine === "s2-simple") return ok(applyHumanFinalPlacementUnderObservedS2(guiStateToCanonical(body.state), body.move));
-        if (body.engine === "cc2-s2-champion") return fail(422, { error: "F14 native compatibility publishes a verified final decision through /api/suggest; external reranking is unsupported" });
+        if (isGatedCoreType(body.engine)) return fail(422, { error: "F14 native compatibility publishes a verified final decision through /api/suggest; external reranking is unsupported" });
         try {
           const engine = requireCc2Type(body.engine);
           return applyQualifiedCc2Suggestion({ type: engine, engine: publicEngine(engine),
@@ -172,7 +173,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
           : normalizeBotParameters(right, body.rightParameters),
       };
       for (const [side, type] of [["left", left], ["right", right]]) {
-        if (type !== "cc2-s2-champion") continue;
+        if (!isGatedCoreType(type)) continue;
         try {
           assertChampionParameters(botParameters[side]);
         } catch (error) {
@@ -537,8 +538,8 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     const startedAt = now();
     let proposal;
     try {
-      if (type === "cc2-s2-champion") {
-        const decision = await decideChampion(bot.id, canonicalState, gui, parameters);
+      if (isGatedCoreType(type)) {
+        const decision = await decideChampion(bot.id, canonicalState, gui, parameters, type);
         return { botId: bot.id, type, moves: [decision.response.selectedMove], publicDecision: decision };
       }
       proposal = await cc2Runtime.propose({ sessionKey: bot.id, engine: type, state,
@@ -576,12 +577,12 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       if (!best) throw new Error(`${bot.id} has no legal final placement`);
       return submissionFor(match, bot, best.placement, best.transition, best.score);
     }
-    if (type === "cc2-s2-champion") {
+    if (isGatedCoreType(type)) {
       const gui = botMatchToGuiState(match, bot.id);
       const state = guiStateToCanonical(gui);
       const decision = !forceLocal && proposal.publicDecision !== undefined
         ? proposal.publicDecision
-        : await decideChampion(bot.id, state, gui, activeSession.botParameters[bot.id]);
+        : await decideChampion(bot.id, state, gui, activeSession.botParameters[bot.id], type);
       return submissionFor(match, bot, decision.resolved.placement, decision.resolved.transition,
         decision.resolved.score, fullStateKey(bot.state));
     }
@@ -619,20 +620,21 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     );
   }
 
-  async function decideChampion(sessionKey, state, gui, parameters) {
+  async function decideChampion(sessionKey, state, gui, parameters, type) {
     if (typeof cc2Runtime?.decideF14 !== "function") throw new Error("CC2 F14 WASM decision is unavailable");
     const request = createChampionRequest(state, parameters, {
       requestId: `f14-wasm-${++publicRequestSequence}`,
       generation: 1,
+      type,
     });
     const response = await cc2Runtime.decideF14({
       sessionKey,
-      type: "cc2-s2-champion",
-      engine: publicEngine("cc2-s2-champion"),
+      type,
+      engine: publicEngine(type),
       request,
       profile: request.execution,
     });
-    const resolved = resolveChampionDecision({ state, gui, request, response, parameters });
+    const resolved = resolveChampionDecision({ state, gui, request, response, parameters, type });
     return { request, response, resolved };
   }
 
@@ -777,9 +779,9 @@ function defaultWait(ms) { return new Promise((resolve) => setTimeout(resolve, m
 function unavailable(id, label) { return { id, label, available: false, reason: "requires the local server", parameters: [] }; }
 function staticCc2Capability(id) {
   const capability = botParameterCapability(id);
-  if (id === "cc2-s2-champion") {
+  if (isGatedCoreType(id)) {
     capability.fixedDecision = true;
-    capability.execution = createChampionProfile(defaultBotParameters("cc2-s2-champion"));
+    capability.execution = createChampionProfile(defaultBotParameters(id), id);
     capability.description += "Pages では gated leaf-conversion profile を WASM で実行し、SELECTION・THINK TIME・QUEUE DEPTH を適用します。開発専用で release-qualified ではありません。最終順序は CC2 順（rerank なし）で、rescue だけが rank 0 以外を選びます。";
     return capability;
   }
@@ -804,4 +806,4 @@ function staticBotType(value) {
   return value;
 }
 function requireCc2Type(value) { if (!(value in CC2_LABELS)) throw new Error(`unsupported CC2 engine ${value}`); return value; }
-function publicEngine(id) { return { botType: id, engineId: id, label: CC2_LABELS[id], repository: id === "cc2-raw" ? "https://github.com/MinusKelvin/cold-clear-2" : id === "cc2-chouhy" ? "https://github.com/chouhy/cold-clear-2" : "https://github.com/61bi-234469/s2-bot-lab", commit: id === "cc2-raw" ? "ed8b19327b6bd1410ddd873d8611485bd45d8fae" : id === "cc2-chouhy" ? "b20a92b0ed3230dd910d0674f7a09c552a34dd46" : id === "cc2-s2-champion" ? "f14-leaf-conversion-gated-b" : "ed8b193+local-s2-reranker", comparisonSource: id === "cc2-s2-champion" ? `${id}-gated-final-placement` : `${id}-final-placement` }; }
+function publicEngine(id) { return { botType: id, engineId: id, label: CC2_LABELS[id], repository: id === "cc2-raw" ? "https://github.com/MinusKelvin/cold-clear-2" : id === "cc2-chouhy" ? "https://github.com/chouhy/cold-clear-2" : "https://github.com/61bi-234469/s2-bot-lab", commit: id === "cc2-raw" ? "ed8b19327b6bd1410ddd873d8611485bd45d8fae" : id === "cc2-chouhy" ? "b20a92b0ed3230dd910d0674f7a09c552a34dd46" : isGatedCoreType(id) ? "f14-leaf-conversion-gated-b" : "ed8b193+local-s2-reranker", comparisonSource: isGatedCoreType(id) ? `${id}-gated-final-placement` : `${id}-final-placement` }; }

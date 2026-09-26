@@ -32,6 +32,11 @@ const CC2_PARAMETERS = Object.freeze([
   Object.freeze({ key: "queueDepth", label: "QUEUE DEPTH", group: "input", type: "integer", minimum: 1, maximum: 28, step: 1, defaultValue: 14, suffix: "pieces" }),
 ]);
 
+// The F14 core runs at most 1,000,000 selections and needs a NEXT piece.
+const GATED_CORE_PARAMETERS = Object.freeze(CC2_PARAMETERS.map((parameter) =>
+  parameter.key === "selectionLimit" ? Object.freeze({ ...parameter, maximum: 1_000_000 })
+    : parameter.key === "queueDepth" ? Object.freeze({ ...parameter, minimum: 2 }) : parameter));
+
 export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
   "cc2-raw": Object.freeze({
     description: "純テトリス向けの MinusKelvin版 Cold Clear 2 です。探索の打ち切り条件と、参照するNEXTの数を設定します。",
@@ -46,13 +51,12 @@ export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
     parameters: CC2_PARAMETERS,
   }),
   "cc2-s2-champion": Object.freeze({
-    description: "開発中のchampionです。F14 gated leaf-conversion profile (kappa=0.25, H=8, cc2-rank-order/1) を使用し、root rescue を保持します。開発専用で、release-qualified ではありません。最終順序は CC2 順（rerank なし）で、rescue だけが rank 0 以外を選びます。",
-    // The F14 core runs at most 1,000,000 selections and needs a NEXT piece.
-    parameters: Object.freeze([
-      ...CC2_PARAMETERS.map((parameter) =>
-        parameter.key === "selectionLimit" ? Object.freeze({ ...parameter, maximum: 1_000_000 })
-          : parameter.key === "queueDepth" ? Object.freeze({ ...parameter, minimum: 2 }) : parameter),
-    ]),
+    description: "開発中のchampionです。F14 gated leaf-conversion profile を SPSA で調整した設定 (kappa=0.1164, H=8, 評価重み 8 個の weightOverrides, cc2-rank-order/1) を使用し、root rescue を保持します。開発専用で、release-qualified ではありません。最終順序は CC2 順（rerank なし）で、rescue だけが rank 0 以外を選びます。",
+    parameters: GATED_CORE_PARAMETERS,
+  }),
+  "cc2-s2-champion-previous": Object.freeze({
+    description: "比較用：SPSA 調整前のチャンピオン（2026-09-25〜26）です。F14 gated leaf-conversion profile (kappa=0.25, H=8, 評価重みは既定値, cc2-rank-order/1) と root rescue を使い、現チャンピオンと同じ F14 コアで動きます。TTRM INPUTと非INPUTの両方で選べます。開発専用で、release-qualified ではありません。",
+    parameters: GATED_CORE_PARAMETERS,
   }),
   "cc2-s2-champion-legacy": Object.freeze({
     description: "比較用：F14コア導入前のチャンピオンのINPUT判断経路（CC2候補＋旧F14評価）です。TTRM INPUTと非INPUTの両方で選べます。現在のS2実行ファイルとspawn-integrity-v2設定を使い、ローカルはnative、ブラウザ版はWASMで候補を生成します。当時のバイナリ全体の復元ではありません。INPUT時の入力操作は現チャンピオンと共通です。",

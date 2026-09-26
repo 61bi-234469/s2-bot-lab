@@ -16,7 +16,7 @@ import { HANDICAP_GARBAGE_ID, handicapColumnHeights, handicapGarbageCells,
   handicapRecord, normalizeHandicapGarbage } from './gui-1p-handicap-garbage.mjs';
 import { normalizeTurnMatch } from './gui-turn-match.mjs';
 import { championInputMoves, createChampionInputRequest, predictChampionNextRequest } from './input-champion-decision.mjs';
-import { assertChampionParameters, assertGatedChampionResponse, championVisibleState, createChampionProfile } from './champion-parameters.mjs';
+import { GATED_CORE_TYPES, assertChampionParameters, assertGatedChampionResponse, championVisibleState, createChampionProfile } from './champion-parameters.mjs';
 
 const IDS = ['left', 'right'];
 const KEYS = new Set(['moveLeft', 'moveRight', 'softDrop', 'hardDrop', 'rotateCW', 'rotateCCW', 'rotate180', 'hold']);
@@ -41,7 +41,7 @@ const pieceIdentity = state => ({ board: state.decision.board, pieces: state.dec
   chain: state.decision.chain, piecesPlaced: state.decision.lockTime.piecesPlaced });
 // The champion decides through the F14 core, whose amount-only selector reads
 // incoming rows; a CC2 proposal never sees them.
-const F14_CORE_TYPES = new Set(['cc2-s2-champion']);
+const F14_CORE_TYPES = new Set(GATED_CORE_TYPES);
 const nativeInputState = (decision, parameters, type) => ({
   ...guiStateToCc2NativeStart(decisionStateToSyntheticGui(decision), { queueLimit: parameters.queueDepth }),
   ...(['cc2-raw', 'cc2-chouhy'].includes(type) ? { input_candidates: true } : {}),
@@ -476,7 +476,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           // take here; THINK TIME is fitted to the pace like theirs.
           const profile = createChampionProfile({ ...parameters, thinkMs: !parameters.thinkTimeEnabled ? parameters.thinkMs
             : session.turnMatch.enabled || parameters.ppsEnabled === false ? parameters.thinkMs
-              : realtimeCc2ThinkMs({ thinkMs: parameters.thinkMs, stepFrames: interval }) });
+              : realtimeCc2ThinkMs({ thinkMs: parameters.thinkMs, stepFrames: interval }) }, type);
           const payload = { sessionKey, type, engine: { botType: type, engineId: type },
             request: createChampionInputRequest(championVisibleState(initial.decision, parameters.queueDepth),
               { requestId: `f14-input-${++session.f14Requests}`, profile, queueDepth: parameters.queueDepth }),

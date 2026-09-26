@@ -4,7 +4,7 @@ import { sha256Hex } from "./sha256.mjs";
 export const S2_AMOUNT_ONLY_DECISION_STATE_ID = "s2-amount-only-decision-state/1";
 export const S2_AMOUNT_ONLY_DECISION_REQUEST_ID = "s2-amount-only-decision-request/1";
 
-const QUALIFIED_TYPES = new Set(["cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion"]);
+const QUALIFIED_TYPES = new Set(["cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion", "cc2-s2-champion-previous"]);
 
 export function isAdr062QualifiedStaticType(type) {
   return QUALIFIED_TYPES.has(type);

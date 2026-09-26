@@ -16,6 +16,7 @@ use crate::data::Placement;
 use crate::time::Instant;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as Json};
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
@@ -105,7 +106,44 @@ pub struct Profile {
     pub b2b_charge_scale: Option<Option<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub final_order_policy_id: Option<String>,
+    /// Tuning-only search-config overrides for the gated profile: tunable key
+    /// (see `TUNABLE_WEIGHT_KEYS`) -> canonical signed decimal. Absent keeps
+    /// the compiled champion config byte-for-byte.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weight_overrides: Option<BTreeMap<String, String>>,
 }
+
+/// Search-config scalars a gated-profile `weightOverrides` map may set.
+pub const TUNABLE_WEIGHT_KEYS: &[&str] = &[
+    "freestyle_exploitation",
+    "cell_coveredness",
+    "holes",
+    "row_transitions",
+    "height",
+    "height_upper_half",
+    "height_upper_quarter",
+    "tetris_well_depth",
+    "has_back_to_back",
+    "wasted_t",
+    "softdrop",
+    "back_to_back_clear",
+    "combo_attack",
+    "perfect_clear",
+    "tslot.0",
+    "tslot.1",
+    "tslot.2",
+    "tslot.3",
+    "normal_clears.1",
+    "normal_clears.2",
+    "normal_clears.3",
+    "normal_clears.4",
+    "mini_spin_clears.1",
+    "mini_spin_clears.2",
+    "mini_spin_clears.3",
+    "spin_clears.1",
+    "spin_clears.2",
+    "spin_clears.3",
+];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -130,6 +168,11 @@ impl Profile {
         }
         if self.profile_id != LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE
             && self.b2b_charge_scale.is_some()
+        {
+            return false;
+        }
+        if self.weight_overrides.is_some()
+            && (self.profile_id != LEAF_CONVERSION_GATED_PROFILE || !self.weight_overrides_valid())
         {
             return false;
         }
@@ -310,7 +353,51 @@ impl Profile {
         (scale.is_finite() && scale >= 0.0).then_some(scale)
     }
 
+    fn weight_overrides_valid(&self) -> bool {
+        self.weight_overrides.as_ref().map_or(true, |overrides| {
+            !overrides.is_empty()
+                && overrides.iter().all(|(key, value)| {
+                    TUNABLE_WEIGHT_KEYS.contains(&key.as_str())
+                        && canonical_signed_decimal(value)
+                        && value.parse::<f32>().map_or(false, f32::is_finite)
+                })
+        })
+    }
+
     pub(crate) fn apply_search_config_overrides(&self, config: &mut BotConfig) {
+        for (key, value) in self.weight_overrides.iter().flatten() {
+            if key == "freestyle_exploitation" {
+                config.freestyle_exploitation = value.parse().expect("admitted override value");
+                continue;
+            }
+            let value: f32 = value.parse().expect("admitted override value");
+            let w = &mut config.freestyle_weights;
+            let (name, index) = match key.split_once('.') {
+                Some((name, index)) => (name, index.parse::<usize>().ok()),
+                None => (key.as_str(), None),
+            };
+            let slot = match (name, index) {
+                ("cell_coveredness", None) => &mut w.cell_coveredness,
+                ("holes", None) => &mut w.holes,
+                ("row_transitions", None) => &mut w.row_transitions,
+                ("height", None) => &mut w.height,
+                ("height_upper_half", None) => &mut w.height_upper_half,
+                ("height_upper_quarter", None) => &mut w.height_upper_quarter,
+                ("tetris_well_depth", None) => &mut w.tetris_well_depth,
+                ("has_back_to_back", None) => &mut w.has_back_to_back,
+                ("wasted_t", None) => &mut w.wasted_t,
+                ("softdrop", None) => &mut w.softdrop,
+                ("back_to_back_clear", None) => &mut w.back_to_back_clear,
+                ("combo_attack", None) => &mut w.combo_attack,
+                ("perfect_clear", None) => &mut w.perfect_clear,
+                ("tslot", Some(i)) => &mut w.tslot[i],
+                ("normal_clears", Some(i)) => &mut w.normal_clears[i],
+                ("mini_spin_clears", Some(i)) => &mut w.mini_spin_clears[i],
+                ("spin_clears", Some(i)) => &mut w.spin_clears[i],
+                _ => unreachable!("admitted override key {key}"),
+            };
+            *slot = value;
+        }
         if self.profile_id == LEAF_CONVERSION_GATED_B2B_CHARGE_PROFILE {
             let scale = self
                 .b2b_charge_scale_f32()
@@ -416,6 +503,13 @@ impl Profile {
         } else {
             FEATURE
         }
+    }
+}
+
+fn canonical_signed_decimal(value: &str) -> bool {
+    match value.strip_prefix('-') {
+        Some(magnitude) => magnitude != "0" && canonical_nonnegative_decimal(magnitude),
+        None => canonical_nonnegative_decimal(value),
     }
 }
 
@@ -1503,6 +1597,9 @@ fn public_context_document(state: &F14PublicState, request: &Json, profile: &Pro
     if let Some(policy) = profile.final_order_policy_id.as_deref() {
         profile_document["finalOrderPolicyId"] = json!(policy);
     }
+    if let Some(overrides) = profile.weight_overrides.as_ref() {
+        profile_document["weightOverrides"] = json!(overrides);
+    }
     json!({
         "profile": profile_document,
         "rulesetId": F14_RULESET_ID,
@@ -1885,6 +1982,7 @@ mod tests {
             leaf_conversion_max_height: None,
             b2b_charge_scale: None,
             final_order_policy_id: None,
+            weight_overrides: None,
         }
     }
 
@@ -1906,6 +2004,7 @@ mod tests {
             leaf_conversion_max_height: None,
             b2b_charge_scale: None,
             final_order_policy_id: None,
+            weight_overrides: None,
         }
     }
 
@@ -1927,6 +2026,7 @@ mod tests {
             leaf_conversion_max_height: None,
             b2b_charge_scale: None,
             final_order_policy_id: Some(FINAL_ORDER_POLICY_CC2.into()),
+            weight_overrides: None,
         }
     }
 
@@ -1948,6 +2048,7 @@ mod tests {
             leaf_conversion_max_height: None,
             b2b_charge_scale: None,
             final_order_policy_id: Some(FINAL_ORDER_POLICY_CC2.into()),
+            weight_overrides: None,
         }
     }
 
@@ -1969,6 +2070,7 @@ mod tests {
             leaf_conversion_max_height: None,
             b2b_charge_scale: None,
             final_order_policy_id: Some(FINAL_ORDER_POLICY_CC2.into()),
+            weight_overrides: None,
         }
     }
 
@@ -1990,6 +2092,7 @@ mod tests {
             leaf_conversion_max_height: None,
             b2b_charge_scale: None,
             final_order_policy_id: Some(FINAL_ORDER_POLICY_CC2.into()),
+            weight_overrides: None,
         }
     }
 
@@ -2011,6 +2114,7 @@ mod tests {
             leaf_conversion_max_height: Some(Some("8".into())),
             b2b_charge_scale: None,
             final_order_policy_id: Some(FINAL_ORDER_POLICY_CC2.into()),
+            weight_overrides: None,
         }
     }
 
@@ -2034,6 +2138,7 @@ mod tests {
             leaf_conversion_max_height: Some(Some("8".into())),
             b2b_charge_scale: None,
             final_order_policy_id: Some(FINAL_ORDER_POLICY_CC2.into()),
+            weight_overrides: None,
         }
     }
 
@@ -2057,6 +2162,7 @@ mod tests {
             leaf_conversion_max_height: Some(Some("8".into())),
             b2b_charge_scale: Some(Some("0.5".into())),
             final_order_policy_id: Some(FINAL_ORDER_POLICY_CC2.into()),
+            weight_overrides: None,
         }
     }
 
@@ -2752,6 +2858,69 @@ mod tests {
             champion.freestyle_weights.s2_b2b_charge_cap_rows
         );
         assert!(!gated_config.enable_s2_b2b_surge);
+    }
+
+    #[test]
+    fn gated_weight_overrides_admit_only_tunable_keys_on_the_gated_profile() {
+        let overrides = |pairs: &[(&str, &str)]| {
+            Some(pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect())
+        };
+        let mut tuned = leaf_conversion_gated_profile(CONFIG_HASH);
+        tuned.weight_overrides = overrides(&[("holes", "-2.5"), ("tslot.2", "3"), ("freestyle_exploitation", "0.5")]);
+        assert!(tuned.valid());
+        for bad in [
+            overrides(&[]),
+            overrides(&[("max_cell_covered_height", "9")]),
+            overrides(&[("perfect_clear_override", "1")]),
+            overrides(&[("tslot.4", "1")]),
+            overrides(&[("normal_clears.0", "1")]),
+            overrides(&[("holes", "-0")]),
+            overrides(&[("holes", "1.50")]),
+            overrides(&[("holes", "+1")]),
+            overrides(&[("holes", "1e3")]),
+        ] {
+            let mut invalid = tuned.clone();
+            invalid.weight_overrides = bad;
+            assert!(!invalid.valid(), "{:?}", invalid.weight_overrides);
+        }
+        let mut other = leaf_conversion_gated_b2b_charge_profile(CONFIG_HASH);
+        other.weight_overrides = overrides(&[("holes", "-2.5")]);
+        assert!(!other.valid());
+    }
+
+    #[test]
+    fn gated_weight_overrides_patch_only_the_named_scalars() {
+        let champion: BotConfig = serde_json::from_str(CONFIG).unwrap();
+        let mut tuned = leaf_conversion_gated_profile(CONFIG_HASH);
+        tuned.weight_overrides = Some(
+            [("holes", "-2.5"), ("tslot.2", "3"), ("spin_clears.2", "6.25"), ("freestyle_exploitation", "0.5")]
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        );
+        let config = tuned.search_bot_config().unwrap();
+        assert_eq!(config.freestyle_weights.holes, -2.5);
+        assert_eq!(config.freestyle_weights.tslot[2], 3.0);
+        assert_eq!(config.freestyle_weights.spin_clears[2], 6.25);
+        assert_eq!(config.freestyle_exploitation, 0.5);
+        let mut expected = serde_json::to_value(&leaf_conversion_gated_profile(CONFIG_HASH).search_bot_config().unwrap()).unwrap();
+        expected["freestyle_weights"]["holes"] = json!(-2.5f32);
+        expected["freestyle_weights"]["tslot"][2] = json!(3.0f32);
+        expected["freestyle_weights"]["spin_clears"][2] = json!(6.25f32);
+        expected["freestyle_exploitation"] = json!(0.5);
+        assert_eq!(serde_json::to_value(&config).unwrap(), expected);
+        assert_ne!(champion.freestyle_weights.holes, -2.5);
+
+        let selector = load_p5()["decisions"][0]["selector"].clone();
+        let base = leaf_conversion_gated_profile(CONFIG_HASH);
+        let base_request = request_with_profile(selector.clone(), &base);
+        let tuned_request = request_with_profile(selector, &tuned);
+        assert_ne!(
+            public_context_digest_for_request(&base_request, &base).unwrap(),
+            public_context_digest_for_request(&tuned_request, &tuned).unwrap()
+        );
+        let state = composed_public_state(&base_request).unwrap();
+        assert!(public_context_document(&state, &base_request, &base)["profile"].get("weightOverrides").is_none());
     }
 
     #[test]

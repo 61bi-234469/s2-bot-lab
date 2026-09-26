@@ -1,11 +1,15 @@
 import { F14_COMPAT_QUEUE_LIMIT } from "./s2-f14-compat-browser.mjs";
 import { canonicalize } from "./cs1-core.mjs";
 import { applyPublicCompatDecision, createPublicCompatRequest } from "./public-compat-request.mjs";
-import { createF14LeafConversionGatedProfile, ROOT_LEAF_CONVERSION_GATED_PROFILE } from "./s2-f14-compat-browser.mjs";
+import { ROOT_LEAF_CONVERSION_GATED_PROFILE } from "./s2-f14-compat-browser.mjs";
 import { guiStateToCanonical } from "./gui-state.mjs";
 import { fullStateKey } from "./state-keys.mjs";
 import { applyTransition } from "./transition.mjs";
+import { createF14LeafConversionGatedProfile } from "./s2-f14-compat-browser.mjs";
+import { CHAMPION_PROFILE_ARGS, PREVIOUS_CHAMPION_PROFILE_ARGS } from "./champion-identity.mjs";
 import { EVALUATION_SCORE_SEMANTICS, evaluatorModelIdentity, extractEvaluationFeatures, scoreEvaluationFeatures } from "./evaluation.mjs";
+
+export { CHAMPION_NATIVE_BINARY_SHA256, CHAMPION_PROFILE_ARGS, createChampionBaseProfile } from "./champion-identity.mjs";
 
 // The F14 core admits 1..1,000,000 selections. Its public profile searches a
 // queue of up to 28 pieces like the other CC2 bots (the default request keeps
@@ -14,15 +18,33 @@ export const CHAMPION_SELECTION_MAXIMUM = 1_000_000;
 export const CHAMPION_QUEUE_MINIMUM = 2;
 export const CHAMPION_QUEUE_MAXIMUM = 28;
 
+/** GUI bots that decide through the gated F14 core, and the profile each runs.
+ * `cc2-s2-champion-previous` is the previous champion, kept for comparison. */
+const GATED_CORE_PROFILE_ARGS = Object.freeze({
+  "cc2-s2-champion": CHAMPION_PROFILE_ARGS,
+  "cc2-s2-champion-previous": PREVIOUS_CHAMPION_PROFILE_ARGS,
+});
+export const GATED_CORE_TYPES = Object.freeze(Object.keys(GATED_CORE_PROFILE_ARGS));
+
+export function isGatedCoreType(type) {
+  return Object.hasOwn(GATED_CORE_PROFILE_ARGS, type);
+}
+
+/** The gated profile a gated-core GUI bot runs at its default budget. */
+export function gatedCoreBaseProfile(type = "cc2-s2-champion") {
+  if (!isGatedCoreType(type)) throw new Error(`unsupported gated F14 bot ${type}`);
+  return createF14LeafConversionGatedProfile(GATED_CORE_PROFILE_ARGS[type]);
+}
+
 /**
  * The champion's gated leaf-conversion F14 execution for GUI parameters. Its defaults
  * (512 selections, THINK TIME off, queue 14) are exactly the champion.
  * THINK TIME becomes a host-clocked time budget with SELECTION as its cap;
- * only the WASM core runs it.
+ * only the WASM core runs it. `type` picks another gated-core bot's profile.
  */
-export function createChampionProfile(parameters) {
+export function createChampionProfile(parameters, type = "cc2-s2-champion") {
   assertChampionParameters(parameters);
-  const base = createF14LeafConversionGatedProfile({ scale: "0.25", maxHeight: "8" });
+  const base = gatedCoreBaseProfile(type);
   const selections = parameters.selectionEnabled ? parameters.selectionLimit : CHAMPION_SELECTION_MAXIMUM;
   const budget = parameters.thinkTimeEnabled
     ? { mode: "time", selections, maxMillis: parameters.thinkMs }
@@ -56,18 +78,18 @@ export function extendChampionQueue(request, queueDepth) {
   return { ...request, start: { ...request.start, queue: [current, ...known].slice(0, queueDepth) } };
 }
 
-export function createChampionRequest(state, parameters, { requestId, generation = 1 } = {}) {
+export function createChampionRequest(state, parameters, { requestId, generation = 1, type = "cc2-s2-champion" } = {}) {
   return extendChampionQueue(createPublicCompatRequest(championVisibleState(state, parameters.queueDepth),
-    { requestId, generation, profile: createChampionProfile(parameters) }), parameters.queueDepth);
+    { requestId, generation, profile: createChampionProfile(parameters, type) }), parameters.queueDepth);
 }
 
 /**
  * Verify the core's decision against the position it was shown, then apply it
  * to the full position. Same result shape as resolvePublicCompatDecision.
  */
-export function resolveChampionDecision({ state, gui, request, response, parameters }) {
+export function resolveChampionDecision({ state, gui, request, response, parameters, type = "cc2-s2-champion" }) {
   if (fullStateKey(guiStateToCanonical(gui)) !== fullStateKey(state)) throw new Error("champion GUI state mismatch");
-  const expected = createChampionRequest(state, parameters, { requestId: request.requestId, generation: request.generation });
+  const expected = createChampionRequest(state, parameters, { requestId: request.requestId, generation: request.generation, type });
   if (canonicalize(request) !== canonicalize(expected)) throw new Error("champion request does not match its position and parameters");
   assertGatedChampionResponse(request, response);
   // A longer queue must come back as the queue the core searched (the core

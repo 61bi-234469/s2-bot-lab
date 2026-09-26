@@ -1,6 +1,7 @@
-import { F14_COMPAT_QUEUE_LIMIT, createF14DecideRequest, createF14LeafConversionGatedProfile,
+import { F14_COMPAT_QUEUE_LIMIT, createF14DecideRequest,
   ROOT_LEAF_CONVERSION_GATED_PROFILE } from "./s2-f14-compat-browser.mjs";
-import { assertGatedChampionResponse, championVisibleState, extendChampionQueue } from "./champion-parameters.mjs";
+import { assertGatedChampionResponse, championVisibleState, createChampionBaseProfile,
+  extendChampionQueue } from "./champion-parameters.mjs";
 import { createS2AmountOnlyDecisionState, decisionStateToSyntheticGui } from "./s2-amount-only-decision-state.mjs";
 import { guiStateToCanonical } from "./gui-state.mjs";
 import { applyTransition } from "./transition.mjs";
@@ -12,7 +13,7 @@ import { applyTransition } from "./transition.mjs";
  * gated F14 core the champion's final-placement route asks.
  */
 export function createChampionInputRequest(decision, { requestId, generation = 1,
-  profile = createF14LeafConversionGatedProfile({ scale: "0.25", maxHeight: "8" }), queueDepth = F14_COMPAT_QUEUE_LIMIT,
+  profile = createChampionBaseProfile(), queueDepth = F14_COMPAT_QUEUE_LIMIT,
   bagState = "empty" } = {}) {
   if (bagState !== "empty" && bagState !== "public") throw new Error("champion INPUT bagState must be empty or public");
   if (profile?.profileId !== ROOT_LEAF_CONVERSION_GATED_PROFILE) {

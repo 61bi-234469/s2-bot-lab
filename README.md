@@ -18,12 +18,15 @@ development build is published under `preview/`. The development URL is marked `
 - deterministic browser-WASM Cold Clear 2: raw upstream, the chouhy fork, the S2 `F14` development
   snapshot, and the current S2 development champion (not release-qualified)
 
-The bot selectors (single analysis and bot-vs-bot) offer these four bots plus a comparison entry,
+The bot selectors (single analysis and bot-vs-bot) offer these four bots plus two comparison entries,
 the same set as TTRM INPUT, and You (1P) on the left; the local Node server offers the same list.
-The comparison entry is the previous INPUT champion route: CC2 candidates ranked by the earlier F14
+The first comparison entry is the previous INPUT champion route: CC2 candidates ranked by the earlier F14
 amount-only selector, run on the current S2 engine. It is not a restoration of the earlier binary.
 The current champion is the F14 core's gated leaf-conversion profile: it keeps the CC2 search's
 rank order as its final order and only a root-rescue veto selects past rank 0.
+Since 2026-09-26 its evaluation weights are SPSA-tuned (kappa=0.1164, H=8, eight weight overrides).
+The second comparison entry, the previous gated champion (kappa=0.25, H=8, default weights), runs on
+the same F14 core in single analysis, bot-vs-bot and TTRM INPUT.
 The champion's defaults (512 selections, THINK TIME off, queue 14) are the champion itself;
 SELECTION, THINK TIME and QUEUE DEPTH can be changed like the other bots.
 The Pages build runs these Cold Clear 2 entries

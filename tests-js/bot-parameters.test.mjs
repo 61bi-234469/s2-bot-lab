@@ -112,7 +112,8 @@ test("capabilities are safe to serialize for the GUI", () => {
   assert.match(botParameterCapability("cc2-s2-f14").description, /F14/);
   assert.match(botParameterCapability("cc2-s2-champion").description, /champion/);
   assert.match(botParameterCapability("cc2-s2-champion").description, /gated leaf-conversion/);
-  assert.match(botParameterCapability("cc2-s2-champion").description, /kappa=0\.25/);
+  assert.match(botParameterCapability("cc2-s2-champion").description, /kappa=0\.1164/);
+  assert.match(botParameterCapability("cc2-s2-champion-previous").description, /kappa=0\.25/);
   assert.match(botParameterCapability("cc2-s2-champion").description, /H=8/);
   assert.match(botParameterCapability("cc2-s2-champion").description, /CC2 順（rerank なし）/);
   // The champion is a development build. Its description is the only place the
