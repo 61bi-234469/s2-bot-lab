@@ -1,11 +1,15 @@
 import { F14_COMPAT_QUEUE_LIMIT } from "./s2-f14-compat-browser.mjs";
 import { canonicalize } from "./cs1-core.mjs";
-import { applyPublicCompatDecision, createPublicCompatRequest } from "./public-compat-request.mjs";
-import { createF14LeafConversionGatedProfile, ROOT_LEAF_CONVERSION_GATED_PROFILE } from "./s2-f14-compat-browser.mjs";
+import { applyPublicCompatDecision, createPublicCompatProfile, createPublicCompatRequest } from "./public-compat-request.mjs";
+import { ROOT_LEAF_CONVERSION_GATED_PROFILE } from "./s2-f14-compat-browser.mjs";
 import { guiStateToCanonical } from "./gui-state.mjs";
 import { fullStateKey } from "./state-keys.mjs";
 import { applyTransition } from "./transition.mjs";
+import { createF14LeafConversionGatedProfile } from "./s2-f14-compat-browser.mjs";
+import { CHAMPION_PROFILE_ARGS, PREVIOUS_CHAMPION_PROFILE_ARGS } from "./champion-identity.mjs";
 import { EVALUATION_SCORE_SEMANTICS, evaluatorModelIdentity, extractEvaluationFeatures, scoreEvaluationFeatures } from "./evaluation.mjs";
+
+export { CHAMPION_NATIVE_BINARY_SHA256, CHAMPION_PROFILE_ARGS, createChampionBaseProfile } from "./champion-identity.mjs";
 
 // The F14 core admits 1..1,000,000 selections. Its public profile searches a
 // queue of up to 28 pieces like the other CC2 bots (the default request keeps
@@ -14,15 +18,41 @@ export const CHAMPION_SELECTION_MAXIMUM = 1_000_000;
 export const CHAMPION_QUEUE_MINIMUM = 2;
 export const CHAMPION_QUEUE_MAXIMUM = 28;
 
+/** GUI bots that decide through the F14 core, and the profile each runs at its
+ * default budget. The former champions stay for comparison: profile-B
+ * (2026-09-16..25) and the gated profile at kappa 0.25 (2026-09-25..26). */
+const F14_CORE_BASE_PROFILES = Object.freeze({
+  "cc2-s2-champion-profile-b": () => createPublicCompatProfile(),
+  "cc2-s2-champion-previous": () => createF14LeafConversionGatedProfile(PREVIOUS_CHAMPION_PROFILE_ARGS),
+  "cc2-s2-champion": () => createF14LeafConversionGatedProfile(CHAMPION_PROFILE_ARGS),
+});
+export const F14_CORE_BOT_TYPES = Object.freeze(Object.keys(F14_CORE_BASE_PROFILES));
+export const PROFILE_B_PROFILE_ID = "f14-amount-only-compat-b/1";
+
+export function isF14CoreType(type) {
+  return Object.hasOwn(F14_CORE_BASE_PROFILES, type);
+}
+
+/** How an analysis response names the core route that decided. */
+export function f14CoreVersionName(execution) {
+  return execution?.profileId === PROFILE_B_PROFILE_ID ? "F14 core profile-B" : "F14 gated leaf-conversion";
+}
+
+/** The profile an F14-core GUI bot runs at its default budget. */
+export function f14CoreBaseProfile(type = "cc2-s2-champion") {
+  if (!isF14CoreType(type)) throw new Error(`unsupported F14 core bot ${type}`);
+  return F14_CORE_BASE_PROFILES[type]();
+}
+
 /**
  * The champion's gated leaf-conversion F14 execution for GUI parameters. Its defaults
  * (512 selections, THINK TIME off, queue 14) are exactly the champion.
  * THINK TIME becomes a host-clocked time budget with SELECTION as its cap;
- * only the WASM core runs it.
+ * only the WASM core runs it. `type` picks another gated-core bot's profile.
  */
-export function createChampionProfile(parameters) {
+export function createChampionProfile(parameters, type = "cc2-s2-champion") {
   assertChampionParameters(parameters);
-  const base = createF14LeafConversionGatedProfile({ scale: "0.25", maxHeight: "8" });
+  const base = f14CoreBaseProfile(type);
   const selections = parameters.selectionEnabled ? parameters.selectionLimit : CHAMPION_SELECTION_MAXIMUM;
   const budget = parameters.thinkTimeEnabled
     ? { mode: "time", selections, maxMillis: parameters.thinkMs }
@@ -56,20 +86,20 @@ export function extendChampionQueue(request, queueDepth) {
   return { ...request, start: { ...request.start, queue: [current, ...known].slice(0, queueDepth) } };
 }
 
-export function createChampionRequest(state, parameters, { requestId, generation = 1 } = {}) {
+export function createChampionRequest(state, parameters, { requestId, generation = 1, type = "cc2-s2-champion" } = {}) {
   return extendChampionQueue(createPublicCompatRequest(championVisibleState(state, parameters.queueDepth),
-    { requestId, generation, profile: createChampionProfile(parameters) }), parameters.queueDepth);
+    { requestId, generation, profile: createChampionProfile(parameters, type) }), parameters.queueDepth);
 }
 
 /**
  * Verify the core's decision against the position it was shown, then apply it
  * to the full position. Same result shape as resolvePublicCompatDecision.
  */
-export function resolveChampionDecision({ state, gui, request, response, parameters }) {
+export function resolveChampionDecision({ state, gui, request, response, parameters, type = "cc2-s2-champion" }) {
   if (fullStateKey(guiStateToCanonical(gui)) !== fullStateKey(state)) throw new Error("champion GUI state mismatch");
-  const expected = createChampionRequest(state, parameters, { requestId: request.requestId, generation: request.generation });
+  const expected = createChampionRequest(state, parameters, { requestId: request.requestId, generation: request.generation, type });
   if (canonicalize(request) !== canonicalize(expected)) throw new Error("champion request does not match its position and parameters");
-  assertGatedChampionResponse(request, response);
+  assertF14CoreResponse(request, response);
   // A longer queue must come back as the queue the core searched (the core
   // echoes it only beyond 14), so a 14-piece decision cannot stand in for it.
   const queueLength = request.start.queue.length;
@@ -86,13 +116,55 @@ export function resolveChampionDecision({ state, gui, request, response, paramet
   if (transition.legality?.legal !== true || transition.nextState === null) throw new Error("public compat illegal selected placement");
   const positionFingerprint = fullStateKey(state);
   const features = extractEvaluationFeatures(transition);
-  const comparison = { source: ROOT_LEAF_CONVERSION_GATED_PROFILE, status: "degraded",
+  const comparison = { source: request.execution.profileId, status: "degraded",
     reasons: ["movement-model-unavailable"], positionFingerprint,
     rulesetId: state.rulesetId, witness: { kind: "native-selected-placement", placement },
     evaluator: evaluatorModelIdentity(), scoreSemantics: EVALUATION_SCORE_SEMANTICS,
     features, score: scoreEvaluationFeatures(features) };
   return { placement, transition, positionFingerprint, nativeDecision: response, score: comparison.score, comparison,
     verification: { status: "degraded", reasons: comparison.reasons, transition, comparison } };
+}
+
+/** Checks an F14-core decision by the profile it was asked with: the gated
+ * profiles keep CC2 rank order with the root rescue veto; profile-B returns
+ * the core's own F14 ranking, and its queue-prefix rerank is not offered. */
+export function assertF14CoreResponse(request, response, { allowQueuePrefix = false } = {}) {
+  if (request.execution?.profileId !== PROFILE_B_PROFILE_ID) {
+    assertGatedChampionResponse(request, response, { allowQueuePrefix });
+    return;
+  }
+  if (response?.profileId !== PROFILE_B_PROFILE_ID) throw new Error("profile-B decision must use its own profile");
+  if (allowQueuePrefix || Object.hasOwn(response?.search ?? {}, "searchedQueueLength")) {
+    throw new Error("profile-B decision unexpectedly reports a prefix search");
+  }
+  if (response.status !== "move") return;
+  // The core lists its ranked candidates in ranked order; `identities` is that
+  // order and `returnedIdentities` is CC2 order, which a `cc2Rank` indexes.
+  const { identities, returnedIdentities, candidates, selectedCc2Rank, rescueApplied } = response.ranking ?? {};
+  if (!Array.isArray(identities) || !Array.isArray(returnedIdentities) || !Array.isArray(candidates)
+      || identities.length === 0 || candidates.length !== identities.length
+      || typeof rescueApplied !== "boolean" || !Number.isSafeInteger(selectedCc2Rank)) {
+    throw new Error("profile-B decision has an incomplete F14 ranking");
+  }
+  const ranks = new Set();
+  candidates.forEach((candidate, index) => {
+    if (!Number.isSafeInteger(candidate?.cc2Rank) || candidate.cc2Rank < 0 || candidate.cc2Rank >= returnedIdentities.length
+        || ranks.has(candidate.cc2Rank) || typeof candidate.solvent !== "boolean"
+        || !Number.isFinite(candidate.solvency) || !Number.isFinite(candidate.selectionScore)
+        || identities[index] !== returnedIdentities[candidate.cc2Rank]) {
+      throw new Error("profile-B decision has invalid F14 ranking candidates");
+    }
+    ranks.add(candidate.cc2Rank);
+  });
+  // Rust choose_rescue on the ranked order: rescue iff the top ranked entry
+  // has negative solvency and some entry is solvent; then the first solvent.
+  const firstSolvent = candidates.findIndex((candidate) => candidate.solvent);
+  const rescued = candidates[0].solvency < 0 && firstSolvent >= 0;
+  const selected = rescued ? firstSolvent : 0;
+  if (rescueApplied !== rescued || selectedCc2Rank !== candidates[selected].cc2Rank
+      || response.selectedIdentity !== identities[selected]) {
+    throw new Error("profile-B decision does not select by its ranking and rescue");
+  }
 }
 
 export function assertGatedChampionResponse(request, response, { allowQueuePrefix = false } = {}) {

@@ -37,18 +37,55 @@ export function createF14CompatProfile({
   });
 }
 
+// Search-config scalars a gated-profile `weightOverrides` map may set
+// (mirrors TUNABLE_WEIGHT_KEYS in bot/cold-clear-2-s2/src/f14_compat/transport.rs).
+export const F14_TUNABLE_WEIGHT_KEYS = Object.freeze([
+  "freestyle_exploitation", "cell_coveredness", "holes", "row_transitions", "height",
+  "height_upper_half", "height_upper_quarter", "tetris_well_depth", "has_back_to_back", "wasted_t",
+  "softdrop", "back_to_back_clear", "combo_attack", "perfect_clear",
+  "tslot.0", "tslot.1", "tslot.2", "tslot.3",
+  "normal_clears.1", "normal_clears.2", "normal_clears.3", "normal_clears.4",
+  "mini_spin_clears.1", "mini_spin_clears.2", "mini_spin_clears.3",
+  "spin_clears.1", "spin_clears.2", "spin_clears.3",
+]);
+const CANONICAL_SIGNED_DECIMAL = /^-?(?:0|[1-9]\d*)(?:\.\d*[1-9])?$/u;
+
+function canonicalWeightOverrides(overrides) {
+  if (overrides == null || typeof overrides !== "object" || Array.isArray(overrides)) {
+    throw new Error("F14 weightOverrides must be an object");
+  }
+  const keys = Object.keys(overrides).sort();
+  if (keys.length === 0) throw new Error("F14 weightOverrides must not be empty");
+  const canonical = {};
+  for (const key of keys) {
+    const value = overrides[key];
+    if (!F14_TUNABLE_WEIGHT_KEYS.includes(key)) throw new Error(`F14 weightOverrides key ${key} is not tunable`);
+    if (typeof value !== "string" || !CANONICAL_SIGNED_DECIMAL.test(value) || value === "-0"
+        || !Number.isFinite(Math.fround(Number(value)))) {
+      throw new Error(`F14 weightOverrides ${key} must be a canonical finite decimal string`);
+    }
+    canonical[key] = value;
+  }
+  return Object.freeze(canonical);
+}
+
 export function createF14LeafConversionGatedProfile({
   scale,
   maxHeight,
   maxMillis = 30_000,
+  selections = 512,
   seed = "5994928009864282113",
   configHash = F14_COMPAT_CONFIG_HASH,
+  weightOverrides,
 } = {}) {
   if (configHash !== F14_COMPAT_CONFIG_HASH) {
     throw new Error("leaf-conversion-gated profile requires the champion compat config hash");
   }
   if (!Number.isSafeInteger(maxMillis) || maxMillis < 0 || maxMillis > 300_000) {
     throw new Error("F14 leaf-conversion-gated maxMillis is outside profile budget bounds");
+  }
+  if (!Number.isSafeInteger(selections) || selections < 1 || selections > 1_000_000) {
+    throw new Error("F14 leaf-conversion-gated selections is outside profile budget bounds");
   }
   if (typeof scale !== "string"
       || !/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/u.test(scale)
@@ -68,11 +105,12 @@ export function createF14LeafConversionGatedProfile({
     configHash,
     seed: seedString,
     workerConcurrency: 1,
-    budget: Object.freeze({ mode: "selection", selections: 512, maxMillis }),
+    budget: Object.freeze({ mode: "selection", selections, maxMillis }),
     allocationMode: LEAF_CONVERSION_GATED_MODE,
     leafConversionScale: scale,
     leafConversionMaxHeight: maxHeight,
     finalOrderPolicyId: FINAL_ORDER_POLICY_CC2,
+    ...(weightOverrides === undefined ? {} : { weightOverrides: canonicalWeightOverrides(weightOverrides) }),
   });
 }
 
@@ -272,6 +310,7 @@ export function assertF14LeafConversionGatedProfile(profile) {
       seed: profile?.seed,
       configHash: profile?.configHash,
       maxMillis: budget.maxMillis,
+      weightOverrides: profile?.weightOverrides,
     });
     const expected = { ...base, budget: {
       mode: budget.mode, selections: budget.selections, maxMillis: budget.maxMillis,

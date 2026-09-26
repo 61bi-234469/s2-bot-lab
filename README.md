@@ -18,12 +18,26 @@ development build is published under `preview/`. The development URL is marked `
 - deterministic browser-WASM Cold Clear 2: raw upstream, the chouhy fork, the S2 `F14` development
   snapshot, and the current S2 development champion (not release-qualified)
 
-The bot selectors (single analysis and bot-vs-bot) offer these four bots plus a comparison entry,
-the same set as TTRM INPUT, and You (1P) on the left; the local Node server offers the same list.
-The comparison entry is the previous INPUT champion route: CC2 candidates ranked by the earlier F14
-amount-only selector, run on the current S2 engine. It is not a restoration of the earlier binary.
-The current champion is the F14 core's gated leaf-conversion profile: it keeps the CC2 search's
-rank order as its final order and only a root-rescue veto selects past rank 0.
+The bot selectors (single analysis and bot-vs-bot) offer the same seven bots as TTRM INPUT, plus You (1P)
+on the left; the local Node server offers the same list. The two upstream ports come first, then the
+project's bots from oldest to newest, keeping past champions. Names describe each design; only the
+parenthesis marks the current champion. Each bot's SETTINGS panel opens with its origin, what was
+tuned and why, and how it plays.
+
+- Raw CC2 — MinusKelvin upstream (deterministic port)
+- CC2 — chouhy fork b20a92b (deterministic port)
+- CC2 S2 — F14 post-tank rescue: CC2 S2 candidates re-ranked by the F14 amount-only post-tank
+  solvency rescue
+- CC2 S2 — F14 rescue + 180° rotation (former champion): the same rescue with 180° rotation and
+  spawn-buffer entry, reproduced on the current S2 engine (not a restoration of the earlier binary)
+- CC2 S2 — F14 core re-rank (former champion): the same F14 re-rank and rescue moved into the
+  search's Rust core (profile-B)
+- CC2 S2 — gated leaf-conversion κ0.25 (former champion): the F14 core keeps the CC2 search's rank
+  order and only a root-rescue veto selects past rank 0; leaf conversion kappa=0.25 applies only up
+  to height 8, default weights
+- CC2 S2 — SPSA-tuned gated leaf-conversion (current champion): the same design with SPSA-tuned
+  kappa=0.1164 and eight evaluation weights; development-only, not release-qualified
+
 The champion's defaults (512 selections, THINK TIME off, queue 14) are the champion itself;
 SELECTION, THINK TIME and QUEUE DEPTH can be changed like the other bots.
 The Pages build runs these Cold Clear 2 entries

@@ -1,4 +1,5 @@
 import { forecastInputBoundary } from './triangle/input-target-planner.mjs';
+import { isInputBotType, inputBotProfile } from './input-bot-contract.mjs';
 import { resolveCoreOrderedInputSubmission, resolveQualifiedInputSubmission } from './s2-input-public-resolver.mjs';
 
 /** Worker entry accepts only the amount-only policy request and public movement. */
@@ -10,7 +11,9 @@ export function resolveInputJob({ request, movement, startFrame, timeProgression
     if (error.message === 'input forecast crosses a natural lock') return { status: 'stale', reason: 'natural-lock' };
     throw error;
   }
-  const resolve = request.type === 'cc2-s2-champion'
+  // Gated-core bots: the F14 core decides, INPUT follows its order.
+  const coreOrdered = isInputBotType(request.type) && inputBotProfile(request.type).selector === 'f14-core-order/1';
+  const resolve = coreOrdered
     ? resolveCoreOrderedInputSubmission
     : resolveQualifiedInputSubmission;
   // The champion core reports its selected move's spin witness; the planner
@@ -18,6 +21,6 @@ export function resolveInputJob({ request, movement, startFrame, timeProgression
   // outside the fingerprinted request).
   const result = resolve(future.request, future.movement,
     { compactInputs: true, timeProgression, naturalGravity, reuse,
-      ...(request.type === 'cc2-s2-champion' ? { preferredWitness } : {}) });
+      ...(coreOrdered ? { preferredWitness } : {}) });
   return { ...result, boundary: { decision: future.request.decision, movement: future.movement } };
 }

@@ -1,6 +1,7 @@
-import { F14_COMPAT_QUEUE_LIMIT, createF14DecideRequest, createF14LeafConversionGatedProfile,
+import { F14_COMPAT_QUEUE_LIMIT, createF14DecideRequest,
   ROOT_LEAF_CONVERSION_GATED_PROFILE } from "./s2-f14-compat-browser.mjs";
-import { assertGatedChampionResponse, championVisibleState, extendChampionQueue } from "./champion-parameters.mjs";
+import { PROFILE_B_PROFILE_ID, assertF14CoreResponse, championVisibleState, createChampionBaseProfile,
+  extendChampionQueue } from "./champion-parameters.mjs";
 import { createS2AmountOnlyDecisionState, decisionStateToSyntheticGui } from "./s2-amount-only-decision-state.mjs";
 import { guiStateToCanonical } from "./gui-state.mjs";
 import { applyTransition } from "./transition.mjs";
@@ -12,11 +13,11 @@ import { applyTransition } from "./transition.mjs";
  * gated F14 core the champion's final-placement route asks.
  */
 export function createChampionInputRequest(decision, { requestId, generation = 1,
-  profile = createF14LeafConversionGatedProfile({ scale: "0.25", maxHeight: "8" }), queueDepth = F14_COMPAT_QUEUE_LIMIT,
+  profile = createChampionBaseProfile(), queueDepth = F14_COMPAT_QUEUE_LIMIT,
   bagState = "empty" } = {}) {
   if (bagState !== "empty" && bagState !== "public") throw new Error("champion INPUT bagState must be empty or public");
-  if (profile?.profileId !== ROOT_LEAF_CONVERSION_GATED_PROFILE) {
-    throw new Error("champion INPUT requires the gated leaf-conversion profile");
+  if (profile?.profileId !== ROOT_LEAF_CONVERSION_GATED_PROFILE && profile?.profileId !== PROFILE_B_PROFILE_ID) {
+    throw new Error("champion INPUT requires the gated leaf-conversion profile or profile-B");
   }
   const { board, pieces, chain, lockTime, incoming, rulesetId } = decision;
   // The core's A-profile contract always has HOLD available; see championInputMoves.
@@ -71,14 +72,16 @@ export function publicSevenBagStateAfterQueue(sequence, queueLength) {
 }
 
 /**
- * The champion's adoption order for the INPUT planner: its selected
- * (possibly rescue-vetoed) move, then the other candidates in CC2 rank order,
- * which is the gated core's final order. Only reachability can move the
- * planner past the first entry.
+ * The core's adoption order for the INPUT planner: its selected
+ * (possibly rescue-vetoed) move, then the other candidates in the core's final
+ * order: CC2 rank order for the gated profiles; for profile-B, solvent before
+ * insolvent and by selection score, as it ran as champion. Only reachability
+ * can move the planner past the first entry.
  */
 export function championInputMoves(response, { current = null, holdAvailable = true, allowQueuePrefix = false } = {}) {
   if (response?.status !== "move") throw new Error(`champion INPUT decision ${response?.status}: ${response?.reason}`);
-  const request = { execution: { profileId: ROOT_LEAF_CONVERSION_GATED_PROFILE } };
+  const profileB = response.profileId === PROFILE_B_PROFILE_ID;
+  const request = { execution: { profileId: profileB ? PROFILE_B_PROFILE_ID : ROOT_LEAF_CONVERSION_GATED_PROFILE } };
   if (allowQueuePrefix) {
     const searchedQueueLength = response.search?.searchedQueueLength;
     if (!Number.isSafeInteger(searchedQueueLength) || searchedQueueLength < 1) {
@@ -86,10 +89,15 @@ export function championInputMoves(response, { current = null, holdAvailable = t
     }
     request.start = { queue: { length: searchedQueueLength + 1 } };
   }
-  assertGatedChampionResponse(request, response, { allowQueuePrefix });
-  const { returnedIdentities, selectedCc2Rank } = response.ranking;
-  const moves = [selectedCc2Rank, ...[...returnedIdentities.keys()].filter((rank) => rank !== selectedCc2Rank)]
-    .map((rank) => JSON.parse(returnedIdentities[rank]));
+  assertF14CoreResponse(request, response, { allowQueuePrefix });
+  // `returnedIdentities` is CC2 order, the one a `cc2Rank` indexes.
+  const { returnedIdentities, candidates, selectedCc2Rank } = response.ranking;
+  const rest = profileB
+    ? candidates.filter((candidate) => candidate.cc2Rank !== selectedCc2Rank)
+      .sort((a, b) => Number(b.solvent) - Number(a.solvent) || b.selectionScore - a.selectionScore || a.cc2Rank - b.cc2Rank)
+      .map((candidate) => candidate.cc2Rank)
+    : [...returnedIdentities.keys()].filter((rank) => rank !== selectedCc2Rank);
+  const moves = [selectedCc2Rank, ...rest].map((rank) => JSON.parse(returnedIdentities[rank]));
   if (holdAvailable) return moves;
   // Only an INPUT replan after this piece's HOLD input sees HOLD spent, which
   // the core cannot be asked about; keep its order among the moves that

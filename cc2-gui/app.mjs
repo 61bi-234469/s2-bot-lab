@@ -501,7 +501,7 @@ function openBotSettings(side) {
   elements["bot-settings-side"].textContent = botType === "human" ? `${side.toUpperCase()} PLAYER` : `${side.toUpperCase()} BOT`;
   elements["bot-settings-title"].textContent = capability.label ?? botType;
   const fairNote = fairComparisonEnabled() && botType.startsWith("cc2-")
-    ? " いまは FAIR COMPARISON がONのため、対局中は SELECTION 512・1 PPS に揃えられます。ここでの設定は上書きされず、OFFに戻すと元に戻ります。"
+    ? "\nいまは FAIR COMPARISON がONのため、対局中は SELECTION 512・1 PPS に揃えられます。ここでの設定は上書きされず、OFFに戻すと元に戻ります。"
     : "";
   elements["bot-settings-description"].textContent = `${capability.description ?? ""}${fairNote}`;
   setBotSettingsValidation("");
@@ -3086,7 +3086,7 @@ function renderExecutionScopeNotes() {
   elements["match-execution-note"].textContent = inputMode
     ? elements["match-turn-match"].checked && playing
       ? "TTRM INPUT：ターン勝負はEngineの重力をOFFにして実行するため、この対局は .ttrm 保存対象外です。"
-      : elements["match-stall-lock"].checked
+      : elements["match-stall-lock"].checked && playing
       ? "TTRM INPUT：STALL PENALTYを適用します。この設定の対局は .ttrm 保存対象外です。"
       : handicapActive
         ? "TTRM INPUT：1Pハンデの初期地形は入力ログから再現できないため、この対局は .ttrm 保存対象外です。"
@@ -3187,7 +3187,9 @@ function syncTurnMatchControl(matchSettingsDisabled = false) {
    has no clock for a pace to be measured against, so the budget is not part of
    one rather than being measured against a clock that never runs. */
 function stallLockSettings() {
-  const enabled = elements["match-stall-lock"].checked && !turnMatchSelected();
+  // Only You (1P) is judged: a bot-only round sends the rule off, as the
+  // handicap and turn match settings do.
+  const enabled = elements["match-stall-lock"].checked && !turnMatchSelected() && selectedHumanSide() !== null;
   const penalty = elements["match-stall-lock-penalty"].value;
   if (enabled && !STALL_LOCK_PENALTIES.has(penalty)) throw new Error("unsupported STALL PENALTY option");
   return {

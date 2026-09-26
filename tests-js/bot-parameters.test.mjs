@@ -106,16 +106,23 @@ test("capabilities are safe to serialize for the GUI", () => {
   const capability = botParameterCapability("cc2-raw");
   capability.parameters[0].label = "changed";
   assert.equal(botParameterCapability("cc2-raw").parameters[0].label, "PPS");
-  assert.match(botParameterCapability("cc2-raw").description, /純テトリス/);
-  assert.match(botParameterCapability("cc2-chouhy").description, /chouhy/);
-  assert.match(botParameterCapability("cc2-chouhy").description, /S2向け/);
-  assert.match(botParameterCapability("cc2-s2-f14").description, /F14/);
-  assert.match(botParameterCapability("cc2-s2-champion").description, /champion/);
-  assert.match(botParameterCapability("cc2-s2-champion").description, /gated leaf-conversion/);
-  assert.match(botParameterCapability("cc2-s2-champion").description, /kappa=0\.25/);
-  assert.match(botParameterCapability("cc2-s2-champion").description, /H=8/);
-  assert.match(botParameterCapability("cc2-s2-champion").description, /CC2 順（rerank なし）/);
-  // The champion is a development build. Its description is the only place the
-  // GUI says so, and the public tree asserts the same token.
+});
+
+// Names describe each bot's design; only the parenthesis marks the current
+// champion. Every introduction gives origin, tuning/intent and character.
+test("GUI bots have design names and a three-part introduction", () => {
+  const bots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion"];
+  for (const id of bots) {
+    const { label, description } = botParameterCapability(id);
+    assert.doesNotMatch(label, /development champion/);
+    const lines = description.split("\n");
+    assert.deepEqual(lines.map((line) => line.split("：")[0]), ["由来", "調整・意図", "特徴"], id);
+    // No replacement characters or UTF-8-read-as-Shift_JIS mojibake.
+    assert.doesNotMatch(description, /�|[縀-繯][｡-ﾟ]/u, id);
+  }
+  assert.equal(bots.filter((id) => /\(current champion\)/.test(botParameterCapability(id).label)).length, 1);
+  assert.match(botParameterCapability("cc2-s2-champion").label, /\(current champion\)/);
+  assert.match(botParameterCapability("cc2-s2-champion").description, /kappa=0\.1164/);
   assert.match(botParameterCapability("cc2-s2-champion").description, /release-qualified/);
+  assert.match(botParameterCapability("cc2-s2-champion-previous").description, /κ=0\.25/);
 });

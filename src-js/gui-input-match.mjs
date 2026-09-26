@@ -16,7 +16,7 @@ import { HANDICAP_GARBAGE_ID, handicapColumnHeights, handicapGarbageCells,
   handicapRecord, normalizeHandicapGarbage } from './gui-1p-handicap-garbage.mjs';
 import { normalizeTurnMatch } from './gui-turn-match.mjs';
 import { championInputMoves, createChampionInputRequest, predictChampionNextRequest } from './input-champion-decision.mjs';
-import { assertChampionParameters, assertGatedChampionResponse, championVisibleState, createChampionProfile } from './champion-parameters.mjs';
+import { F14_CORE_BOT_TYPES, PROFILE_B_PROFILE_ID, assertChampionParameters, assertF14CoreResponse, championVisibleState, createChampionProfile } from './champion-parameters.mjs';
 
 const IDS = ['left', 'right'];
 const KEYS = new Set(['moveLeft', 'moveRight', 'softDrop', 'hardDrop', 'rotateCW', 'rotateCCW', 'rotate180', 'hold']);
@@ -41,7 +41,7 @@ const pieceIdentity = state => ({ board: state.decision.board, pieces: state.dec
   chain: state.decision.chain, piecesPlaced: state.decision.lockTime.piecesPlaced });
 // The champion decides through the F14 core, whose amount-only selector reads
 // incoming rows; a CC2 proposal never sees them.
-const F14_CORE_TYPES = new Set(['cc2-s2-champion']);
+const F14_CORE_TYPES = new Set(F14_CORE_BOT_TYPES);
 const nativeInputState = (decision, parameters, type) => ({
   ...guiStateToCc2NativeStart(decisionStateToSyntheticGui(decision), { queueLimit: parameters.queueDepth }),
   ...(['cc2-raw', 'cc2-chouhy'].includes(type) ? { input_candidates: true } : {}),
@@ -58,10 +58,11 @@ function isRerankFallback(value) {
   const message = typeof value === 'string' ? value : value?.message;
   return typeof message === 'string' && /rerank[- ](?:mismatch|unavailable|unsupported)|rerank.*(?:unavailable|not available|not initialized)/i.test(message);
 }
+// STALL PENALTY judges You (1P) only. Like the 1P handicap and turn match, a
+// round without You (1P) has nothing to judge, so a stored ON setting is off.
 const normalizeStallPenalty = (value, humanSide) => {
   const enabled = value?.enabled === true;
-  if (!enabled) return { enabled: false, pps: null, penalty: null };
-  if (humanSide !== 'left') throw new Error('STALL PENALTY requires You (1P) on the left');
+  if (!enabled || humanSide !== 'left') return { enabled: false, pps: null, penalty: null };
   if (!Number.isFinite(value.pps) || value.pps < 0.1 || value.pps > 20) throw new Error('invalid STALL PENALTY PPS');
   if (!['penalty-line', 'forced-lock'].includes(value.penalty)) throw new Error('unsupported STALL PENALTY');
   return { enabled: true, pps: value.pps, penalty: value.penalty };
@@ -406,7 +407,8 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
         profile: payload.profile,
         queueDepth: parameters.queueDepth,
         queueRefillsByBag: INPUT_EXECUTION_PROFILE.id === 's2-input-execution/2',
-        queuePrefixSpeculation: championQueuePrefixSpeculation,
+        // The queue-prefix rerank came after profile-B and is not offered to it.
+        queuePrefixSpeculation: championQueuePrefixSpeculation && payload.profile.profileId !== PROFILE_B_PROFILE_ID,
       });
     } catch {
       return null;
@@ -476,7 +478,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           // take here; THINK TIME is fitted to the pace like theirs.
           const profile = createChampionProfile({ ...parameters, thinkMs: !parameters.thinkTimeEnabled ? parameters.thinkMs
             : session.turnMatch.enabled || parameters.ppsEnabled === false ? parameters.thinkMs
-              : realtimeCc2ThinkMs({ thinkMs: parameters.thinkMs, stepFrames: interval }) });
+              : realtimeCc2ThinkMs({ thinkMs: parameters.thinkMs, stepFrames: interval }) }, type);
           const payload = { sessionKey, type, engine: { botType: type, engineId: type },
             request: createChampionInputRequest(championVisibleState(initial.decision, parameters.queueDepth),
               { requestId: `f14-input-${++session.f14Requests}`, profile, queueDepth: parameters.queueDepth }),
@@ -506,7 +508,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
             delete session.speculations[id];
             decided = await runtime.decideF14(payload);
           }
-          assertGatedChampionResponse(payload.request, decided, { allowQueuePrefix: usedRerank && inputQueuePrefixHit });
+          assertF14CoreResponse(payload.request, decided, { allowQueuePrefix: usedRerank && inputQueuePrefixHit });
           // No legal placement is no controller input, as for CC2. The core
           // reports it as root-no-move before search or empty-candidates after
           // it; the champion screen runner counts both as terminal.

@@ -129,11 +129,13 @@
         <label class="think-control">
           ANALYSIS BOT
           <select id="analysis-bot">
-            <option value="cc2-raw" selected>Raw CC2 — MinusKelvin upstream</option>
-            <option value="cc2-chouhy">CC2 — chouhy fork (b20a92b)</option>
-            <option value="cc2-s2-f14">CC2 S2 — F14 post-tank solvency rescue (development)</option>
-            <option value="cc2-s2-champion-legacy">CC2 S2 — previous INPUT champion (comparison)</option>
-            <option value="cc2-s2-champion">CC2 S2 — current development champion (not release-qualified)</option>
+            <option value="cc2-raw" selected>Raw CC2 — MinusKelvin upstream (deterministic port)</option>
+            <option value="cc2-chouhy">CC2 — chouhy fork b20a92b (deterministic port)</option>
+            <option value="cc2-s2-f14">CC2 S2 — F14 post-tank rescue</option>
+            <option value="cc2-s2-champion-legacy">CC2 S2 — F14 rescue + 180° rotation (former champion)</option>
+            <option value="cc2-s2-champion-profile-b">CC2 S2 — F14 core re-rank (former champion)</option>
+            <option value="cc2-s2-champion-previous">CC2 S2 — gated leaf-conversion κ0.25 (former champion)</option>
+            <option value="cc2-s2-champion">CC2 S2 — SPSA-tuned gated leaf-conversion (current champion)</option>
           </select>
         </label>
         <label class="think-control">
@@ -175,11 +177,13 @@
             <label for="left-bot">LEFT BOT</label>
             <div class="bot-picker-row">
               <select id="left-bot">
-                <option value="cc2-raw">Raw CC2 — MinusKelvin upstream</option>
-                <option value="cc2-chouhy">CC2 — chouhy fork (b20a92b)</option>
-                <option value="cc2-s2-f14">CC2 S2 — F14 post-tank solvency rescue (development)</option>
-                <option value="cc2-s2-champion-legacy">CC2 S2 — previous INPUT champion (comparison)</option>
-                <option value="cc2-s2-champion">CC2 S2 — current development champion (not release-qualified)</option>
+                <option value="cc2-raw">Raw CC2 — MinusKelvin upstream (deterministic port)</option>
+                <option value="cc2-chouhy">CC2 — chouhy fork b20a92b (deterministic port)</option>
+                <option value="cc2-s2-f14">CC2 S2 — F14 post-tank rescue</option>
+                <option value="cc2-s2-champion-legacy">CC2 S2 — F14 rescue + 180° rotation (former champion)</option>
+                <option value="cc2-s2-champion-profile-b">CC2 S2 — F14 core re-rank (former champion)</option>
+                <option value="cc2-s2-champion-previous">CC2 S2 — gated leaf-conversion κ0.25 (former champion)</option>
+                <option value="cc2-s2-champion">CC2 S2 — SPSA-tuned gated leaf-conversion (current champion)</option>
                 <option value="human">You (1P)</option>
               </select>
               <button class="bot-settings-button" id="left-bot-settings" type="button" aria-label="左Botの個別設定">SETTINGS</button>
@@ -190,11 +194,13 @@
             <label for="right-bot">RIGHT BOT</label>
             <div class="bot-picker-row">
               <select id="right-bot">
-                <option value="cc2-raw">Raw CC2 — MinusKelvin upstream</option>
-                <option value="cc2-chouhy">CC2 — chouhy fork (b20a92b)</option>
-                <option value="cc2-s2-f14">CC2 S2 — F14 post-tank solvency rescue (development)</option>
-                <option value="cc2-s2-champion-legacy">CC2 S2 — previous INPUT champion (comparison)</option>
-                <option value="cc2-s2-champion">CC2 S2 — current development champion (not release-qualified)</option>
+                <option value="cc2-raw">Raw CC2 — MinusKelvin upstream (deterministic port)</option>
+                <option value="cc2-chouhy">CC2 — chouhy fork b20a92b (deterministic port)</option>
+                <option value="cc2-s2-f14">CC2 S2 — F14 post-tank rescue</option>
+                <option value="cc2-s2-champion-legacy">CC2 S2 — F14 rescue + 180° rotation (former champion)</option>
+                <option value="cc2-s2-champion-profile-b">CC2 S2 — F14 core re-rank (former champion)</option>
+                <option value="cc2-s2-champion-previous">CC2 S2 — gated leaf-conversion κ0.25 (former champion)</option>
+                <option value="cc2-s2-champion">CC2 S2 — SPSA-tuned gated leaf-conversion (current champion)</option>
               </select>
               <button class="bot-settings-button" id="right-bot-settings" type="button" aria-label="右Botの個別設定">SETTINGS</button>
             </div>
@@ -210,7 +216,7 @@
             <section class="match-setting-group" data-scope="execution">
               <h3 class="group-name">EXECUTION / 実行方式</h3>
               <div class="match-setting-group-body">
-                <label class="ttrm-compatible-setting" title="実入力の .ttrm 対局を有効にします。Raw CC2、chouhy、CC2 S2 F14、current champion同士、または左側のYou (1P)との対戦に対応します。">TTRM INPUT
+                <label class="ttrm-compatible-setting" title="実入力の .ttrm 対局を有効にします。一覧のBot同士、または左側のYou (1P)との対戦に対応します。">TTRM INPUT
                   <span><input id="match-ttrm-compatible" type="checkbox" checked> .ttrm対応 / 実入力実行</span>
                 </label>
                 <div class="match-setting-dependent" id="match-legacy-settings">
