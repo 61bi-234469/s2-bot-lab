@@ -9,7 +9,7 @@ import { createCc2Session, requestCc2Suggestion } from "../src-js/cc2-bridge.mjs
 import { createCc2WasmWorkerSession } from "../src-js/cc2-wasm-worker-session.mjs";
 import { createGuiInputMatchHandlers } from '../src-js/gui-input-match.mjs';
 import { applyQualifiedCc2Suggestion } from "../src-js/gui-request-handlers.mjs";
-import { assertChampionParameters, createChampionProfile, createChampionRequest, isGatedCoreType, resolveChampionDecision } from "../src-js/champion-parameters.mjs";
+import { assertChampionParameters, createChampionProfile, createChampionRequest, f14CoreVersionName, isF14CoreType, resolveChampionDecision } from "../src-js/champion-parameters.mjs";
 import { BOT_PARAMETER_DEFINITIONS, defaultBotParameters } from "../src-js/bot-parameters.mjs";
 import { isInputBotType } from '../src-js/input-bot-contract.mjs';
 import { createNativeInputRuntime } from '../src-js/native-input-runtime.mjs';
@@ -127,7 +127,22 @@ const cc2Engines = Object.freeze({
     binary: options.s2Binary,
     config: loadS2Config("fixtures/tuning/cc2-s2-spawn-integrity-substrate-v2.json"),
   }),
-  // The previous champion's gated profile on the champion's core and binary.
+  // The former champions' profiles run on the champion's F14 core and binary.
+  "cc2-s2-champion-profile-b": Object.freeze({
+    botType: "cc2-s2-champion-profile-b",
+    engineId: "cold-clear-2-s2-former-champion/f14-amount-only-compat-b/1",
+    label: BOT_PARAMETER_DEFINITIONS["cc2-s2-champion-profile-b"].label,
+    repository: "https://github.com/61bi-234469/s2-bot-lab",
+    commit: "local-former-champion-f14-amount-only-compat-b",
+    comparisonSource: "cold-clear-2-s2-profile-b-final-placement",
+    protocolName: "Cold Clear 2 S2",
+    binary: options.f14ChampionBinary,
+    wasm: options.f14Wasm,
+    f14Compat: options.f14ChampionBinary !== null,
+    f14WasmCompat: options.f14ChampionBinary === null && options.f14Wasm !== null,
+    wasmSha256: fileSha256IfPresent(options.f14Wasm),
+    config: loadS2Config("fixtures/tuning/cc2-s2-spawn-integrity-substrate-v2.json"),
+  }),
   "cc2-s2-champion-previous": Object.freeze({
     botType: "cc2-s2-champion-previous",
     engineId: "cold-clear-2-s2-previous-champion/f14-leaf-conversion-gated-b/1",
@@ -190,7 +205,7 @@ const inputChampionWasm = Object.freeze({ label: cc2Engines["cc2-s2-champion"].l
   wasm: options.f14InputWasm, wasmSha256: fileSha256IfPresent(options.f14InputWasm) });
 const inputRuntime = createNativeInputRuntime({ engineFor: inputEngineFor, f14SessionFor: inputF14Session });
 async function inputF14Session(type) {
-  if (!isGatedCoreType(type)) throw new Error(`unsupported F14 INPUT bot ${type}`);
+  if (!isF14CoreType(type)) throw new Error(`unsupported F14 INPUT bot ${type}`);
   if (inputChampionWasm.wasmSha256 === null) throw new Error(`${inputChampionWasm.label} WASM artifact not found: ${inputChampionWasm.wasm}`);
   return createCc2WasmWorkerSession({ wasmBytes: readWasmBytesMatchingHash(inputChampionWasm) });
 }
@@ -207,7 +222,7 @@ function inputEngineFor(type) {
     binary: options.s2Binary,
     config: loadS2Config("fixtures/tuning/cc2-s2-spin-value-aligned.json"),
   };
-  if (isGatedCoreType(type)) {
+  if (isF14CoreType(type)) {
     if (inputChampionWasm.wasmSha256 === null) throw new Error(`${inputChampionWasm.label} WASM artifact not found: ${inputChampionWasm.wasm}`);
     return { botType: type, f14Core: true };
   }
@@ -247,7 +262,7 @@ const server = createServer(async (request, response) => {
           const nativeDecision = await session.decide({ request: nativeRequest, signal: abort.signal });
           const resolved = resolveChampionDecision({ state, gui: body.state, request: nativeRequest, response: nativeDecision, parameters, type: engine.botType });
           payload = {
-            engine: publicEngine(engine), info: { name: engine.protocolName, version: "F14 gated leaf-conversion native" },
+            engine: publicEngine(engine), info: { name: engine.protocolName, version: `${f14CoreVersionName(nativeRequest.execution)} native` },
             suggestion: { moves: [nativeDecision.selectedMove] },
             nativeDecision,
             verification: { ...resolved.verification, move: nativeDecision.selectedMove },
@@ -271,7 +286,7 @@ const server = createServer(async (request, response) => {
           const nativeDecision = await session.decideF14({ request: nativeRequest, profile });
           const resolved = resolveChampionDecision({ state, gui: body.state, request: nativeRequest, response: nativeDecision, parameters, type: engine.botType });
           payload = {
-            engine: publicEngine(engine), info: { name: engine.protocolName, version: "F14 gated leaf-conversion WASM" },
+            engine: publicEngine(engine), info: { name: engine.protocolName, version: `${f14CoreVersionName(nativeRequest.execution)} WASM` },
             suggestion: { moves: [nativeDecision.selectedMove] },
             nativeDecision,
             verification: { ...resolved.verification, move: nativeDecision.selectedMove },
@@ -369,7 +384,7 @@ const server = createServer(async (request, response) => {
             : normalizeBotParameters(rightType, body.rightParameters),
         };
         for (const [side, type] of [["left", leftType], ["right", rightType]]) {
-          if (isGatedCoreType(type)) {
+          if (isF14CoreType(type)) {
             if (cc2Engines[type].f14Compat) nativeChampionParameters(botParameters[side]);
             else assertChampionParameters(botParameters[side]);
           }
@@ -853,7 +868,7 @@ function resolveProposal(session, proposal) {
   const bot = session.match.bots.find((candidate) => candidate.id === proposal.botId);
   const parameters = session.botParameters[bot.id];
   const gui = botMatchToGuiState(session.match, bot.id);
-  if (isGatedCoreType(proposal.type) && (cc2Engines[proposal.type].f14Compat || cc2Engines[proposal.type].f14WasmCompat)) {
+  if (isF14CoreType(proposal.type) && (cc2Engines[proposal.type].f14Compat || cc2Engines[proposal.type].f14WasmCompat)) {
     const resolved = proposal.nativeResolved;
     if (resolved?.positionFingerprint !== fullStateKey(bot.state)) {
       throw new Error("F14 native compatibility stale result");
@@ -1060,7 +1075,7 @@ async function closeCc2MatchSessions(session) {
 }
 
 function assertBotType(value) {
-  if (!["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-previous", "cc2-s2-champion", "s2-simple", "human"].includes(value)) throw new Error(`unsupported match bot ${value}`);
+  if (!["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion", "s2-simple", "human"].includes(value)) throw new Error(`unsupported match bot ${value}`);
   if (value in cc2Engines) requireCc2Engine(value);
   if (value in cc2Engines && !isAdr062QualifiedStaticType(value)) throw new Error("ADR-062-qualified resolver required");
   return value;

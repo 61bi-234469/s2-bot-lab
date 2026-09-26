@@ -247,7 +247,7 @@ async function createWorkerSession({ WorkerType, engine, selectionLimit }) {
     pending.set(id, { resolve, reject });
     worker.postMessage({ id, type, payload });
   });
-  const configUrl = ["cc2-s2-champion", "cc2-s2-champion-previous", "cc2-s2-champion-legacy"].includes(engine)
+  const configUrl = ["cc2-s2-champion", "cc2-s2-champion-previous", "cc2-s2-champion-profile-b", "cc2-s2-champion-legacy"].includes(engine)
     ? "./cc2-s2-spawn-integrity-substrate-v2.json"
     : !engine.startsWith("cc2-s2")
       ? null

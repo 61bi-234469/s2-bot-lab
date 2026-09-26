@@ -16,7 +16,7 @@ import { HANDICAP_GARBAGE_ID, handicapColumnHeights, handicapGarbageCells,
   handicapRecord, normalizeHandicapGarbage } from './gui-1p-handicap-garbage.mjs';
 import { normalizeTurnMatch } from './gui-turn-match.mjs';
 import { championInputMoves, createChampionInputRequest, predictChampionNextRequest } from './input-champion-decision.mjs';
-import { GATED_CORE_TYPES, assertChampionParameters, assertGatedChampionResponse, championVisibleState, createChampionProfile } from './champion-parameters.mjs';
+import { F14_CORE_BOT_TYPES, PROFILE_B_PROFILE_ID, assertChampionParameters, assertF14CoreResponse, championVisibleState, createChampionProfile } from './champion-parameters.mjs';
 
 const IDS = ['left', 'right'];
 const KEYS = new Set(['moveLeft', 'moveRight', 'softDrop', 'hardDrop', 'rotateCW', 'rotateCCW', 'rotate180', 'hold']);
@@ -41,7 +41,7 @@ const pieceIdentity = state => ({ board: state.decision.board, pieces: state.dec
   chain: state.decision.chain, piecesPlaced: state.decision.lockTime.piecesPlaced });
 // The champion decides through the F14 core, whose amount-only selector reads
 // incoming rows; a CC2 proposal never sees them.
-const F14_CORE_TYPES = new Set(GATED_CORE_TYPES);
+const F14_CORE_TYPES = new Set(F14_CORE_BOT_TYPES);
 const nativeInputState = (decision, parameters, type) => ({
   ...guiStateToCc2NativeStart(decisionStateToSyntheticGui(decision), { queueLimit: parameters.queueDepth }),
   ...(['cc2-raw', 'cc2-chouhy'].includes(type) ? { input_candidates: true } : {}),
@@ -406,7 +406,8 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
         profile: payload.profile,
         queueDepth: parameters.queueDepth,
         queueRefillsByBag: INPUT_EXECUTION_PROFILE.id === 's2-input-execution/2',
-        queuePrefixSpeculation: championQueuePrefixSpeculation,
+        // The queue-prefix rerank came after profile-B and is not offered to it.
+        queuePrefixSpeculation: championQueuePrefixSpeculation && payload.profile.profileId !== PROFILE_B_PROFILE_ID,
       });
     } catch {
       return null;
@@ -506,7 +507,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
             delete session.speculations[id];
             decided = await runtime.decideF14(payload);
           }
-          assertGatedChampionResponse(payload.request, decided, { allowQueuePrefix: usedRerank && inputQueuePrefixHit });
+          assertF14CoreResponse(payload.request, decided, { allowQueuePrefix: usedRerank && inputQueuePrefixHit });
           // No legal placement is no controller input, as for CC2. The core
           // reports it as root-no-move before search or empty-candidates after
           // it; the champion screen runner counts both as terminal.

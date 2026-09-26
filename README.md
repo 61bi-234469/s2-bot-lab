@@ -18,7 +18,7 @@ development build is published under `preview/`. The development URL is marked `
 - deterministic browser-WASM Cold Clear 2: raw upstream, the chouhy fork, the S2 `F14` development
   snapshot, and the current S2 development champion (not release-qualified)
 
-The bot selectors (single analysis and bot-vs-bot) offer the same six bots as TTRM INPUT, plus You (1P)
+The bot selectors (single analysis and bot-vs-bot) offer the same seven bots as TTRM INPUT, plus You (1P)
 on the left; the local Node server offers the same list. The two upstream ports come first, then the
 project's bots from oldest to newest, keeping past champions. Names describe each design; only the
 parenthesis marks the current champion. Each bot's SETTINGS panel opens with its origin, what was
@@ -30,6 +30,8 @@ tuned and why, and how it plays.
   solvency rescue
 - CC2 S2 — F14 rescue + 180° rotation (former champion): the same rescue with 180° rotation and
   spawn-buffer entry, reproduced on the current S2 engine (not a restoration of the earlier binary)
+- CC2 S2 — F14 core re-rank (former champion): the same F14 re-rank and rescue moved into the
+  search's Rust core (profile-B)
 - CC2 S2 — gated leaf-conversion κ0.25 (former champion): the F14 core keeps the CC2 search's rank
   order and only a root-rescue veto selects past rank 0; leaf conversion kappa=0.25 applies only up
   to height 8, default weights

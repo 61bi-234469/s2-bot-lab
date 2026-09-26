@@ -11,6 +11,8 @@ import { cc2MoveToCanonicalPlacement } from "../src-js/cc2-s2-adapter.mjs";
 import { canonicalize } from "../scripts/cs1.mjs";
 import { INPUT_BOT_PROFILES } from "../src-js/input-bot-contract.mjs";
 import { BOT_PARAMETER_DEFINITIONS } from "../src-js/bot-parameters.mjs";
+import { assertF14CoreResponse } from "../src-js/champion-parameters.mjs";
+import { championInputMoves } from "../src-js/input-champion-decision.mjs";
 
 const LEGACY_STATIC_ENGINE = "cc2-raw";
 
@@ -109,7 +111,7 @@ async function exerciseStaleOnePlayerProposal(makeSecondError) {
 
 test("static handler lists exactly the INPUT bots and You, unavailable without WASM", async () => {
   const capabilities = await request(createGuiRequestHandlers(), "GET", "/api/bots");
-  assert.deepEqual(capabilities.bots.map((bot) => bot.id), ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-previous", "cc2-s2-champion", "human"]);
+  assert.deepEqual(capabilities.bots.map((bot) => bot.id), ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion", "human"]);
   assert.ok(capabilities.bots.filter((bot) => bot.id.startsWith("cc2-")).every((bot) => !bot.available));
   const available = await request(createGuiRequestHandlers({ cc2: { decideF14: async () => { throw new Error("must not run"); } } }), "GET", "/api/bots");
   const champion = available.bots.find((bot) => bot.id === "cc2-s2-champion");
@@ -123,6 +125,11 @@ test("static handler lists exactly the INPUT bots and You, unavailable without W
   assert.equal(previous.execution.leafConversionScale, "0.25");
   assert.equal(previous.execution.weightOverrides, undefined);
   assert.notEqual(champion.execution.leafConversionScale, "0.25");
+  // Profile-B, the champion before the gated profiles, keeps its own profile.
+  const profileB = available.bots.find((bot) => bot.id === "cc2-s2-champion-profile-b");
+  assert.equal(profileB.fixedDecision, true);
+  assert.equal(profileB.execution.profileId, "f14-amount-only-compat-b/1");
+  assert.equal(profileB.execution.leafConversionScale, undefined);
 });
 
 test("static match records a verified stall penalty top-out", async () => {
@@ -251,7 +258,7 @@ test("selectors offer the upstream bots, then the project bots oldest to newest"
   const html = await readFile(new URL("../cc2-gui/index.html", import.meta.url), "utf8");
   const optionsFor = (id) => [...(html.match(new RegExp(`<select id="${id}">([\\s\\S]*?)</select>`))?.[1] ?? "")
     .matchAll(/<option value="([^"]+)"/g)].map((match) => match[1]);
-  const orderedBots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-previous", "cc2-s2-champion"];
+  const orderedBots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion"];
   assert.deepEqual(new Set(orderedBots), new Set(Object.keys(INPUT_BOT_PROFILES)));
   assert.deepEqual(optionsFor("analysis-bot"), orderedBots);
   assert.doesNotMatch(html, /analysis-engine-profile|analysis-engine-control/);
@@ -1248,4 +1255,35 @@ test("a handicap request without a 1P side is not applicable, and a malformed on
     const rejected = await startHandicapMatch(handlers, { handicap });
     assert.equal(rejected.status, 400, JSON.stringify(rejected.body));
   }
+});
+
+// Profile-B returns the core's own F14 ranking: every ranked candidate, then
+// the Rust choose_rescue rule on that order. INPUT plans the selected move,
+// then solvent before insolvent by selection score.
+test("profile-B decisions are checked against their ranking and rescue", () => {
+  const move = (x) => canonicalize({ location: { type: "T", orientation: "north", x, y: 0 }, spin: "none" });
+  const request = { execution: { profileId: "f14-amount-only-compat-b/1" } };
+  const response = {
+    profileId: "f14-amount-only-compat-b/1", status: "move", search: {}, selectedIdentity: move(2),
+    ranking: {
+      returnedIdentities: [move(1), move(2), move(3)], identities: [move(1), move(2), move(3)],
+      selectedCc2Rank: 1, rescueApplied: true,
+      candidates: [
+        { cc2Rank: 0, solvent: false, solvency: -1, selectionScore: 9 },
+        { cc2Rank: 1, solvent: true, solvency: 2, selectionScore: 5 },
+        { cc2Rank: 2, solvent: true, solvency: 1, selectionScore: 7 },
+      ],
+    },
+  };
+  assert.doesNotThrow(() => assertF14CoreResponse(request, response));
+  assert.deepEqual(championInputMoves(response).map((entry) => entry.location.x), [2, 3, 1]);
+  const variant = (ranking) => ({ ...response, ranking: { ...response.ranking, ...ranking } });
+  assert.throws(() => assertF14CoreResponse(request, variant({ candidates: response.ranking.candidates.slice(0, 2) })),
+    /incomplete F14 ranking/);
+  assert.throws(() => assertF14CoreResponse(request, variant({ identities: [move(2), move(1), move(3)] })),
+    /invalid F14 ranking candidates/);
+  assert.throws(() => assertF14CoreResponse(request, variant({ rescueApplied: false, selectedCc2Rank: 0 })),
+    /does not select by its ranking and rescue/);
+  assert.throws(() => assertF14CoreResponse(request, { ...response, profileId: "f14-leaf-conversion-gated-b/1" }),
+    /must use its own profile/);
 });

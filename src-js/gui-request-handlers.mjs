@@ -23,7 +23,7 @@ import {
 } from "./gui-1p-handicap-garbage.mjs";
 import { normalizeTurnMatch, turnMatchControllerOptions } from "./gui-turn-match.mjs";
 import { guiStateToCc2NativeStart } from "./cc2-s2-native-start.mjs";
-import { assertChampionParameters, createChampionProfile, createChampionRequest, isGatedCoreType, resolveChampionDecision } from "./champion-parameters.mjs";
+import { PROFILE_B_PROFILE_ID, assertChampionParameters, createChampionProfile, createChampionRequest, f14CoreBaseProfile, f14CoreVersionName, isF14CoreType, resolveChampionDecision } from "./champion-parameters.mjs";
 import { resolveGuiStaticSubmission as resolveQualifiedStaticCc2Submission } from "./gui-static-public-resolver.mjs";
 import { createGuiStaticDecisionRequest as createS2AmountOnlyDecisionRequest, isGuiStaticType as isAdr062QualifiedStaticType } from "./s2-amount-only-decision-state.mjs";
 import { applyTransition } from "./transition.mjs";
@@ -50,7 +50,7 @@ import { lockedPieceCells, toS2GuiState, createGame, extendSeededQueue,
 const HUMAN_BOT = Object.freeze({ id: "human", available: true, ...botParameterCapability("human") });
 // The GUI offers exactly the bots TTRM INPUT admits; the local server offers the same set.
 const CC2_LABELS = Object.freeze(Object.fromEntries(["cc2-raw", "cc2-chouhy", "cc2-s2-f14",
-  "cc2-s2-champion-legacy", "cc2-s2-champion-previous", "cc2-s2-champion"]
+  "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion"]
   .map((id) => [id, BOT_PARAMETER_DEFINITIONS[id].label])));
 /**
  * Transport-neutral browser API. Native CC2 engines are deliberately absent;
@@ -90,13 +90,13 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
         if (!isAdr062QualifiedStaticType(engine)) return fail(422, { error: "ADR-062-qualified resolver required" });
         try {
           const parameters = normalizeBotParameters(engine, body.parameters);
-          if (isGatedCoreType(engine)) {
+          if (isF14CoreType(engine)) {
             assertChampionParameters(parameters);
             const state = guiStateToCanonical(body.state);
             const decision = await decideChampion("analysis", state, body.state, parameters, engine);
             return ok({
               engine: publicEngine(engine),
-              info: { name: "Cold Clear 2 S2", version: "F14 gated leaf-conversion WASM" },
+              info: { name: "Cold Clear 2 S2", version: `${f14CoreVersionName(decision.request.execution)} WASM` },
               suggestion: { moves: [decision.response.selectedMove] },
               nativeDecision: decision.response,
               verification: { ...decision.resolved.verification, move: decision.response.selectedMove },
@@ -113,7 +113,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       }
       if (method === "POST" && path === "/api/apply-s2") {
         if (body.engine === "s2-simple") return ok(applyHumanFinalPlacementUnderObservedS2(guiStateToCanonical(body.state), body.move));
-        if (isGatedCoreType(body.engine)) return fail(422, { error: "F14 native compatibility publishes a verified final decision through /api/suggest; external reranking is unsupported" });
+        if (isF14CoreType(body.engine)) return fail(422, { error: "F14 native compatibility publishes a verified final decision through /api/suggest; external reranking is unsupported" });
         try {
           const engine = requireCc2Type(body.engine);
           return applyQualifiedCc2Suggestion({ type: engine, engine: publicEngine(engine),
@@ -168,7 +168,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
           : normalizeBotParameters(right, body.rightParameters),
       };
       for (const [side, type] of [["left", left], ["right", right]]) {
-        if (!isGatedCoreType(type)) continue;
+        if (!isF14CoreType(type)) continue;
         try {
           assertChampionParameters(botParameters[side]);
         } catch (error) {
@@ -533,7 +533,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     const startedAt = now();
     let proposal;
     try {
-      if (isGatedCoreType(type)) {
+      if (isF14CoreType(type)) {
         const decision = await decideChampion(bot.id, canonicalState, gui, parameters, type);
         return { botId: bot.id, type, moves: [decision.response.selectedMove], publicDecision: decision };
       }
@@ -572,7 +572,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       if (!best) throw new Error(`${bot.id} has no legal final placement`);
       return submissionFor(match, bot, best.placement, best.transition, best.score);
     }
-    if (isGatedCoreType(type)) {
+    if (isF14CoreType(type)) {
       const gui = botMatchToGuiState(match, bot.id);
       const state = guiStateToCanonical(gui);
       const decision = !forceLocal && proposal.publicDecision !== undefined
@@ -774,7 +774,7 @@ function defaultWait(ms) { return new Promise((resolve) => setTimeout(resolve, m
 function unavailable(id, label) { return { id, label, available: false, reason: "requires the local server", parameters: [] }; }
 function staticCc2Capability(id) {
   const capability = botParameterCapability(id);
-  if (isGatedCoreType(id)) {
+  if (isF14CoreType(id)) {
     capability.fixedDecision = true;
     capability.execution = createChampionProfile(defaultBotParameters(id), id);
   }
@@ -798,4 +798,4 @@ function staticBotType(value) {
   return value;
 }
 function requireCc2Type(value) { if (!(value in CC2_LABELS)) throw new Error(`unsupported CC2 engine ${value}`); return value; }
-function publicEngine(id) { return { botType: id, engineId: id, label: CC2_LABELS[id], repository: id === "cc2-raw" ? "https://github.com/MinusKelvin/cold-clear-2" : id === "cc2-chouhy" ? "https://github.com/chouhy/cold-clear-2" : "https://github.com/61bi-234469/s2-bot-lab", commit: id === "cc2-raw" ? "ed8b19327b6bd1410ddd873d8611485bd45d8fae" : id === "cc2-chouhy" ? "b20a92b0ed3230dd910d0674f7a09c552a34dd46" : isGatedCoreType(id) ? "f14-leaf-conversion-gated-b" : "ed8b193+local-s2-reranker", comparisonSource: isGatedCoreType(id) ? `${id}-gated-final-placement` : `${id}-final-placement` }; }
+function publicEngine(id) { return { botType: id, engineId: id, label: CC2_LABELS[id], repository: id === "cc2-raw" ? "https://github.com/MinusKelvin/cold-clear-2" : id === "cc2-chouhy" ? "https://github.com/chouhy/cold-clear-2" : "https://github.com/61bi-234469/s2-bot-lab", commit: id === "cc2-raw" ? "ed8b19327b6bd1410ddd873d8611485bd45d8fae" : id === "cc2-chouhy" ? "b20a92b0ed3230dd910d0674f7a09c552a34dd46" : isF14CoreType(id) ? f14CoreBaseProfile(id).profileId.replace(/\/1$/u, "") : "ed8b193+local-s2-reranker", comparisonSource: isF14CoreType(id) ? `${id}-${f14CoreBaseProfile(id).profileId === PROFILE_B_PROFILE_ID ? "profile-b" : "gated"}-final-placement` : `${id}-final-placement` }; }

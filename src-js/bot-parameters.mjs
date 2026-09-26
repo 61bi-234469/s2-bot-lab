@@ -33,7 +33,7 @@ const CC2_PARAMETERS = Object.freeze([
 ]);
 
 // The F14 core runs at most 1,000,000 selections and needs a NEXT piece.
-const GATED_CORE_PARAMETERS = Object.freeze(CC2_PARAMETERS.map((parameter) =>
+const F14_CORE_PARAMETERS = Object.freeze(CC2_PARAMETERS.map((parameter) =>
   parameter.key === "selectionLimit" ? Object.freeze({ ...parameter, maximum: 1_000_000 })
     : parameter.key === "queueDepth" ? Object.freeze({ ...parameter, minimum: 2 }) : parameter));
 
@@ -78,6 +78,15 @@ export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
     ].join("\n"),
     parameters: CC2_PARAMETERS,
   }),
+  "cc2-s2-champion-profile-b": Object.freeze({
+    label: "CC2 S2 — F14 core re-rank (former champion)",
+    description: [
+      "由来：2026年9月16日〜25日のチャンピオン（F14 コア profile-B）です。9月23日からは TTRM INPUT の判断もこのコアで行いました。",
+      "調整・意図：F14 の並べ替えと余力による救済選別を、JavaScript 側から CC2 S2 の探索と同じ Rust のコア（F14 コア）の中へ移しました。並べ替えは F14 と同じく、上位候補を S2 の火力・守りの評価で CC2 の順位を補正して決め、その先頭に救済を適用します。",
+      "特徴：180° 回転とスポーン位置より上からの差し込みを使います。探索の先の盤面を火力への変えやすさで評価する項（leaf conversion）はまだありません。",
+    ].join("\n"),
+    parameters: F14_CORE_PARAMETERS,
+  }),
   "cc2-s2-champion-previous": Object.freeze({
     label: "CC2 S2 — gated leaf-conversion κ0.25 (former champion)",
     description: [
@@ -85,7 +94,7 @@ export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
       "調整・意図：探索の先の盤面に「スピンや B2B で火力に変えやすい形」の評価を加えました（leaf conversion、係数 κ=0.25）。高く積んだ局面で守りを崩さないよう、盤面の高さが 8 段以下のときだけ加えます（gated、H=8）。",
       "特徴：最終手は CC2 の順位どおりで、最上位手が余力を失うときだけ、余力の残る最上位の候補に切り替えます（root rescue）。評価の重みは CC2 S2 の既定値です。",
     ].join("\n"),
-    parameters: GATED_CORE_PARAMETERS,
+    parameters: F14_CORE_PARAMETERS,
   }),
   "cc2-s2-champion": Object.freeze({
     label: "CC2 S2 — SPSA-tuned gated leaf-conversion (current champion)",
@@ -94,7 +103,7 @@ export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
       "調整・意図：κ と、高さ・穴・B2B・スピン・コンボなどの評価の重み 8 個を、自己対戦による自動調整（SPSA）で決め直しました（kappa=0.1164, H=8）。",
       "特徴：判断の仕組み（F14 コア、CC2 の順位どおり、root rescue）は κ0.25 版と同じで、κ と評価の重みだけが違います。開発版で、正式な評価（release-qualified）は受けていません。",
     ].join("\n"),
-    parameters: GATED_CORE_PARAMETERS,
+    parameters: F14_CORE_PARAMETERS,
   }),
   "s2-simple": Object.freeze({
     label: "S2 placement bot",
