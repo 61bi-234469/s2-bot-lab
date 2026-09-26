@@ -1,12 +1,13 @@
 import { F14_COMPAT_QUEUE_LIMIT } from "./s2-f14-compat-browser.mjs";
 import { canonicalize } from "./cs1-core.mjs";
+import { sha256Hex } from "./sha256.mjs";
 import { applyPublicCompatDecision, createPublicCompatProfile, createPublicCompatRequest } from "./public-compat-request.mjs";
 import { ROOT_LEAF_CONVERSION_GATED_PROFILE } from "./s2-f14-compat-browser.mjs";
 import { guiStateToCanonical } from "./gui-state.mjs";
 import { fullStateKey } from "./state-keys.mjs";
 import { applyTransition } from "./transition.mjs";
 import { createF14LeafConversionGatedProfile } from "./s2-f14-compat-browser.mjs";
-import { CHAMPION_PROFILE_ARGS, PREVIOUS_CHAMPION_PROFILE_ARGS } from "./champion-identity.mjs";
+import { CHAMPION_PROFILE_ARGS, PREVIOUS_CHAMPION_PROFILE_ARGS, SPSA_V1_CHAMPION_PROFILE_ARGS } from "./champion-identity.mjs";
 import { EVALUATION_SCORE_SEMANTICS, evaluatorModelIdentity, extractEvaluationFeatures, scoreEvaluationFeatures } from "./evaluation.mjs";
 
 export { CHAMPION_NATIVE_BINARY_SHA256, CHAMPION_PROFILE_ARGS, createChampionBaseProfile } from "./champion-identity.mjs";
@@ -20,10 +21,12 @@ export const CHAMPION_QUEUE_MAXIMUM = 28;
 
 /** GUI bots that decide through the F14 core, and the profile each runs at its
  * default budget. The former champions stay for comparison: profile-B
- * (2026-09-16..25) and the gated profile at kappa 0.25 (2026-09-25..26). */
+ * (2026-09-16..25), the gated profile at kappa 0.25 (2026-09-25..26) and the
+ * SPSA v1 tuned profile (2026-09-26). */
 const F14_CORE_BASE_PROFILES = Object.freeze({
   "cc2-s2-champion-profile-b": () => createPublicCompatProfile(),
   "cc2-s2-champion-previous": () => createF14LeafConversionGatedProfile(PREVIOUS_CHAMPION_PROFILE_ARGS),
+  "cc2-s2-champion-spsa-v1": () => createF14LeafConversionGatedProfile(SPSA_V1_CHAMPION_PROFILE_ARGS),
   "cc2-s2-champion": () => createF14LeafConversionGatedProfile(CHAMPION_PROFILE_ARGS),
 });
 export const F14_CORE_BOT_TYPES = Object.freeze(Object.keys(F14_CORE_BASE_PROFILES));
@@ -42,6 +45,14 @@ export function f14CoreVersionName(execution) {
 export function f14CoreBaseProfile(type = "cc2-s2-champion") {
   if (!isF14CoreType(type)) throw new Error(`unsupported F14 core bot ${type}`);
   return F14_CORE_BASE_PROFILES[type]();
+}
+
+/** The local host's evidence engine id for an F14-core bot. The role name moves
+ * when the champion changes and the gated profiles share one profileId, so the
+ * id also carries a digest of the whole base profile. */
+export function f14CoreEngineId(role, type) {
+  const profile = f14CoreBaseProfile(type);
+  return `${role}/${profile.profileId}+${sha256Hex(canonicalize(profile)).slice(0, 12)}`;
 }
 
 /**

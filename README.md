@@ -35,8 +35,10 @@ tuned and why, and how it plays.
 - CC2 S2 — gated leaf-conversion κ0.25 (former champion): the F14 core keeps the CC2 search's rank
   order and only a root-rescue veto selects past rank 0; leaf conversion kappa=0.25 applies only up
   to height 8, default weights
-- CC2 S2 — SPSA-tuned gated leaf-conversion (current champion): the same design with SPSA-tuned
-  kappa=0.1164 and eight evaluation weights; development-only, not release-qualified
+- CC2 S2 — SPSA-tuned v1 (former champion): the same design with SPSA-tuned kappa=0.1164 and
+  eight evaluation weights
+- CC2 S2 — SPSA-tuned v2 gated leaf-conversion (current champion): a second SPSA round on the v1
+  weights plus eight more (sixteen evaluation weights); development-only, not release-qualified
 
 The champion's defaults (512 selections, THINK TIME off, queue 14) are the champion itself;
 SELECTION, THINK TIME and QUEUE DEPTH can be changed like the other bots.

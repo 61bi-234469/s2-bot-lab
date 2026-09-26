@@ -111,13 +111,20 @@ async function exerciseStaleOnePlayerProposal(makeSecondError) {
 
 test("static handler lists exactly the INPUT bots and You, unavailable without WASM", async () => {
   const capabilities = await request(createGuiRequestHandlers(), "GET", "/api/bots");
-  assert.deepEqual(capabilities.bots.map((bot) => bot.id), ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion", "human"]);
+  assert.deepEqual(capabilities.bots.map((bot) => bot.id), ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion", "human"]);
   assert.ok(capabilities.bots.filter((bot) => bot.id.startsWith("cc2-")).every((bot) => !bot.available));
   const available = await request(createGuiRequestHandlers({ cc2: { decideF14: async () => { throw new Error("must not run"); } } }), "GET", "/api/bots");
   const champion = available.bots.find((bot) => bot.id === "cc2-s2-champion");
   assert.equal(champion.parameters.some((parameter) => parameter.key === "engineProfile"), false);
   assert.equal(champion.execution.profileId, "f14-leaf-conversion-gated-b/1");
   assert.match(champion.description, /gated leaf-conversion/);
+  assert.equal(Object.keys(champion.execution.weightOverrides).length, 16);
+  // The SPSA v1 champion keeps its eight tuned weights on the same core.
+  const spsaV1 = available.bots.find((bot) => bot.id === "cc2-s2-champion-spsa-v1");
+  assert.equal(spsaV1.fixedDecision, true);
+  assert.equal(spsaV1.execution.leafConversionScale, "0.1164");
+  assert.equal(spsaV1.execution.weightOverrides.holes, "-1.1368");
+  assert.equal(Object.keys(spsaV1.execution.weightOverrides).length, 8);
   // The previous champion runs the same core on its own gated profile.
   const previous = available.bots.find((bot) => bot.id === "cc2-s2-champion-previous");
   assert.equal(previous.fixedDecision, true);
@@ -258,7 +265,7 @@ test("selectors offer the upstream bots, then the project bots oldest to newest"
   const html = await readFile(new URL("../cc2-gui/index.html", import.meta.url), "utf8");
   const optionsFor = (id) => [...(html.match(new RegExp(`<select id="${id}">([\\s\\S]*?)</select>`))?.[1] ?? "")
     .matchAll(/<option value="([^"]+)"/g)].map((match) => match[1]);
-  const orderedBots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion"];
+  const orderedBots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion"];
   assert.deepEqual(new Set(orderedBots), new Set(Object.keys(INPUT_BOT_PROFILES)));
   assert.deepEqual(optionsFor("analysis-bot"), orderedBots);
   assert.doesNotMatch(html, /analysis-engine-profile|analysis-engine-control/);

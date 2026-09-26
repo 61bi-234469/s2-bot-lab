@@ -9,7 +9,7 @@ import { createCc2Session, requestCc2Suggestion } from "../src-js/cc2-bridge.mjs
 import { createCc2WasmWorkerSession } from "../src-js/cc2-wasm-worker-session.mjs";
 import { createGuiInputMatchHandlers } from '../src-js/gui-input-match.mjs';
 import { applyQualifiedCc2Suggestion } from "../src-js/gui-request-handlers.mjs";
-import { assertChampionParameters, createChampionProfile, createChampionRequest, f14CoreVersionName, isF14CoreType, resolveChampionDecision } from "../src-js/champion-parameters.mjs";
+import { assertChampionParameters, createChampionProfile, createChampionRequest, f14CoreEngineId, f14CoreVersionName, isF14CoreType, resolveChampionDecision } from "../src-js/champion-parameters.mjs";
 import { BOT_PARAMETER_DEFINITIONS, defaultBotParameters } from "../src-js/bot-parameters.mjs";
 import { isInputBotType } from '../src-js/input-bot-contract.mjs';
 import { createNativeInputRuntime } from '../src-js/native-input-runtime.mjs';
@@ -130,7 +130,7 @@ const cc2Engines = Object.freeze({
   // The former champions' profiles run on the champion's F14 core and binary.
   "cc2-s2-champion-profile-b": Object.freeze({
     botType: "cc2-s2-champion-profile-b",
-    engineId: "cold-clear-2-s2-former-champion/f14-amount-only-compat-b/1",
+    engineId: f14CoreEngineId("cold-clear-2-s2-former-champion", "cc2-s2-champion-profile-b"),
     label: BOT_PARAMETER_DEFINITIONS["cc2-s2-champion-profile-b"].label,
     repository: "https://github.com/61bi-234469/s2-bot-lab",
     commit: "local-former-champion-f14-amount-only-compat-b",
@@ -145,7 +145,7 @@ const cc2Engines = Object.freeze({
   }),
   "cc2-s2-champion-previous": Object.freeze({
     botType: "cc2-s2-champion-previous",
-    engineId: "cold-clear-2-s2-previous-champion/f14-leaf-conversion-gated-b/1",
+    engineId: f14CoreEngineId("cold-clear-2-s2-previous-champion", "cc2-s2-champion-previous"),
     label: BOT_PARAMETER_DEFINITIONS["cc2-s2-champion-previous"].label,
     repository: "https://github.com/61bi-234469/s2-bot-lab",
     commit: "local-previous-champion-f14-leaf-conversion-gated-b",
@@ -158,9 +158,24 @@ const cc2Engines = Object.freeze({
     wasmSha256: fileSha256IfPresent(options.f14Wasm),
     config: loadS2Config("fixtures/tuning/cc2-s2-spawn-integrity-substrate-v2.json"),
   }),
+  "cc2-s2-champion-spsa-v1": Object.freeze({
+    botType: "cc2-s2-champion-spsa-v1",
+    engineId: f14CoreEngineId("cold-clear-2-s2-former-champion", "cc2-s2-champion-spsa-v1"),
+    label: BOT_PARAMETER_DEFINITIONS["cc2-s2-champion-spsa-v1"].label,
+    repository: "https://github.com/61bi-234469/s2-bot-lab",
+    commit: "local-former-champion-f14-leaf-conversion-gated-b-spsa-v1",
+    comparisonSource: "cold-clear-2-s2-spsa-v1-champion-gated-final-placement",
+    protocolName: "Cold Clear 2 S2",
+    binary: options.f14ChampionBinary,
+    wasm: options.f14Wasm,
+    f14Compat: options.f14ChampionBinary !== null,
+    f14WasmCompat: options.f14ChampionBinary === null && options.f14Wasm !== null,
+    wasmSha256: fileSha256IfPresent(options.f14Wasm),
+    config: loadS2Config("fixtures/tuning/cc2-s2-spawn-integrity-substrate-v2.json"),
+  }),
   "cc2-s2-champion": Object.freeze({
     botType: "cc2-s2-champion",
-    engineId: "cold-clear-2-s2-development-champion/f14-leaf-conversion-gated-b/1",
+    engineId: f14CoreEngineId("cold-clear-2-s2-development-champion", "cc2-s2-champion"),
     label: BOT_PARAMETER_DEFINITIONS["cc2-s2-champion"].label,
     repository: "https://github.com/61bi-234469/s2-bot-lab",
     commit: "local-development-champion-f14-leaf-conversion-gated-b",
@@ -1075,7 +1090,7 @@ async function closeCc2MatchSessions(session) {
 }
 
 function assertBotType(value) {
-  if (!["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion", "s2-simple", "human"].includes(value)) throw new Error(`unsupported match bot ${value}`);
+  if (!["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion", "s2-simple", "human"].includes(value)) throw new Error(`unsupported match bot ${value}`);
   if (value in cc2Engines) requireCc2Engine(value);
   if (value in cc2Engines && !isAdr062QualifiedStaticType(value)) throw new Error("ADR-062-qualified resolver required");
   return value;
