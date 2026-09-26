@@ -108,7 +108,7 @@ async function exerciseStaleOnePlayerProposal(makeSecondError) {
 
 test("static handler lists exactly the INPUT bots and You, unavailable without WASM", async () => {
   const capabilities = await request(createGuiRequestHandlers(), "GET", "/api/bots");
-  assert.deepEqual(capabilities.bots.map((bot) => bot.id), ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-previous", "cc2-s2-champion", "human"]);
+  assert.deepEqual(capabilities.bots.map((bot) => bot.id), ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion", "cc2-s2-champion-previous", "cc2-s2-champion-legacy", "human"]);
   assert.ok(capabilities.bots.filter((bot) => bot.id.startsWith("cc2-")).every((bot) => !bot.available));
   const available = await request(createGuiRequestHandlers({ cc2: { decideF14: async () => { throw new Error("must not run"); } } }), "GET", "/api/bots");
   const champion = available.bots.find((bot) => bot.id === "cc2-s2-champion");
@@ -246,11 +246,11 @@ test("qualified analysis supplies canonical comparison identity after public sel
 
 // The GUI offers only the bots TTRM INPUT admits (plus You on the left), so the
 // public and local hosts show one list and nothing non-OSS can enter it.
-test("selectors offer all INPUT bots with the comparison before the current champion", async () => {
+test("selectors offer all INPUT bots with past champions after the current one, newest first", async () => {
   const html = await readFile(new URL("../cc2-gui/index.html", import.meta.url), "utf8");
   const optionsFor = (id) => [...(html.match(new RegExp(`<select id="${id}">([\\s\\S]*?)</select>`))?.[1] ?? "")
     .matchAll(/<option value="([^"]+)"/g)].map((match) => match[1]);
-  const orderedBots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-previous", "cc2-s2-champion"];
+  const orderedBots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion", "cc2-s2-champion-previous", "cc2-s2-champion-legacy"];
   assert.deepEqual(new Set(orderedBots), new Set(Object.keys(INPUT_BOT_PROFILES)));
   assert.deepEqual(optionsFor("analysis-bot"), orderedBots);
   assert.doesNotMatch(html, /analysis-engine-profile|analysis-engine-control/);

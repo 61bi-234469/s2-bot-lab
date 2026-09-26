@@ -53,9 +53,9 @@ const CC2_LABELS = Object.freeze({
   "cc2-raw": "Raw CC2 — MinusKelvin upstream (deterministic port)",
   "cc2-chouhy": "CC2 — chouhy fork b20a92b (deterministic port)",
   "cc2-s2-f14": "CC2 S2 — F14 post-tank rescue",
-  "cc2-s2-champion-legacy": "CC2 S2 — previous INPUT champion (comparison)",
-  "cc2-s2-champion-previous": "CC2 S2 — previous gated champion κ0.25 (comparison)",
   "cc2-s2-champion": "CC2 S2 — current development champion (not release-qualified)",
+  "cc2-s2-champion-previous": "CC2 S2 — previous gated champion κ0.25 (comparison)",
+  "cc2-s2-champion-legacy": "CC2 S2 — previous INPUT champion (comparison)",
 });
 /**
  * Transport-neutral browser API. Native CC2 engines are deliberately absent;
