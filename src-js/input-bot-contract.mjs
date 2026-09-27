@@ -13,6 +13,7 @@ export const INPUT_BOT_PROFILES = Object.freeze(Object.fromEntries([
   ['cc2-s2-champion-profile-b', 'f14-core-order/1'],
   ['cc2-s2-champion-previous', 'f14-core-order/1'],
   ['cc2-s2-champion-spsa-v1', 'f14-core-order/1'],
+  ['cc2-s2-champion-spsa-v2', 'f14-core-order/1'],
   // Comparison route used by the INPUT champion before its F14 core decided.
   ['cc2-s2-champion-legacy', 'f14-amount-only/1'],
 ].map(([type, selector]) => [type, Object.freeze({ id: INPUT_BOT_CONTRACT_ID, type, selector })])));

@@ -140,6 +140,7 @@ impl Freestyle {
     ) -> Result<Statistics, CompatError> {
         puffin::profile_function!();
         let leaf_conversion_scale = observation.and_then(|root| root.leaf_conversion_scale());
+        let ren_attack_gain = options.config.freestyle_weights.leaf_ren_attack_gain != 0.0;
         let leaf_conversion_max_height =
             observation.and_then(|root| root.leaf_conversion_max_height());
         let leaf_conversion_root_pressure_rows =
@@ -275,6 +276,7 @@ impl Freestyle {
                                         pending_rows_before_lock,
                                         due_rows_before_lock,
                                         &info,
+                                        ren_attack_gain,
                                     )
                                 },
                             )?;
@@ -288,6 +290,7 @@ impl Freestyle {
                                     pending_rows_before_lock,
                                     due_rows_before_lock,
                                     &info,
+                                    ren_attack_gain,
                                 )
                             })?;
                         }
@@ -384,6 +387,15 @@ pub struct Weights {
     pub s2_b2b_charge_cap_rows: u32,
     #[serde(default, skip_serializing_if = "is_zero_f32")]
     pub s2_amount_solvency_rescue_value: f32,
+    /// Per column that has at least one hole (an empty cell under that
+    /// column's top block). Zero keeps the compiled evaluation unchanged.
+    #[serde(default, skip_serializing_if = "is_zero_f32")]
+    pub hole_columns: f32,
+    /// Non-zero: the leaf conversion measures REN gain as the pre-cancel
+    /// search-attack difference (with REN minus combo reset) instead of the
+    /// realised amount, which is always zero while search incoming is zero.
+    #[serde(default, skip_serializing_if = "is_zero_f32")]
+    pub leaf_ren_attack_gain: f32,
 }
 
 fn is_zero_f32(value: &f32) -> bool {
@@ -545,6 +557,11 @@ fn evaluate_with_surge(
             })
             .sum::<u32>() as f32;
 
+    // columns with holes
+    if weights.hole_columns != 0.0 {
+        eval += weights.hole_columns * hole_columns(&state.board) as f32;
+    }
+
     // cell coveredness
     let coveredness = cell_coveredness(&state.board, weights.max_cell_covered_height);
     eval += weights.cell_coveredness * coveredness as f32;
@@ -577,6 +594,18 @@ fn evaluate_with_surge(
             value: reward.into(),
         },
     )
+}
+
+fn hole_columns(board: &Board) -> u32 {
+    board
+        .cols
+        .iter()
+        .filter(|&&c| {
+            let height = 64 - c.leading_zeros();
+            let underneath = (1 << height) - 1;
+            !c & underneath != 0
+        })
+        .count() as u32
 }
 
 fn potential_surge_rows(b2b: u32) -> u32 {
@@ -688,6 +717,7 @@ fn legacy_conversion_facts(
     pending_rows: u8,
     due_rows: u8,
     info: &PlacementInfo,
+    ren_attack_gain: bool,
 ) -> Result<LegacyConversionFacts, CompatError> {
     let piece = match info.placement.location.piece {
         Piece::I => "I",
@@ -776,7 +806,24 @@ fn legacy_conversion_facts(
         lines: info.lines_cleared,
         spin,
         cancelled: f64::from(info.cancelled_rows),
-        ren_combat_gain: actual_realised - no_ren_realised,
+        ren_combat_gain: if ren_attack_gain {
+            let attack = |combo_after: u32, b2b_after: u32| {
+                amount_only_search_attack(
+                    info.lines_cleared,
+                    info.placement.spin,
+                    info.perfect_clear,
+                    combo_after.min(u32::from(u8::MAX)) as u8,
+                    b2b_after.min(u32::from(u8::MAX)) as u8,
+                    b2b_before.min(u32::from(u8::MAX)) as u8,
+                )
+                .map(f64::from)
+                .ok_or(CompatError::InconsistentSearchAttack)
+            };
+            attack(combo_after, b2b_after)?
+                - attack(no_ren_chain.combo_after, no_ren_chain.b2b_after)?
+        } else {
+            actual_realised - no_ren_realised
+        },
         setup_witnessed: false,
         surge_sent: info.surge_rows,
         release_value: actual_realised - withheld_realised,
@@ -955,6 +1002,22 @@ mod real_board_tests {
         assert_eq!(off.value.0, 1.0 + 2.0 + 2.0 + 130.0 + 3.0);
         assert_eq!(on_reward.value, off_reward.value);
         assert_eq!(board, before);
+    }
+
+    #[test]
+    fn hole_columns_counts_columns_not_cells() {
+        // Three holes in two columns: the term counts the columns.
+        let mut board = Board::default();
+        board.cols[0] = 0b101; // one hole
+        board.cols[1] = 0b1001; // two holes, same column
+        board.cols[2] = 0b111; // no hole
+        assert_eq!(hole_columns(&board), 2);
+        let mut w = weights();
+        let base = score(board, &w, true).0.value.0;
+        w.hole_columns = -1.5;
+        assert_eq!(score(board, &w, true).0.value.0, base - 3.0);
+        w.hole_columns = 0.0;
+        assert_eq!(score(board, &w, true).0.value.0, base);
     }
 
     #[test]
@@ -1883,9 +1946,44 @@ mod amount_exchange_tests {
     }
 
     #[test]
+    fn zero_incoming_ren_gain_is_zero_by_default_and_positive_as_pre_cancel_attack() {
+        // TSD continuing a REN (combo 3 -> 4), B2B 1 -> 2, no incoming rows.
+        let info = projected_conversion_info(2, Spin::Full, 4, 1, 2, 0);
+        let realised = legacy_conversion_facts(3, 4, 1, 2, 0, 0, &info, false).unwrap();
+        assert_eq!(realised.ren_combat_gain, 0.0, "realised amount is zero without incoming");
+        let attack = legacy_conversion_facts(3, 4, 1, 2, 0, 0, &info, true).unwrap();
+        assert!(attack.ren_combat_gain > 0.0, "{}", attack.ren_combat_gain);
+
+        let mut off = Reward { value: OrderedFloat(0.0) };
+        add_leaf_conversion_reward(&mut off, Some(0.25), || Ok(realised)).unwrap();
+        assert_eq!(off.value.0, 0.0);
+        let mut on = Reward { value: OrderedFloat(0.0) };
+        add_leaf_conversion_reward(&mut on, Some(0.25), || Ok(attack)).unwrap();
+        assert!(on.value.0 > 0.0, "the bridge branch now earns its REN uplift");
+    }
+
+    #[test]
+    fn pre_cancel_ren_gain_is_zero_without_ren_and_low_value_penalty_is_unchanged() {
+        // First clear of a chain: no REN uplift either way.
+        let first = projected_conversion_info(2, Spin::Full, 1, 1, 2, 0);
+        assert_eq!(legacy_conversion_facts(0, 1, 1, 2, 0, 0, &first, true).unwrap().ren_combat_gain, 0.0);
+        // Low-value REN single keeps its penalty under both definitions.
+        let single = projected_conversion_info(1, Spin::None, 4, 0, 0, 0);
+        let mut rewards = [0.0f32; 2];
+        for (slot, flag) in [false, true].into_iter().enumerate() {
+            let facts = legacy_conversion_facts(3, 4, 0, 0, 0, 0, &single, flag).unwrap();
+            let mut reward = Reward { value: OrderedFloat(0.0) };
+            add_leaf_conversion_reward(&mut reward, Some(0.25), || Ok(facts)).unwrap();
+            rewards[slot] = reward.value.0;
+        }
+        assert!(rewards[0] < 0.0);
+        assert_eq!(rewards[0], rewards[1]);
+    }
+
+    #[test]
     fn unknown_setup_witness_suppresses_possible_mini_to_tsd_branch() {
         let info = projected_conversion_info(1, Spin::Full, 10, 1, 2, 1);
-        let facts = legacy_conversion_facts(9, 10, 1, 2, 1, 0, &info).unwrap();
+        let facts = legacy_conversion_facts(9, 10, 1, 2, 1, 0, &info, false).unwrap();
         assert_eq!(facts.spin, "normal");
         assert_eq!(facts.combo_before, 9);
         assert_eq!(facts.combo_after, 10);
@@ -1926,7 +2024,7 @@ mod amount_exchange_tests {
     #[test]
     fn b2b_255_counterfactual_projection_error_skips_term_and_keeps_search_path_open() {
         let info = projected_conversion_info(4, Spin::None, 10, 255, 255, 1);
-        let projection = || legacy_conversion_facts(9, 10, 255, 255, 1, 0, &info);
+        let projection = || legacy_conversion_facts(9, 10, 255, 255, 1, 0, &info, false);
         assert_eq!(projection().unwrap_err(), CompatError::ChainOutOfU8);
 
         let mut reward = Reward {

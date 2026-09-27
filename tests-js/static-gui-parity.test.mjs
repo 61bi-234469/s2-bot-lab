@@ -11,7 +11,10 @@ import { cc2MoveToCanonicalPlacement } from "../src-js/cc2-s2-adapter.mjs";
 import { canonicalize } from "../scripts/cs1.mjs";
 import { INPUT_BOT_PROFILES } from "../src-js/input-bot-contract.mjs";
 import { BOT_PARAMETER_DEFINITIONS } from "../src-js/bot-parameters.mjs";
-import { assertF14CoreResponse } from "../src-js/champion-parameters.mjs";
+import { assertF14CoreResponse, f14CoreBaseProfile } from "../src-js/champion-parameters.mjs";
+import * as championIdentity from "../src-js/champion-identity.mjs";
+import { createF14LeafConversionGatedProfile } from "../src-js/s2-f14-compat-browser.mjs";
+import { createPublicCompatProfile } from "../src-js/public-compat-request.mjs";
 import { championInputMoves } from "../src-js/input-champion-decision.mjs";
 
 const LEGACY_STATIC_ENGINE = "cc2-raw";
@@ -111,20 +114,27 @@ async function exerciseStaleOnePlayerProposal(makeSecondError) {
 
 test("static handler lists exactly the INPUT bots and You, unavailable without WASM", async () => {
   const capabilities = await request(createGuiRequestHandlers(), "GET", "/api/bots");
-  assert.deepEqual(capabilities.bots.map((bot) => bot.id), ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion", "human"]);
+  assert.deepEqual(capabilities.bots.map((bot) => bot.id), ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion", "human"]);
   assert.ok(capabilities.bots.filter((bot) => bot.id.startsWith("cc2-")).every((bot) => !bot.available));
   const available = await request(createGuiRequestHandlers({ cc2: { decideF14: async () => { throw new Error("must not run"); } } }), "GET", "/api/bots");
   const champion = available.bots.find((bot) => bot.id === "cc2-s2-champion");
   assert.equal(champion.parameters.some((parameter) => parameter.key === "engineProfile"), false);
   assert.equal(champion.execution.profileId, "f14-leaf-conversion-gated-b/1");
   assert.match(champion.description, /gated leaf-conversion/);
-  assert.equal(Object.keys(champion.execution.weightOverrides).length, 16);
+  assert.equal(Object.keys(champion.execution.weightOverrides).length, 17);
+  assert.equal(champion.execution.weightOverrides.leaf_ren_attack_gain, "1");
   // The SPSA v1 champion keeps its eight tuned weights on the same core.
   const spsaV1 = available.bots.find((bot) => bot.id === "cc2-s2-champion-spsa-v1");
   assert.equal(spsaV1.fixedDecision, true);
   assert.equal(spsaV1.execution.leafConversionScale, "0.1164");
   assert.equal(spsaV1.execution.weightOverrides.holes, "-1.1368");
   assert.equal(Object.keys(spsaV1.execution.weightOverrides).length, 8);
+  // The SPSA v2 champion keeps its sixteen tuned weights without the REN attack gain.
+  const spsaV2 = available.bots.find((bot) => bot.id === "cc2-s2-champion-spsa-v2");
+  assert.equal(spsaV2.fixedDecision, true);
+  assert.equal(spsaV2.execution.leafConversionScale, "0.1164");
+  assert.equal(Object.keys(spsaV2.execution.weightOverrides).length, 16);
+  assert.equal(spsaV2.execution.weightOverrides.leaf_ren_attack_gain, undefined);
   // The previous champion runs the same core on its own gated profile.
   const previous = available.bots.find((bot) => bot.id === "cc2-s2-champion-previous");
   assert.equal(previous.fixedDecision, true);
@@ -265,12 +275,51 @@ test("selectors offer the upstream bots, then the project bots oldest to newest"
   const html = await readFile(new URL("../cc2-gui/index.html", import.meta.url), "utf8");
   const optionsFor = (id) => [...(html.match(new RegExp(`<select id="${id}">([\\s\\S]*?)</select>`))?.[1] ?? "")
     .matchAll(/<option value="([^"]+)"/g)].map((match) => match[1]);
-  const orderedBots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion"];
+  const orderedBots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion"];
   assert.deepEqual(new Set(orderedBots), new Set(Object.keys(INPUT_BOT_PROFILES)));
   assert.deepEqual(optionsFor("analysis-bot"), orderedBots);
   assert.doesNotMatch(html, /analysis-engine-profile|analysis-engine-control/);
   assert.deepEqual(optionsFor("left-bot"), [...orderedBots, "human"]);
   assert.deepEqual(optionsFor("right-bot"), orderedBots);
+});
+
+// Every champion stays a GUI bot on its own profile: a champion change moves the
+// outgoing profile to a new *_CHAMPION_PROFILE_ARGS export, which must be listed
+// here with its former-champion bot. Oldest first; the last is the current champion.
+const CHAMPION_HISTORY = Object.freeze([
+  // The pre-F14-core route and profile-B have no *_CHAMPION_PROFILE_ARGS export.
+  { id: "cc2-s2-champion-legacy" },
+  { id: "cc2-s2-champion-profile-b", profile: () => createPublicCompatProfile() },
+  { id: "cc2-s2-champion-previous", args: "PREVIOUS_CHAMPION_PROFILE_ARGS" },
+  { id: "cc2-s2-champion-spsa-v1", args: "SPSA_V1_CHAMPION_PROFILE_ARGS" },
+  { id: "cc2-s2-champion-spsa-v2", args: "SPSA_V2_CHAMPION_PROFILE_ARGS" },
+  { id: "cc2-s2-champion", args: "CHAMPION_PROFILE_ARGS" },
+]);
+
+test("every past champion keeps its GUI bot, oldest first, current champion last", async () => {
+  const championExports = Object.keys(championIdentity).filter((name) => /(^|_)CHAMPION_PROFILE_ARGS$/.test(name)).sort();
+  assert.deepEqual(CHAMPION_HISTORY.flatMap((entry) => entry.args ?? []).sort(), championExports,
+    "each *_CHAMPION_PROFILE_ARGS export needs a CHAMPION_HISTORY entry and GUI bot");
+  for (const { id, args, profile } of CHAMPION_HISTORY) {
+    assert.ok(Object.hasOwn(INPUT_BOT_PROFILES, id), id);
+    if (args) assert.deepEqual(f14CoreBaseProfile(id), createF14LeafConversionGatedProfile(championIdentity[args]), id);
+    if (profile) assert.deepEqual(f14CoreBaseProfile(id), profile(), id);
+  }
+  const ids = CHAMPION_HISTORY.map((entry) => entry.id);
+  const current = ids.at(-1);
+  assert.equal(current, "cc2-s2-champion");
+  for (const [id, definition] of Object.entries(BOT_PARAMETER_DEFINITIONS)) {
+    const expected = id === current ? /\(current champion\)$/ : ids.includes(id) ? /\(former champion\)$/ : null;
+    if (expected) assert.match(definition.label, expected, id);
+    else assert.doesNotMatch(definition.label, /champion\)$/, id);
+  }
+  const html = await readFile(new URL("../cc2-gui/index.html", import.meta.url), "utf8");
+  for (const select of ["analysis-bot", "left-bot", "right-bot"]) {
+    const options = [...(html.match(new RegExp(`<select id="${select}">([\\s\\S]*?)</select>`))?.[1] ?? "")
+      .matchAll(/<option value="([^"]+)"/g)].map((match) => match[1]).filter((id) => id !== "human");
+    assert.deepEqual(options.filter((id) => ids.includes(id)), ids, select);
+    assert.equal(options.at(-1), current, select);
+  }
 });
 
 test("static option names and the Pages bot list use the shared bot names and introductions", async () => {

@@ -113,6 +113,18 @@ pub struct F14SelectOptions {
     pub weights: [f64; 19],
     pub post_spin_policy: PostSpinPolicy,
     pub final_order_policy: FinalOrderPolicy,
+    /// Danger-mode root preference applied after the residual rescue. `None`
+    /// keeps the selection byte-identical.
+    pub danger_preference: Option<DangerPreference>,
+}
+
+/// When the best returned solvency is below `cap` and the rescue did not
+/// fire, select the first ranked candidate whose solvency beats the selected
+/// one by at least `gain`. It never loosens the rescue veto.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DangerPreference {
+    pub cap: f64,
+    pub gain: f64,
 }
 
 impl Default for F14SelectOptions {
@@ -124,6 +136,7 @@ impl Default for F14SelectOptions {
             weights: EFFECTIVE_WEIGHTS,
             post_spin_policy: PostSpinPolicy::LegacyF14,
             final_order_policy: FinalOrderPolicy::S2Rerank,
+            danger_preference: None,
         }
     }
 }
@@ -482,8 +495,9 @@ impl RootDecisionStage {
         moves: &[Value],
     ) -> Result<(F14Selection, PostStageCountersSnapshot), CompatError> {
         let (selection_result, audit) = crate::s2_audit::run_native_f14_compat(|| {
-            self.compose_returned_prefix(context, moves)
-                .and_then(apply_residual_rescue)
+            self.compose_returned_prefix(context, moves).and_then(|prefix| {
+                apply_residual_rescue_with_danger(prefix, self.options.danger_preference)
+            })
         });
         let selection = selection_result?;
         let post_stage_counters = PostStageCountersSnapshot {
@@ -2514,12 +2528,41 @@ fn compose_f14_ranking_with_index(
 }
 
 pub fn apply_residual_rescue(prefix: ComposedRankingPrefix) -> Result<F14Selection, CompatError> {
+    apply_residual_rescue_with_danger(prefix, None)
+}
+
+fn danger_preferred_index(
+    ranked: &[RankedCandidate],
+    selected_index: usize,
+    danger: DangerPreference,
+) -> usize {
+    let threshold = ranked[selected_index].solvency + danger.gain;
+    let best = ranked
+        .iter()
+        .map(|candidate| candidate.solvency)
+        .fold(f64::NEG_INFINITY, f64::max);
+    if best >= danger.cap || best < threshold {
+        return selected_index;
+    }
+    ranked
+        .iter()
+        .position(|candidate| candidate.solvency >= threshold)
+        .unwrap_or(selected_index)
+}
+
+pub fn apply_residual_rescue_with_danger(
+    prefix: ComposedRankingPrefix,
+    danger: Option<DangerPreference>,
+) -> Result<F14Selection, CompatError> {
     let ComposedRankingPrefix {
         ranked,
         selected_meta,
         returned_candidate_count,
     } = prefix;
-    let (rescued, selected_index) = choose_rescue(&ranked)?;
+    let (rescued, mut selected_index) = choose_rescue(&ranked)?;
+    if let (false, Some(danger)) = (rescued, danger) {
+        selected_index = danger_preferred_index(&ranked, selected_index, danger);
+    }
     let selected_rank = ranked[selected_index].cc2_rank;
     let mut selected = selected_meta
         .iter()
@@ -3827,5 +3870,42 @@ mod tests {
             ),
             Err(CompatError::Deadline)
         );
+    }
+}
+
+#[cfg(test)]
+mod danger_preference_tests {
+    use super::{danger_preferred_index, DangerPreference};
+    use crate::f14_compat::{Conversion, ConversionBranch, RankedCandidate};
+
+    fn ranked(solvencies: &[f64]) -> Vec<RankedCandidate> {
+        solvencies
+            .iter()
+            .enumerate()
+            .map(|(rank, &solvency)| RankedCandidate {
+                cc2_rank: rank as i32,
+                identity: format!("m{rank}"),
+                s2_score: 0.0,
+                conversion: Conversion { branch: ConversionBranch::Other, units: 0.0, qualifies: false },
+                solvency,
+                solvent: solvency >= 0.0,
+                selection_score: 0.0,
+            })
+            .collect()
+    }
+
+    const DANGER: DangerPreference = DangerPreference { cap: 8.0, gain: 2.0 };
+
+    #[test]
+    fn picks_first_ranked_candidate_that_gains_enough_below_the_cap() {
+        assert_eq!(danger_preferred_index(&ranked(&[1.0, 2.0, 7.0, 8.0 - 0.5, 3.0]), 0, DANGER), 2);
+        assert_eq!(danger_preferred_index(&ranked(&[1.0, 3.0, 7.0]), 0, DANGER), 1);
+    }
+
+    #[test]
+    fn keeps_selection_at_or_above_the_cap_or_without_enough_gain() {
+        assert_eq!(danger_preferred_index(&ranked(&[1.0, 8.0]), 0, DANGER), 0);
+        assert_eq!(danger_preferred_index(&ranked(&[5.0, 6.0, 4.0]), 0, DANGER), 0);
+        assert_eq!(danger_preferred_index(&ranked(&[5.0]), 0, DANGER), 0);
     }
 }
