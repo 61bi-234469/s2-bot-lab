@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import targets from '../fixtures/input-execution/spin-targets.json' with { type: 'json' };
 import { INPUT_DECISION_REQUEST_ID, inputDecisionFingerprint } from '../src-js/input-decision-request.mjs';
 import { isInputBotType } from '../src-js/input-bot-contract.mjs';
-import { amountOnlyDecisionFingerprint, isAdr062QualifiedStaticType } from '../src-js/s2-amount-only-decision-request.mjs';
+import { amountOnlyDecisionFingerprint, isPublicInputQualifiedType } from '../src-js/s2-amount-only-decision-request.mjs';
 import { orderQualifiedInputCandidates, resolveQualifiedInputSubmission } from '../src-js/s2-input-public-resolver.mjs';
 import { rankS2AmountOnlyPublicCandidates } from '../src-js/s2-amount-only-public-candidates.mjs';
 import { QUALIFIED_STATIC_CC2_RESOLVER_POLICY } from '../src-js/s2-amount-only-public-resolver.mjs';
@@ -13,7 +13,7 @@ test('input admission keeps raw and chouhy outside the F14 final-placement resol
   assert.equal(inputDecisionFingerprint(request), amountOnlyDecisionFingerprint(request));
   for (const type of ['cc2-raw', 'cc2-chouhy']) {
     assert.equal(isInputBotType(type), true);
-    assert.equal(isAdr062QualifiedStaticType(type), false);
+    assert.equal(isPublicInputQualifiedType(type), false);
     const value = { ...request, id: INPUT_DECISION_REQUEST_ID, type, engine: { botType: type, engineId: type } };
     assert.doesNotThrow(() => inputDecisionFingerprint(value));
     assert.throws(() => amountOnlyDecisionFingerprint(value));
@@ -21,7 +21,7 @@ test('input admission keeps raw and chouhy outside the F14 final-placement resol
     assert.throws(() => inputDecisionFingerprint({ ...value, packets: [] }), /keys/);
   }
   assert.equal(isInputBotType('cc2-s2-champion-legacy'), true);
-  assert.equal(isAdr062QualifiedStaticType('cc2-s2-champion-legacy'), true);
+  assert.equal(isPublicInputQualifiedType('cc2-s2-champion-legacy'), true);
   assert.equal(isInputBotType('cc2-s2-future'), false);
   assert.equal(isInputBotType('toString'), false);
 });

@@ -7,7 +7,7 @@ import { guiStateToCanonical } from "./gui-state.mjs";
 import { fullStateKey } from "./state-keys.mjs";
 import { applyTransition } from "./transition.mjs";
 import { createF14LeafConversionGatedProfile } from "./s2-f14-compat-browser.mjs";
-import { CHAMPION_PROFILE_ARGS, PREVIOUS_CHAMPION_PROFILE_ARGS, SPSA_V1_CHAMPION_PROFILE_ARGS } from "./champion-identity.mjs";
+import { CHAMPION_PROFILE_ARGS, PREVIOUS_CHAMPION_PROFILE_ARGS, SPSA_V1_CHAMPION_PROFILE_ARGS, SPSA_V2_CHAMPION_PROFILE_ARGS } from "./champion-identity.mjs";
 import { EVALUATION_SCORE_SEMANTICS, evaluatorModelIdentity, extractEvaluationFeatures, scoreEvaluationFeatures } from "./evaluation.mjs";
 
 export { CHAMPION_NATIVE_BINARY_SHA256, CHAMPION_PROFILE_ARGS, createChampionBaseProfile } from "./champion-identity.mjs";
@@ -22,11 +22,12 @@ export const CHAMPION_QUEUE_MAXIMUM = 28;
 /** GUI bots that decide through the F14 core, and the profile each runs at its
  * default budget. The former champions stay for comparison: profile-B
  * (2026-09-16..25), the gated profile at kappa 0.25 (2026-09-25..26) and the
- * SPSA v1 tuned profile (2026-09-26). */
+ * SPSA v1 tuned profile (2026-09-26) and the SPSA v2 tuned profile (2026-09-26..27). */
 const F14_CORE_BASE_PROFILES = Object.freeze({
   "cc2-s2-champion-profile-b": () => createPublicCompatProfile(),
   "cc2-s2-champion-previous": () => createF14LeafConversionGatedProfile(PREVIOUS_CHAMPION_PROFILE_ARGS),
   "cc2-s2-champion-spsa-v1": () => createF14LeafConversionGatedProfile(SPSA_V1_CHAMPION_PROFILE_ARGS),
+  "cc2-s2-champion-spsa-v2": () => createF14LeafConversionGatedProfile(SPSA_V2_CHAMPION_PROFILE_ARGS),
   "cc2-s2-champion": () => createF14LeafConversionGatedProfile(CHAMPION_PROFILE_ARGS),
 });
 export const F14_CORE_BOT_TYPES = Object.freeze(Object.keys(F14_CORE_BASE_PROFILES));
@@ -223,7 +224,7 @@ export function assertGatedChampionResponse(request, response, { allowQueuePrefi
   }
   if (candidatesByRank.size !== identities.length) throw new Error("champion decision candidates do not cover its ranking");
   if (identities[ranking.selectedCc2Rank] !== response.selectedIdentity) throw new Error("champion decision selected identity mismatch");
-  // ADR-065 root veto, exactly as Rust choose_rescue: rescue iff CC2 rank 0 has
+  // Root rescue veto, exactly as Rust choose_rescue: rescue iff CC2 rank 0 has
   // negative solvency and some candidate is solvent; then the first solvent rank.
   const firstSolvent = identities.findIndex((_, rank) => candidatesByRank.get(rank).solvent);
   const rescued = candidatesByRank.get(0).solvency < 0 && firstSolvent >= 0;

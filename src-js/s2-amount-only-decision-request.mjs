@@ -4,9 +4,9 @@ import { sha256Hex } from "./sha256.mjs";
 export const S2_AMOUNT_ONLY_DECISION_STATE_ID = "s2-amount-only-decision-state/1";
 export const S2_AMOUNT_ONLY_DECISION_REQUEST_ID = "s2-amount-only-decision-request/1";
 
-const QUALIFIED_TYPES = new Set(["cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1"]);
+const QUALIFIED_TYPES = new Set(["cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2"]);
 
-export function isAdr062QualifiedStaticType(type) {
+export function isPublicInputQualifiedType(type) {
   return QUALIFIED_TYPES.has(type);
 }
 
@@ -15,8 +15,8 @@ export function assertS2AmountOnlyDecisionRequest(request) {
   if (request?.id !== S2_AMOUNT_ONLY_DECISION_REQUEST_ID) {
     throw new Error("invalid amount-only decision request");
   }
-  if (!isAdr062QualifiedStaticType(request.type)) {
-    throw new Error("ADR-062-qualified resolver required");
+  if (!isPublicInputQualifiedType(request.type)) {
+    throw new Error("public-input-qualified resolver required");
   }
   if (!Array.isArray(request.moves) || request.moves.length === 0) {
     throw new Error("amount-only decision request requires moves");

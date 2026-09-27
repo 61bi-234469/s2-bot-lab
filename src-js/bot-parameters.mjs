@@ -101,16 +101,25 @@ export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
     description: [
       "由来：2026年9月26日のチャンピオンです（SPSA 1 回目）。gated leaf-conversion κ0.25 を土台にしています。",
       "調整・意図：κ と、高さ・穴・B2B・スピン・コンボなどの評価の重み 8 個を、自己対戦による自動調整（SPSA）で決め直しました（kappa=0.1164, H=8）。",
-      "特徴：判断の仕組み（F14 コア、CC2 の順位どおり、root rescue）は κ0.25 版と同じで、κ と評価の重みだけが違います。現チャンピオン（SPSA 2 回目）との比較用です。",
+      "特徴：判断の仕組み（F14 コア、CC2 の順位どおり、root rescue）は κ0.25 版と同じで、κ と評価の重みだけが違います。SPSA 2 回目以降のチャンピオンとの比較用です。",
+    ].join("\n"),
+    parameters: F14_CORE_PARAMETERS,
+  }),
+  "cc2-s2-champion-spsa-v2": Object.freeze({
+    label: "CC2 S2 — SPSA-tuned v2 (former champion)",
+    description: [
+      "由来：2026年9月26日〜27日のチャンピオンです（SPSA 2 回目）。SPSA 1 回目のチャンピオンを土台にしています。",
+      "調整・意図：1 回目の重み 8 個に、B2B の消去・ブロックの覆いかぶさり・上段 1/4 の高さ・スピン消去・テトリス・T の無駄などの重み 8 個を加えた 16 個を、自己対戦による自動調整（SPSA）で決め直しました（kappa=0.1164, H=8）。",
+      "特徴：判断の仕組み（F14 コア、CC2 の順位どおり、root rescue）は SPSA 1 回目と同じです。探索の中の REN 追加火力はいつも 0 のままで、REN attack gain 版との比較用です。",
     ].join("\n"),
     parameters: F14_CORE_PARAMETERS,
   }),
   "cc2-s2-champion": Object.freeze({
-    label: "CC2 S2 — SPSA-tuned v2 gated leaf-conversion (current champion)",
+    label: "CC2 S2 — REN attack gain gated leaf-conversion (current champion)",
     description: [
-      "由来：2026年9月26日からの現チャンピオンです（SPSA 2 回目）。SPSA 1 回目のチャンピオン（gated leaf-conversion）を土台にしています。",
-      "調整・意図：1 回目でまだ動いていた重み 5 個と、未調整だった重み 8 個（上の塞がったセル、最上段の高さ、T の無駄、B2B 継続、テトリス、T-spin single・triple、mini spin double）を自動調整（SPSA）で決め直しました。盤面の凸凹と最上段への積み上げをより嫌い、TSD の価値を下げて TSS を上げる方向です（kappa=0.1164, H=8, 評価重み 16 個）。",
-      "特徴：判断の仕組み（F14 コア、CC2 の順位どおり、root rescue）は κ0.25 版・SPSA 1 回目と同じで、評価の重みだけが違います。開発版で、正式な評価（release-qualified）は受けていません。",
+      "由来：2026年9月27日からの現チャンピオンです。SPSA 2 回目のチャンピオン（gated leaf-conversion）を土台にしています。",
+      "調整・意図：探索の中では受信量を 0 とみなすため、REN（コンボ）による追加火力がいつも 0 になっていました。相殺前の攻撃量で数えるように直し、REN と Quad・TSD をつなぐ加点と高 REN の加点が働くようにしました。評価の重みは SPSA 2 回目のままです（kappa=0.1164, H=8, 評価重み 16 個 + REN 追加火力）。",
+      "特徴：判断の仕組み（F14 コア、CC2 の順位どおり、root rescue）は SPSA 2 回目と同じで、探索の先の盤面を火力に変える評価だけが違います。開発版で、正式な評価（release-qualified）は受けていません。",
     ].join("\n"),
     parameters: F14_CORE_PARAMETERS,
   }),

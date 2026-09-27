@@ -165,7 +165,7 @@ test("the replay turn readout identifies whose turn it counts", () => {
 test("local legacy routes use the shared Raw/chouhy public resolver admission", () => {
   // A F14-only import rejects Raw/chouhy at START, before any proposal runs.
   assert.match(server, /createGuiStaticDecisionRequest as createS2AmountOnlyDecisionRequest/);
-  assert.match(server, /isGuiStaticType as isAdr062QualifiedStaticType/);
+  assert.match(server, /isGuiStaticType as isPublicInputQualifiedType/);
   assert.match(server, /import \{ resolveGuiStaticSubmission as resolveQualifiedStaticCc2Submission \} from "\.\.\/src-js\/gui-static-public-resolver\.mjs"/);
 });
 

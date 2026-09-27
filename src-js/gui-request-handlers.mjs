@@ -25,7 +25,7 @@ import { normalizeTurnMatch, turnMatchControllerOptions } from "./gui-turn-match
 import { guiStateToCc2NativeStart } from "./cc2-s2-native-start.mjs";
 import { PROFILE_B_PROFILE_ID, assertChampionParameters, createChampionProfile, createChampionRequest, f14CoreBaseProfile, f14CoreVersionName, isF14CoreType, resolveChampionDecision } from "./champion-parameters.mjs";
 import { resolveGuiStaticSubmission as resolveQualifiedStaticCc2Submission } from "./gui-static-public-resolver.mjs";
-import { createGuiStaticDecisionRequest as createS2AmountOnlyDecisionRequest, isGuiStaticType as isAdr062QualifiedStaticType } from "./s2-amount-only-decision-state.mjs";
+import { createGuiStaticDecisionRequest as createS2AmountOnlyDecisionRequest, isGuiStaticType as isPublicInputQualifiedType } from "./s2-amount-only-decision-state.mjs";
 import { applyTransition } from "./transition.mjs";
 import { calculatePlayerMetrics } from "../cc2-gui/player-metrics.mjs";
 import {
@@ -50,7 +50,7 @@ import { lockedPieceCells, toS2GuiState, createGame, extendSeededQueue,
 const HUMAN_BOT = Object.freeze({ id: "human", available: true, ...botParameterCapability("human") });
 // The GUI offers exactly the bots TTRM INPUT admits; the local server offers the same set.
 const CC2_LABELS = Object.freeze(Object.fromEntries(["cc2-raw", "cc2-chouhy", "cc2-s2-f14",
-  "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion"]
+  "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion"]
   .map((id) => [id, BOT_PARAMETER_DEFINITIONS[id].label])));
 /**
  * Transport-neutral browser API. Native CC2 engines are deliberately absent;
@@ -87,7 +87,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       if (method === "POST" && path === "/api/suggest") {
         if (cc2Runtime === null) return fail(503, { error: "CC2 WASM is unavailable" });
         const engine = requireCc2Type(body.engine ?? "cc2-raw");
-        if (!isAdr062QualifiedStaticType(engine)) return fail(422, { error: "ADR-062-qualified resolver required" });
+        if (!isPublicInputQualifiedType(engine)) return fail(422, { error: "public-input-qualified resolver required" });
         try {
           const parameters = normalizeBotParameters(engine, body.parameters);
           if (isF14CoreType(engine)) {
@@ -148,8 +148,8 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       const left = staticBotType(body.left ?? "s2-simple");
       const right = staticBotType(body.right ?? "s2-simple");
       for (const type of [left, right]) {
-        if (type in CC2_LABELS && !isAdr062QualifiedStaticType(type)) {
-          throw new Error("ADR-062-qualified resolver required");
+        if (type in CC2_LABELS && !isPublicInputQualifiedType(type)) {
+          throw new Error("public-input-qualified resolver required");
         }
       }
       if (right === "human") throw new Error("You (1P) is available only on the left side");
@@ -582,7 +582,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
         decision.resolved.score, fullStateKey(bot.state));
     }
     const engine = publicEngine(type);
-    if (!isAdr062QualifiedStaticType(type)) throw new Error("ADR-062-qualified resolver required");
+    if (!isPublicInputQualifiedType(type)) throw new Error("public-input-qualified resolver required");
     const request = createS2AmountOnlyDecisionRequest({
       sessionKey: bot.id, state: bot.state, moves: proposal.moves, type, engine,
     });
@@ -744,7 +744,7 @@ function isCanonicalPlacement(placement) {
  * resolver. Both hosts answer `/api/apply-s2` with this one function.
  */
 export function applyQualifiedCc2Suggestion({ type, engine, state, moves }) {
-  if (!isAdr062QualifiedStaticType(type)) throw new Error("ADR-062-qualified resolver required");
+  if (!isPublicInputQualifiedType(type)) throw new Error("public-input-qualified resolver required");
   const resolved = resolveQualifiedStaticCc2Submission(createS2AmountOnlyDecisionRequest({
     sessionKey: "analysis", state, moves, type, engine,
   }));

@@ -31,7 +31,7 @@ const ORIGINS = Object.freeze({
 const HARD_DROP = Object.freeze({ lastInputWasRotation: false, kickIndex: null, kickId: null, kickOffset: null });
 
 /**
- * Builds and ranks the live selector's candidates from the ADR-062 public
+ * Builds and ranks the live selector's candidates from the public-input
  * decision state. This module deliberately has no generic GUI conversion,
  * full-state evaluator, garbage adapter, or transition dependency.
  */

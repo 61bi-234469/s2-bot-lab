@@ -47,6 +47,8 @@ export const F14_TUNABLE_WEIGHT_KEYS = Object.freeze([
   "normal_clears.1", "normal_clears.2", "normal_clears.3", "normal_clears.4",
   "mini_spin_clears.1", "mini_spin_clears.2", "mini_spin_clears.3",
   "spin_clears.1", "spin_clears.2", "spin_clears.3",
+  "hole_columns", "leaf_ren_attack_gain",
+  "root_danger_solvency_cap", "root_danger_solvency_gain",
 ]);
 const CANONICAL_SIGNED_DECIMAL = /^-?(?:0|[1-9]\d*)(?:\.\d*[1-9])?$/u;
 

@@ -143,7 +143,16 @@ pub const TUNABLE_WEIGHT_KEYS: &[&str] = &[
     "spin_clears.1",
     "spin_clears.2",
     "spin_clears.3",
+    "hole_columns",
+    "leaf_ren_attack_gain",
+    ROOT_DANGER_SOLVENCY_CAP_KEY,
+    ROOT_DANGER_SOLVENCY_GAIN_KEY,
 ];
+
+/// Root-policy keys (not search weights): set together, both positive. See
+/// `select::DangerPreference`.
+pub const ROOT_DANGER_SOLVENCY_CAP_KEY: &str = "root_danger_solvency_cap";
+pub const ROOT_DANGER_SOLVENCY_GAIN_KEY: &str = "root_danger_solvency_gain";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -355,7 +364,16 @@ impl Profile {
 
     fn weight_overrides_valid(&self) -> bool {
         self.weight_overrides.as_ref().map_or(true, |overrides| {
-            !overrides.is_empty()
+            let cap = overrides.get(ROOT_DANGER_SOLVENCY_CAP_KEY);
+            let gain = overrides.get(ROOT_DANGER_SOLVENCY_GAIN_KEY);
+            let positive = |value: &String| value.parse::<f64>().map_or(false, |v| v.is_finite() && v > 0.0);
+            let danger_valid = match (cap, gain) {
+                (None, None) => true,
+                (Some(cap), Some(gain)) => positive(cap) && positive(gain),
+                _ => false,
+            };
+            danger_valid
+                && !overrides.is_empty()
                 && overrides.iter().all(|(key, value)| {
                     TUNABLE_WEIGHT_KEYS.contains(&key.as_str())
                         && canonical_signed_decimal(value)
@@ -366,6 +384,9 @@ impl Profile {
 
     pub(crate) fn apply_search_config_overrides(&self, config: &mut BotConfig) {
         for (key, value) in self.weight_overrides.iter().flatten() {
+            if key == ROOT_DANGER_SOLVENCY_CAP_KEY || key == ROOT_DANGER_SOLVENCY_GAIN_KEY {
+                continue;
+            }
             if key == "freestyle_exploitation" {
                 config.freestyle_exploitation = value.parse().expect("admitted override value");
                 continue;
@@ -379,6 +400,8 @@ impl Profile {
             let slot = match (name, index) {
                 ("cell_coveredness", None) => &mut w.cell_coveredness,
                 ("holes", None) => &mut w.holes,
+                ("hole_columns", None) => &mut w.hole_columns,
+                ("leaf_ren_attack_gain", None) => &mut w.leaf_ren_attack_gain,
                 ("row_transitions", None) => &mut w.row_transitions,
                 ("height", None) => &mut w.height,
                 ("height_upper_half", None) => &mut w.height_upper_half,
@@ -457,7 +480,15 @@ impl Profile {
             weights: EFFECTIVE_WEIGHTS,
             post_spin_policy: self.post_spin_policy(),
             final_order_policy: self.final_order_policy(),
+            danger_preference: self.danger_preference(),
         })
+    }
+
+    pub(crate) fn danger_preference(&self) -> Option<super::select::DangerPreference> {
+        let overrides = self.weight_overrides.as_ref()?;
+        let cap = overrides.get(ROOT_DANGER_SOLVENCY_CAP_KEY)?.parse().ok()?;
+        let gain = overrides.get(ROOT_DANGER_SOLVENCY_GAIN_KEY)?.parse().ok()?;
+        Some(super::select::DangerPreference { cap, gain })
     }
 
     fn final_order_policy(&self) -> FinalOrderPolicy {
