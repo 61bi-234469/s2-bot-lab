@@ -224,7 +224,7 @@ export function assertGatedChampionResponse(request, response, { allowQueuePrefi
   }
   if (candidatesByRank.size !== identities.length) throw new Error("champion decision candidates do not cover its ranking");
   if (identities[ranking.selectedCc2Rank] !== response.selectedIdentity) throw new Error("champion decision selected identity mismatch");
-  // ADR-065 root veto, exactly as Rust choose_rescue: rescue iff CC2 rank 0 has
+  // Root rescue veto, exactly as Rust choose_rescue: rescue iff CC2 rank 0 has
   // negative solvency and some candidate is solvent; then the first solvent rank.
   const firstSolvent = identities.findIndex((_, rank) => candidatesByRank.get(rank).solvent);
   const rescued = candidatesByRank.get(0).solvency < 0 && firstSolvent >= 0;

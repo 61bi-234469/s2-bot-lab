@@ -1,6 +1,6 @@
 import {
   amountOnlyDecisionFingerprint,
-  isAdr062QualifiedStaticType,
+  isPublicInputQualifiedType,
 } from "./s2-amount-only-decision-request.mjs";
 import { selectS2AmountOnlyPublicCandidate } from "./s2-amount-only-public-candidates.mjs";
 import { rankS2AmountOnlyPublicCandidates } from "./s2-amount-only-public-candidates.mjs";
@@ -25,9 +25,9 @@ export const QUALIFIED_STATIC_CC2_RESOLVER_POLICY = Object.freeze({
 export const QUALIFIED_STATIC_CC2_CANDIDATE_AUDIT_ID =
   "s2-amount-only-public-candidate-audit/1";
 
-/** The live ADR-062 resolver's standalone, public-data-only entry point. */
+/** The live public-input resolver's standalone, public-data-only entry point. */
 export function resolveQualifiedStaticCc2Submission(request) {
-  if (!isAdr062QualifiedStaticType(request?.type)) throw new Error("ADR-062-qualified resolver required");
+  if (!isPublicInputQualifiedType(request?.type)) throw new Error("public-input-qualified resolver required");
   const decisionFingerprint = amountOnlyDecisionFingerprint(request);
   const result = selectS2AmountOnlyPublicCandidate(request.decision, request.moves, {
     ...QUALIFIED_STATIC_CC2_RESOLVER_POLICY,
@@ -45,7 +45,7 @@ export function resolveQualifiedStaticCc2Submission(request) {
 
 /** Public diagnostic-only candidate projection; never used as a live resolver response. */
 export function auditQualifiedStaticCc2Candidates(request) {
-  if (!isAdr062QualifiedStaticType(request?.type)) throw new Error("ADR-062-qualified resolver required");
+  if (!isPublicInputQualifiedType(request?.type)) throw new Error("public-input-qualified resolver required");
   const decisionFingerprint = amountOnlyDecisionFingerprint(request);
   const ranked = rankS2AmountOnlyPublicCandidates(request.decision, request.moves,
     { ...QUALIFIED_STATIC_CC2_RESOLVER_POLICY, allowCompleteReturnedPrefix: true });

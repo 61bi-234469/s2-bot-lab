@@ -4,13 +4,13 @@ import {
   S2_AMOUNT_ONLY_DECISION_REQUEST_ID,
   S2_AMOUNT_ONLY_DECISION_STATE_ID,
   assertS2AmountOnlyDecisionRequest,
-  isAdr062QualifiedStaticType,
+  isPublicInputQualifiedType,
 } from "./s2-amount-only-decision-request.mjs";
 
-export { S2_AMOUNT_ONLY_DECISION_STATE_ID, S2_AMOUNT_ONLY_DECISION_REQUEST_ID, isAdr062QualifiedStaticType };
+export { S2_AMOUNT_ONLY_DECISION_STATE_ID, S2_AMOUNT_ONLY_DECISION_REQUEST_ID, isPublicInputQualifiedType };
 
 export function isGuiStaticType(type) {
-  return type === "cc2-raw" || type === "cc2-chouhy" || isAdr062QualifiedStaticType(type);
+  return type === "cc2-raw" || type === "cc2-chouhy" || isPublicInputQualifiedType(type);
 }
 
 export function createGuiStaticDecisionRequest(options) {
@@ -69,8 +69,8 @@ export function createS2AmountOnlyDecisionState(state) {
 }
 
 export function createS2AmountOnlyDecisionRequest({ sessionKey, state, moves, type, engine }) {
-  if (!isAdr062QualifiedStaticType(type)) {
-    throw new Error("ADR-062-qualified resolver required");
+  if (!isPublicInputQualifiedType(type)) {
+    throw new Error("public-input-qualified resolver required");
   }
   if (!Array.isArray(moves) || moves.length === 0) throw new Error("amount-only decision requires moves");
   if (engine?.botType !== type || typeof engine?.engineId !== "string" || engine.engineId.length === 0) {
