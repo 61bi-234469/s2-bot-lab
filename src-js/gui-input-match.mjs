@@ -567,7 +567,9 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
       // to this piece only. It is added here, not kept in leadFrames, so an
       // adopted plan does not pass it on to the next piece.
       const leadFrames = (session.leadFrames[id] ?? 2) + ((session.misses[id] ?? 0) > 0 ? 1 : 0);
-      const startFrame = Math.max(session.round.frame + leadFrames, dueFrame);
+      // Clamp after adding retry headroom, against the forecast's own boundary.
+      const startFrame = Math.min(latest.movement.frame + 120,
+        Math.max(session.round.frame + leadFrames, dueFrame));
       const resolveStarted = now();
       const cached = session.cachedPlans[id];
       const resolved = await runtime.resolveInput({ request, movement: latest.movement, startFrame,
