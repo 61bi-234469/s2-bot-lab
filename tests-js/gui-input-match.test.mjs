@@ -415,6 +415,65 @@ test('live handler adopts a forecast plan only at its exact boundary; late resul
   }
 });
 
+test('live handler caps retry forecasts at 120 frames after delayed resolution', async t => {
+  for (const [logicalDelay, wallDelayMs] of [[119, 0], [120, 0], [240, 0], [80, 2000]]) {
+    await t.test(`logical delay ${logicalDelay}, wall delay ${wallDelayMs} ms`, async () => {
+      let clock = 0;
+      let finish;
+      const calls = [];
+      const handlers = createGuiInputMatchHandlers({ now: () => clock, runtime: {
+        propose: async ({ state }) => ({ moves: [spawnMove(state)] }),
+        resolveInput: async payload => {
+          calls.push({ frame: payload.movement.frame, startFrame: payload.startFrame });
+          assert.equal(payload.request.decision.lockTime.logicalFrame, payload.movement.frame);
+          const result = resolveInputJob(payload);
+          assert.equal(result.status, 'planned', JSON.stringify(result));
+          if (calls.length === 1) await new Promise(resolve => { finish = resolve; });
+          return result;
+        }, closeSessions: async () => {},
+      } });
+      const start = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
+        ...config, right: 'cc2-raw', timeProgression: false,
+      } });
+      assert.equal(start.status, 200, JSON.stringify(start.body));
+      const step = async frame => {
+        const result = await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: {
+          sessionId: start.body.sessionId, frame,
+        } });
+        assert.equal(result.status, 200, JSON.stringify(result.body));
+        return result.body;
+      };
+      try {
+        await step(1);
+        await flush();
+        // Multiple valid steps can pass while the worker's first result is pending.
+        for (let advanced = 0; advanced < logicalDelay;) {
+          advanced = Math.min(logicalDelay, advanced + 120);
+          await step(1 + advanced);
+        }
+        clock = wallDelayMs;
+        finish();
+        await flush();
+        const retry = await step(logicalDelay + 2);
+        await flush();
+        assert.equal(retry.bots[1].stats.turns, 0, 'the late plan must not execute retroactively');
+        assert.equal(retry.bots[1].inputExecution.lateResponses, 1);
+        assert.equal(calls.length, 2, 'retry the same piece once');
+        assert.equal(calls[1].frame, logicalDelay + 2, 'forecast uses the current movement boundary');
+        assert.equal(calls[1].startFrame - calls[1].frame, 120);
+        const before = await step(calls[1].startFrame);
+        assert.equal(before.bots[1].stats.turns, 0, 'wait until the planned boundary');
+        const after = await step(calls[1].startFrame + 1);
+        assert.equal(after.bots[1].stats.turns, 1);
+        assert.equal(after.bots[1].lastLock.frame, calls[1].startFrame);
+        assert.equal(after.bots[1].inputExecution.plannedLocks, 1);
+      } finally {
+        await handlers.handle({ method: 'POST', path: '/api/input-match/close', body: { sessionId: start.body.sessionId } });
+      }
+    });
+  }
+});
+
 test('natural-lock forecasts wait without retry storms and allow observed top-out and export', async () => {
   let resolutions = 0;
   let proposals = 0;
