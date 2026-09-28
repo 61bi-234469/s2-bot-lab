@@ -534,7 +534,8 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
     let proposal;
     try {
       if (isF14CoreType(type)) {
-        const decision = await decideChampion(bot.id, canonicalState, gui, parameters, type);
+        const decision = await decideChampion(bot.id, canonicalState, gui,
+          championMatchParameters(activeSession, bot.id, dueCount), type);
         return { botId: bot.id, type, moves: [decision.response.selectedMove], publicDecision: decision };
       }
       proposal = await cc2Runtime.propose({ sessionKey: bot.id, engine: type, state,
@@ -577,7 +578,7 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
       const state = guiStateToCanonical(gui);
       const decision = !forceLocal && proposal.publicDecision !== undefined
         ? proposal.publicDecision
-        : await decideChampion(bot.id, state, gui, activeSession.botParameters[bot.id], type);
+        : await decideChampion(bot.id, state, gui, championMatchParameters(activeSession, bot.id, 1), type);
       return submissionFor(match, bot, decision.resolved.placement, decision.resolved.transition,
         decision.resolved.score, fullStateKey(bot.state));
     }
@@ -645,6 +646,15 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
         serialProposalCount: activeSession.config.fairComparison ? dueCount : 1,
       }),
     };
+  }
+
+  /* F14-core bots take the same per-lock think-time cap as the other CC2 bots:
+     their configured THINK TIME (up to seconds) would otherwise be waited out
+     for every lock of a fast PPS, stalling the round at COMPUTE LIMITED. */
+  function championMatchParameters(activeSession, botId, dueCount) {
+    const parameters = activeSession.botParameters[botId];
+    const { thinkMs } = cc2MatchSearchBudget(activeSession, botId, dueCount);
+    return thinkMs === null || thinkMs === parameters.thinkMs ? parameters : { ...parameters, thinkMs };
   }
 
   function round() {

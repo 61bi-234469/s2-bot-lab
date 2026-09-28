@@ -63,7 +63,7 @@ import {
   shownB2b,
   shownCombo,
 } from "./field-render.mjs";
-import { initReplayView, setReplayActive } from "./replay-view.mjs";
+import { initReplayView, openReplayDocument, openReplayFile, setReplayActive } from "./replay-view.mjs";
 import { MATCH_REPLAY_SCHEMA } from "/shared/replay-ir-validation.mjs";
 import {
   FRAME_DURATION_MS,
@@ -267,6 +267,10 @@ elements["match-reset"].addEventListener("click", resetMatch);
 elements["match-save-replay"].addEventListener("click", () => {
   if (elements["match-save-replay"].getAttribute("aria-disabled") === "true") return;
   saveMatchExport();
+});
+elements["match-open-replay"].addEventListener("click", () => {
+  if (elements["match-open-replay"].getAttribute("aria-disabled") === "true") return;
+  openMatchReplay();
 });
 elements["match-unlimited-turns"].addEventListener("change", syncMaxTurnsControl);
 elements["match-random-seed"].addEventListener("change", () => syncRandomSeedControl());
@@ -912,6 +916,7 @@ function saveBotSettings(event) {
 
 function renderBotSettingsSummary(side) {
   const botType = elements[`${side}-bot`].value;
+  if (lastMatchView === null || !matchRunning) renderIdleMatchName(side);
   const summary = elements[`${side}-bot-settings-summary`];
   const capability = botCapabilities.get(botType) ?? BOT_PARAMETER_DEFINITIONS[botType];
   const configuredValues = botParameters[side][botType];
@@ -1427,6 +1432,7 @@ async function performStartMatch({ excludedRandomSeed = null } = {}) {
   matchAutoplay = false;
   matchRunning = false;
   matchSeries = null;
+  renderMatchSaveButton();
   matchGeneration += 1;
   cancelInputPump();
   clearInputEvents();
@@ -2619,6 +2625,7 @@ async function resetMatch({ restartCurrentGame = false, rerollRandomSeed = false
   matchStarting = restartCurrentGame;
   matchSeries = preservedSeries;
   matchRoundStatus = "";
+  renderMatchSaveButton();
   matchGeneration += 1;
   cancelHumanMatchBotStep();
   cancelStartCountdown();
@@ -2713,9 +2720,17 @@ async function activateHumanMatchReset() {
   await resetMatch({ restartCurrentGame: true, rerollRandomSeed: true });
 }
 
+// Before a round starts, the header names the bot picked in the selector,
+// in the same "LEFT · label" form the running match uses.
+function renderIdleMatchName(side) {
+  const botLabel = botLabelFor(elements[`${side}-bot`].value);
+  elements[`match-${side}-name`].textContent = `${side.toUpperCase()} · ${botLabel}`;
+  elements[`match-${side}-name`].title = botLabel;
+}
+
 function clearMatchArena() {
   for (const side of BOT_SIDES) {
-    elements[`match-${side}-name`].textContent = side.toUpperCase();
+    renderIdleMatchName(side);
     elements[`match-${side}-stats`].textContent = "0 ATK · 0 LINES";
     elements[`match-${side}-score`].textContent = "—";
     renderClearInfo(`match-${side}`, 0, 0, "");
@@ -2831,7 +2846,8 @@ function saveMatchExport() {
 /* The 1P rules that keep a TTRM INPUT round out of `.ttrm`, or "" when none
    does. Before a series starts the toggles are the only claim there is; a
    started series answers for the rounds it was actually started with. */
-function ttrmSaveBlockedReason() {
+// The INPUT rule that keeps a round out of `.ttrm`, and with it out of the REPLAY tab.
+function inputReplayBlockingRule() {
   if (selectedExportFormat() !== "ttrm") return "";
   const started = matchSeries !== null && inputModeActive();
   const playing = selectedHumanSide() !== null;
@@ -2839,10 +2855,23 @@ function ttrmSaveBlockedReason() {
   const stall = started ? matchSeries.config.stallLock.enabled === true
     : elements["match-stall-lock"].checked && playing;
   const handicap = started ? matchSeries.config.handicap?.enabled === true : handicapSettings().enabled;
-  return turn ? "ターン勝負のINPUT対局は重力をOFFにして実行するため .ttrm に保存できません"
-    : stall ? "STALL PENALTYを使用したINPUT対局は .ttrm に保存できません"
-    : handicap ? "1Pハンデを使用したINPUT対局は .ttrm に保存できません"
-    : "";
+  return turn ? "turn" : stall ? "stall" : handicap ? "handicap" : "";
+}
+
+function ttrmSaveBlockedReason() {
+  return {
+    turn: "ターン勝負のINPUT対局は重力をOFFにして実行するため .ttrm に保存できません",
+    stall: "STALL PENALTYを使用したINPUT対局は .ttrm に保存できません",
+    handicap: "1Pハンデを使用したINPUT対局は .ttrm に保存できません",
+  }[inputReplayBlockingRule()] ?? "";
+}
+
+function replayOpenBlockedReason() {
+  return {
+    turn: "ターン勝負のINPUT対局はリプレイで開けません",
+    stall: "STALL PENALTYを使用したINPUT対局はリプレイで開けません",
+    handicap: "1Pハンデを使用したINPUT対局はリプレイで開けません",
+  }[inputReplayBlockingRule()] ?? "";
 }
 
 /* A rule that rules out `.ttrm` renames the button itself, so the reason reads
@@ -2852,6 +2881,13 @@ function renderMatchSaveButton() {
   const button = elements["match-save-replay"];
   const format = selectedExportFormat();
   const blocked = ttrmSaveBlockedReason();
+  const replayBlocked = replayOpenBlockedReason();
+  elements["match-open-replay"].textContent = replayBlocked !== "" ? "リプレイ不可" : "▶ REPLAY";
+  setMatchExportButton(elements["match-open-replay"],
+    replayBlocked !== "" ? replayBlocked
+      : matchRoundFinalization !== null || (matchSeries?.rounds?.length ?? 0) === 0 ? null
+      : "",
+    "完了したラウンドを REPLAY タブで開きます");
   button.dataset.format = format;
   button.textContent = blocked !== "" ? ".ttrm 保存不可" : format === "ttrm" ? "SAVE .ttrm" : "SAVE .json";
   const busy = matchSaveInFlight ? "保存中です"
@@ -2908,15 +2944,9 @@ async function saveMatchReplay() {
       rounds.push({ ...(await finalizeCurrentRound()), index: rounds.length });
     }
     if (rounds.length === 0) { setMatchExportMessage(null, ""); return; }
-    const meta = {
-      gamemode: "s2-bot-match",
-      ...(structuredClone(matchSeries.replayMeta ?? {})),
-      origin: "s2-bot-match/1",
-      version: 1,
-      parseMs: 0,
-    };
-    const text = JSON.stringify({ $schema: MATCH_REPLAY_SCHEMA, meta, rounds }, null, 2);
-    const seed = meta.match?.seed ?? matchSeries.config.seed;
+    const replay = matchReplayDocument(rounds);
+    const text = JSON.stringify(replay, null, 2);
+    const seed = replay.meta.match?.seed ?? matchSeries.config.seed;
     const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
     const name = `s2-match-${seed}-${stamp}.json`;
     const blob = new Blob([text], { type: "application/json" });
@@ -2936,6 +2966,63 @@ async function saveMatchReplay() {
     matchSaveInFlight = false;
     renderMatchSaveButton();
   }
+}
+
+function matchReplayDocument(rounds) {
+  const meta = {
+    gamemode: "s2-bot-match",
+    ...(structuredClone(matchSeries.replayMeta ?? {})),
+    origin: "s2-bot-match/1",
+    version: 1,
+    parseMs: 0,
+  };
+  return { $schema: MATCH_REPLAY_SCHEMA, meta, rounds };
+}
+
+/* Opens the completed rounds in the REPLAY tab without a file, as the file
+   SAVE would write, minus a round still in play. INPUT rounds go through the
+   same `.ttrm` import a saved file does; the others are synthetic ReplayIR. */
+async function openMatchReplay() {
+  if (matchSeries === null) return;
+  if (matchRoundFinalization !== null) await matchRoundFinalization;
+  if (matchSeries === null || matchSeries.rounds.length === 0) return;
+  const seed = matchSeries.replayMeta?.match?.seed ?? matchSeries.config.seed;
+  const name = `s2-match-${seed} (current match)`;
+  if (selectedExportFormat() === "ttrm") {
+    const records = matchSeries.rounds.map((round) => round.executedTtrm).filter((record) => record?.text);
+    if (records.length === 0) return;
+    const replay = latestInputReplayWithinLimit(records);
+    if (replay === null) {
+      setMatchExportMessage("failed", `REPLAY FAILED · 1ラウンドの記録が読み込み上限 ${MATCH_REPLAY_IMPORT_LIMIT / (1024 * 1024)}MB を超えています`);
+      return;
+    }
+    const scope = replay.rounds < records.length ? ` · latest ${replay.rounds} of ${records.length} rounds` : "";
+    showReplayTab();
+    openReplayFile(new File([replay.text], `${name}${scope}`));
+    return;
+  }
+  const replay = structuredClone(matchReplayDocument([...matchSeries.rounds]));
+  showReplayTab();
+  openReplayDocument(replay, name);
+}
+
+/* The `.ttrm` importer refuses text over MAX_TTRM_TEXT_LENGTH on both hosts
+   (src-js/replay/ttrm-parser.mjs). A long series drops its oldest rounds until
+   the rest fits, so the button still opens what it can. */
+const MATCH_REPLAY_IMPORT_LIMIT = 8 * 1024 * 1024;
+
+function latestInputReplayWithinLimit(records) {
+  for (let first = 0; first < records.length; first += 1) {
+    const text = JSON.stringify(aggregateInputTtrm(records.slice(first)));
+    if (text.length <= MATCH_REPLAY_IMPORT_LIMIT) return { text, rounds: records.length - first };
+  }
+  return null;
+}
+
+// Keyboard focus would otherwise stay on the button inside the now-hidden MATCH panel.
+function showReplayTab() {
+  selectMode("replay");
+  elements["mode-tab-replay"].focus();
 }
 
 function renderEmptyMatchFields() {

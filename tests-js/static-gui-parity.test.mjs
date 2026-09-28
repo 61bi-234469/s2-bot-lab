@@ -253,6 +253,30 @@ test("static champion match uses the WASM decision route", async () => {
   assert.deepEqual(stepped.body.bots.find(({ id }) => id === "left").preLockPreview.placement, selectedPlacement);
 });
 
+// A 3 s THINK TIME at ~20 PPS used to be waited out for every lock of a legacy
+// match, so the round crawled at COMPUTE LIMITED 0.02x.
+test("static champion match caps THINK TIME to the lock cadence like the other CC2 bots", async () => {
+  const budgets = [];
+  const handlers = createGuiRequestHandlers({ cc2: {
+    async decideF14(payload) {
+      budgets.push(payload.request.execution.budget);
+      return { ...fakeF14Decision(payload), reason: "time-budget" };
+    },
+    async closeSessions() {},
+  } });
+  const leftParameters = { ppsEnabled: true, pps: 20, selectionEnabled: false, thinkTimeEnabled: true, thinkMs: 3000, queueDepth: 14 };
+  await request(handlers, "POST", "/api/match/start", { left: "cc2-s2-champion", right: "s2-simple", seed: 42, leftParameters });
+  for (let step = 0; step < 20 && budgets.length === 0; step += 1) {
+    const stepped = await handlers.handle({ method: "POST", path: "/api/match/step", body: {} });
+    assert.equal(stepped.status, 200, JSON.stringify(stepped.body));
+  }
+  assert.ok(budgets.length > 0);
+  for (const budget of budgets) {
+    assert.equal(budget.mode, "time");
+    assert.ok(budget.maxMillis < 3000, `maxMillis ${budget.maxMillis} must follow the lock cadence`);
+  }
+});
+
 test("qualified analysis supplies canonical comparison identity after public selection", async () => {
   const handlers = createGuiRequestHandlers({ cc2: { decideF14: async (payload) => fakeF14Decision(payload) } });
   const state = toS2GuiState(createGame(42));

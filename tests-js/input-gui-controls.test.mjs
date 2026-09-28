@@ -107,14 +107,19 @@ test('arena reset restores the pre-match field including spawn rows', () => {
   } });
   const app = vm.createContext({ BOT_SIDES: ['left', 'right'], elements,
     inputModeSelected: () => true, renderClearInfo() {}, renderGarbageGauge() {},
+    botLabelFor: (type) => `label:${type}`,
     renderMatchField(field, board, placed, overlay, { rows }) { field.rows = rows; },
     EMPTY_MATCH_METRICS: { apm: 0 },
     renderMatchMetrics(side, metrics, pieces) { elements[`match-${side}-metrics`].shown = { metrics, pieces }; },
   });
-  for (const name of ['clearMatchArena', 'renderEmptyMatchFields']) {
+  for (const name of ['clearMatchArena', 'renderIdleMatchName', 'renderEmptyMatchFields']) {
     vm.runInContext(source.match(new RegExp(`function ${name}\\([\\s\\S]*?^}`, 'm'))[0], app);
   }
+  elements['left-bot'].value = 'cc2-raw';
   app.clearMatchArena();
+  // The idle header names the selected bot, not a bare LEFT.
+  assert.equal(elements['match-left-name'].textContent, 'LEFT · label:cc2-raw');
+  assert.equal(elements['match-left-name'].title, 'label:cc2-raw');
   assert.equal(elements['match-left-field'].rows, 23);
   assert.equal(elements['match-right-field'].rows, 23);
   // The metrics grid is redrawn as an unstarted round, not left empty.
@@ -585,6 +590,8 @@ function handicapDeck({ checked = true, human = true, inputMode = true, series =
     'match-max-turns': { value: '500' },
     'match-count': { value: '1' },
     'match-ttrm-warning': { hidden: true },
+    'match-open-replay': { disabled: true, title: '', attributes: {},
+      setAttribute(name, value) { this.attributes[name] = value; } },
     'match-save-replay': { dataset: {}, disabled: false, title: '', textContent: '', attributes: {},
       setAttribute(name, value) { this.attributes[name] = value; } },
   };
@@ -605,7 +612,8 @@ function handicapDeck({ checked = true, human = true, inputMode = true, series =
   };
   for (const name of ['renderExecutionScopeNotes', 'renderTurnMatchNote', 'matchSettingsStateText',
     'handicapSettings', 'turnMatchSelected', 'turnMatchSettings',
-    'timeProgressionSetting', 'selectedExportFormat', 'ttrmSaveBlockedReason', 'renderMatchSaveButton',
+    'timeProgressionSetting', 'selectedExportFormat', 'inputReplayBlockingRule', 'ttrmSaveBlockedReason',
+    'replayOpenBlockedReason', 'renderMatchSaveButton',
     'setMatchExportButton']) {
     vm.runInContext(declaration(name), app);
   }
@@ -649,6 +657,9 @@ test('the 1P handicap blocks the .ttrm export and leaves the .json export alone'
   assert.equal(pending.elements['match-save-replay'].disabled, false);
   assert.equal(pending.elements['match-save-replay'].attributes['aria-disabled'], 'true');
   assert.match(pending.elements['match-save-replay'].title, /1Pハンデ.*\.ttrm/);
+  // The rule that blocks .ttrm leaves nothing for REPLAY either, and says so on hover.
+  assert.equal(pending.elements['match-open-replay'].attributes['aria-disabled'], 'true');
+  assert.match(pending.elements['match-open-replay'].title, /1Pハンデ.*リプレイ/);
 
   // A started series answers for the rounds it was started with.
   const startedWithout = handicapDeck({ checked: true, human: true, inputMode: true,
@@ -658,6 +669,7 @@ test('the 1P handicap blocks the .ttrm export and leaves the .json export alone'
   assert.equal(startedWithout.elements['match-save-replay'].disabled, false);
   assert.equal(startedWithout.elements['match-save-replay'].attributes['aria-disabled'], 'false');
   assert.equal(startedWithout.elements['match-save-replay'].textContent, 'SAVE .ttrm');
+  assert.equal(startedWithout.elements['match-open-replay'].disabled, false);
 
   const startedWith = handicapDeck({ checked: false, human: true, inputMode: true,
     series: { config: { ttrmCompatible: true, stallLock: { enabled: false }, handicap: { enabled: true } },
