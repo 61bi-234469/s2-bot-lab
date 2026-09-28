@@ -224,7 +224,10 @@
           <button id="match-run" class="match-run-button" type="button" data-state="start" aria-pressed="false">START MATCH</button>
           <button id="match-step" type="button" disabled>STEP</button>
           <button id="match-reset" type="button" disabled>RESET</button>
-          <button id="match-save-replay" class="match-save-button" type="button" data-format="json" disabled>SAVE .json</button>
+          <div class="match-export-actions">
+            <button id="match-save-replay" class="match-save-button" type="button" data-format="json" disabled>SAVE .json</button>
+            <button id="match-open-replay" type="button" disabled>▶ REPLAY</button>
+          </div>
         </div>
         <output id="match-export-message" class="match-export-message" hidden></output>
         <details class="match-settings-disclosure" id="match-settings-disclosure">

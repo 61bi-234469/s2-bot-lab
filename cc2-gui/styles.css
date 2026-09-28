@@ -194,11 +194,14 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
 .match-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .match-heading h2 { margin-top: 4px; font-size: 16px; letter-spacing: .12em; color: var(--text); }
 .match-heading > span { color: var(--muted); font-size: 11px; }
-.match-controls { display: grid; grid-template-columns: repeat(2, minmax(150px, 1fr)) repeat(4, auto); grid-template-rows: auto auto auto; gap: 4px 7px; margin-top: 11px; align-items: end; }
+.match-controls { display: grid; grid-template-columns: repeat(2, minmax(150px, 1fr)) repeat(3, auto); grid-template-rows: auto auto auto; gap: 4px 7px; margin-top: 11px; align-items: end; }
 /* Each picker spans label, select row and summary on the shared rows, so the
    action buttons sit on the select row instead of the summary line below it. */
 .match-controls > .bot-picker { grid-row: 1 / span 3; grid-template-rows: subgrid; }
 .match-controls > button { grid-row: 2; align-self: stretch; margin: 0; }
+/* SAVE and REPLAY take the second line under the run buttons, beside the bot summaries. */
+.match-controls > .match-export-actions { grid-row: 3; grid-column: 3 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.match-export-actions > button { margin: 0; }
 /* One button drives start, pause and resume, so its colour has to carry the
    state the two separate buttons used to show by being present at all. */
 .match-run-button { min-width: 124px; }
@@ -371,7 +374,8 @@ input[type="number"]:disabled { border-color: var(--line-dim); color: #4a504a; c
 .match-score-detail { color: var(--muted); font-size: 9px; font-weight: 400; letter-spacing: .08em; white-space: nowrap; }
 /* An explained block keeps the button hoverable for its title, so it wears the
    disabled look without the disabled attribute. */
-.match-save-button[aria-disabled="true"], .match-save-button[aria-disabled="true"]:hover { color: #4a504a; border-color: var(--line-dim); background: transparent; cursor: not-allowed; }
+.match-save-button[aria-disabled="true"], .match-save-button[aria-disabled="true"]:hover,
+#match-open-replay[aria-disabled="true"], #match-open-replay[aria-disabled="true"]:hover { color: #4a504a; border-color: var(--line-dim); background: transparent; cursor: not-allowed; }
 .ttrm-warning { display: block; color: var(--text); font-size: 9px; line-height: 1.4; }
 .ttrm-warning[hidden] { display: none; }
 /* Warnings share the body text colour; the mark is what sets them apart, so
@@ -479,6 +483,7 @@ input[type="number"]:disabled { border-color: var(--line-dim); color: #4a504a; c
   .match-controls { grid-template-columns: 1fr 1fr; grid-template-rows: none; row-gap: 7px; }
   .match-controls > .bot-picker { grid-row: auto; grid-template-rows: none; }
   .match-controls > button { grid-row: auto; }
+  .match-controls > .match-export-actions { grid-row: auto; grid-column: 1 / -1; }
   .match-settings { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .match-fields { gap: 8px; }
   /* Too narrow for name and counts side by side: each gets its own fixed line,

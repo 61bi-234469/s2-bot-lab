@@ -271,7 +271,57 @@ test("the deck exports through one button whose format follows the execution pat
 
   // A failed save has to report on the line that announced it: handleMatchError
   // writes the round status, which would leave "EXPORTING …" standing.
-  assert.equal([...app.matchAll(/setMatchExportMessage\("failed"/g)].length, 2, "both save paths must report their own failure");
+  assert.equal([...app.matchAll(/setMatchExportMessage\("failed"/g)].length, 3,
+    "both save paths and the REPLAY handoff must report their own failure");
+});
+
+test("REPLAY opens the finished rounds of the current match in the replay tab", async () => {
+  // SAVE and REPLAY share the second line under the run buttons.
+  const controls = markup.slice(markup.indexOf('class="match-controls"'), markup.indexOf('id="match-export-message"'));
+  const actions = controls.slice(controls.indexOf('class="match-export-actions"'));
+  assert.ok(actions.indexOf('id="match-save-replay"') < actions.indexOf('id="match-open-replay"'));
+  assert.match(app, /elements\["match-open-replay"\]\.addEventListener\("click", \(\) => \{\s*if \(elements\["match-open-replay"\]\.getAttribute\("aria-disabled"\) === "true"\) return;\s*openMatchReplay\(\);/);
+
+  const open = app.slice(app.indexOf("async function openMatchReplay"), app.indexOf("function renderEmptyMatchFields"));
+  // INPUT rounds take the same .ttrm import a saved file does; the legacy path
+  // hands over the synthetic ReplayIR that SAVE .json writes.
+  assert.match(open, /if \(selectedExportFormat\(\) === "ttrm"\)[\s\S]*openReplayFile\(new File\(/);
+  assert.match(open, /openReplayDocument\(replay, name\)/);
+  assert.match(open, /if \(matchRoundFinalization !== null\) await matchRoundFinalization/);
+
+  // The size cap mirrors the importer's, and a long series keeps its latest rounds.
+  const { MAX_TTRM_TEXT_LENGTH } = await import("../src-js/replay/ttrm-parser.mjs");
+  assert.ok(open.includes("const MATCH_REPLAY_IMPORT_LIMIT = 8 * 1024 * 1024;"));
+  assert.equal(8 * 1024 * 1024, MAX_TTRM_TEXT_LENGTH);
+  const context = vm.createContext({ MATCH_REPLAY_IMPORT_LIMIT: 10,
+    aggregateInputTtrm: (records) => records.map((record) => record.text).join("") });
+  vm.runInContext(open.match(/function latestInputReplayWithinLimit\([\s\S]*?^}/m)[0], context);
+  const records = [{ text: "aaaa" }, { text: "bbbb" }, { text: "cc" }];
+  assert.deepEqual({ ...context.latestInputReplayWithinLimit(records) }, { text: JSON.stringify("bbbbcc"), rounds: 2 });
+  assert.equal(context.latestInputReplayWithinLimit([{ text: "x".repeat(20) }]), null);
+
+  // Focus lands on the REPLAY tab, whose Space and arrows stay with the tab list.
+  class Element {
+    constructor(selector) { this.selector = selector; }
+    closest(selector) { return selector.split(", ").includes(this.selector) ? this : null; }
+  }
+  const keys = vm.createContext({ Element, active: true, played: 0, stepped: 0,
+    togglePlayback() { keys.played += 1; }, stepTurn() { keys.stepped += 1; } });
+  vm.runInContext(replayView.match(/function handleKeyDown\([\s\S]*?^}/m)[0], keys);
+  const press = (code, target) => {
+    let prevented = false;
+    keys.handleKeyDown({ code, target, preventDefault() { prevented = true; } });
+    return prevented;
+  };
+  assert.equal(press("Space", new Element("[role='tab']")), false);
+  assert.equal(press("ArrowRight", new Element("[role='tab']")), false);
+  assert.deepEqual([keys.played, keys.stepped], [0, 0]);
+  assert.equal(press("Space", new Element("div")), true);
+  assert.equal(keys.played, 1);
+
+  // A picked file that finishes reading after the handoff must not replace it.
+  const importFile = replayView.slice(replayView.indexOf("async function importFile"), replayView.indexOf("function fail("));
+  assert.match(importFile, /text = await file\.text\(\);[\s\S]*?\}\s*if \(id !== importId\) return undefined;/);
 });
 
 test("each match setting group names the execution path it belongs to", () => {

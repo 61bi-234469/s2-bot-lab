@@ -115,10 +115,12 @@ export function setReplayActive(next) {
   if (!active) pausePlayback();
 }
 
+// A focused mode tab keeps its own keys: Space selects it and the arrows move
+// between tabs, which ▶ REPLAY relies on after it hands focus to the tab.
 function handleKeyDown(event) {
   if (!active || event.ctrlKey || event.metaKey || event.altKey) return;
   if (event.target instanceof Element &&
-      event.target.closest("input, select, textarea, [contenteditable='true']") !== null) {
+      event.target.closest("input, select, textarea, [contenteditable='true'], [role='tab']") !== null) {
     return;
   }
   if (event.code === "Space") {
@@ -133,7 +135,14 @@ function handleKeyDown(event) {
   }
 }
 
-async function importFile(file) {
+/* A finished match's `.ttrm` is imported like a picked file, opening on the
+   latest round that verified. */
+export function openReplayFile(file) {
+  elements["replay-file"].value = "";
+  return importFile(file, { latestRound: true });
+}
+
+async function importFile(file, { latestRound = false } = {}) {
   const id = (importId += 1);
   pausePlayback();
   if (file.size > MAX_REPLAY_BYTES) {
@@ -146,6 +155,7 @@ async function importFile(file) {
   } catch (error) {
     return fail(id, "read", error instanceof Error ? error.message : String(error));
   }
+  if (id !== importId) return undefined;
 
   // Bot-match exports are ReplayIR already. Inspect the content, rather than
   // the extension, so renamed files still take the direct safe path.
@@ -163,7 +173,7 @@ async function importFile(file) {
     } catch (error) {
       return fail(id, "schema", error instanceof Error ? error.message : String(error));
     }
-    return adopt(parsed, file.name);
+    return adopt(parsed, file.name, latestRound);
   }
 
   let response;
@@ -180,7 +190,21 @@ async function importFile(file) {
   }
   if (id !== importId) return undefined;
   if (!response.ok) return fail(id, body.stage ?? "server", body.message ?? "import failed");
-  return adopt(body.ir, file.name);
+  return adopt(body.ir, file.name, latestRound);
+}
+
+/* A finished match hands its ReplayIR over directly, so the viewer opens it
+   without a file round trip, on the latest round that verified. */
+export function openReplayDocument(doc, name) {
+  const id = (importId += 1);
+  pausePlayback();
+  elements["replay-file"].value = "";
+  try {
+    validateReplayIRDocument(doc);
+  } catch (error) {
+    return fail(id, "schema", error instanceof Error ? error.message : String(error));
+  }
+  return adopt(doc, name, true);
 }
 
 function fail(id, stage, message) {
@@ -192,12 +216,14 @@ function fail(id, stage, message) {
   return undefined;
 }
 
-function adopt(imported, name) {
+function adopt(imported, name, latestRound = false) {
   ir = imported;
   fileName = name;
   // A round the engine could not reproduce is still listed, but the first one
-  // that verified is what the viewer opens on.
-  const playable = ir.rounds.findIndex((round) => round.status === "ok");
+  // that verified is what the viewer opens on (the latest, for a match handoff).
+  const playable = latestRound
+    ? ir.rounds.findLastIndex((round) => round.status === "ok")
+    : ir.rounds.findIndex((round) => round.status === "ok");
   roundIndex = playable < 0 ? 0 : playable;
   selfId = defaultSelfId();
   cursorFrame = 0;
