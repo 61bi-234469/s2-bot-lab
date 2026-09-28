@@ -783,6 +783,15 @@ async function runScheduledBots(session, { requestedWallFrame = null, turnPlacem
  * opponent moves it whenever they place a piece, which would otherwise shrink
  * the budget towards its floor for no reason the bot can see.
  */
+function realtimeChampionParameters(session, botId, parameters, dueCount) {
+  if (session.humanSide !== null || parameters.ppsEnabled === false || !parameters.thinkTimeEnabled) return parameters;
+  return { ...parameters, thinkMs: realtimeCc2ThinkMs({
+    thinkMs: parameters.thinkMs,
+    stepFrames: botLockCadenceFrames(session, botId),
+    serialProposalCount: session.config.fairComparison ? dueCount : 1,
+  }) };
+}
+
 function botLockCadenceFrames(session, botId) {
   const pps = session.match.pace.ppsByBotId[botId];
   return 60 / pps;
@@ -821,11 +830,13 @@ async function searchForBot(session, bot, dueCount) {
   const searchStartedAt = performance.now();
   try {
     if (engine.f14WasmCompat) {
-      const request = createChampionRequest(bot.state, parameters, {
+      // The same per-lock think-time cap the other CC2 bots get below.
+      const champion = realtimeChampionParameters(session, bot.id, parameters, dueCount);
+      const request = createChampionRequest(bot.state, champion, {
         requestId: `gui-${bot.id}-${bot.stats.turns + 1}`, generation: bot.stats.turns + 1, type,
       });
       const response = await cc2Session.decideF14({ request, profile: request.execution });
-      const resolved = resolveChampionDecision({ state: bot.state, gui, request, response, parameters, type });
+      const resolved = resolveChampionDecision({ state: bot.state, gui, request, response, parameters: champion, type });
       return { botId: bot.id, type, nativeResolved: resolved,
         proposalResult: successfulProposal({ diagnostics: { botId: bot.id, engineType: type }, latencyMs: performance.now() - searchStartedAt }) };
     }
