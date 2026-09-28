@@ -584,7 +584,9 @@ function handicapDeck({ checked = true, human = true, inputMode = true, series =
     'match-unlimited-turns': checkbox(true),
     'match-max-turns': { value: '500' },
     'match-count': { value: '1' },
-    'match-save-replay': { dataset: {}, disabled: false, title: '', textContent: '' },
+    'match-ttrm-warning': { hidden: true },
+    'match-save-replay': { dataset: {}, disabled: false, title: '', textContent: '', attributes: {},
+      setAttribute(name, value) { this.attributes[name] = value; } },
   };
   const app = vm.createContext({
     elements, matchRunning: false, matchSaveInFlight: false, matchRoundFinalization: null,
@@ -603,7 +605,8 @@ function handicapDeck({ checked = true, human = true, inputMode = true, series =
   };
   for (const name of ['renderExecutionScopeNotes', 'renderTurnMatchNote', 'matchSettingsStateText',
     'handicapSettings', 'turnMatchSelected', 'turnMatchSettings',
-    'timeProgressionSetting', 'selectedExportFormat', 'renderMatchSaveButton', 'setMatchExportButton']) {
+    'timeProgressionSetting', 'selectedExportFormat', 'ttrmSaveBlockedReason', 'renderMatchSaveButton',
+    'setMatchExportButton']) {
     vm.runInContext(declaration(name), app);
   }
   return app;
@@ -618,6 +621,9 @@ test('the settings bar leaves the 1P handicap in the human dialog', () => {
   // Each control keeps its own note inside the shared group.
   assert.match(playing.elements['match-stall-lock-note'].textContent, /消去不能ライン/);
   assert.match(playing.elements['match-execution-note'].textContent, /\.ttrm 保存対象外/);
+  assert.doesNotMatch(playing.elements['match-handicap-note'].textContent, /\.ttrm/, 'the loss is one line under MATCH RULES');
+  assert.equal(playing.elements['match-ttrm-warning'].hidden, false);
+  assert.match(playing.elements['match-settings-state'].textContent, /TTRM INPUT · \.ttrm 保存不可/);
   assert.equal(playing.handicapSettings().enabled, true);
 
   // The setting is still normalized away from a bot-only match, but the dialog
@@ -638,8 +644,10 @@ test('the settings bar leaves the 1P handicap in the human dialog', () => {
 test('the 1P handicap blocks the .ttrm export and leaves the .json export alone', () => {
   const pending = handicapDeck({ checked: true, human: true, inputMode: true });
   pending.renderMatchSaveButton();
-  assert.equal(pending.elements['match-save-replay'].textContent, 'SAVE .ttrm');
-  assert.equal(pending.elements['match-save-replay'].disabled, true);
+  // The rule renames the button and keeps it hoverable for the reason.
+  assert.equal(pending.elements['match-save-replay'].textContent, '.ttrm 保存不可');
+  assert.equal(pending.elements['match-save-replay'].disabled, false);
+  assert.equal(pending.elements['match-save-replay'].attributes['aria-disabled'], 'true');
   assert.match(pending.elements['match-save-replay'].title, /1Pハンデ.*\.ttrm/);
 
   // A started series answers for the rounds it was started with.
@@ -648,12 +656,14 @@ test('the 1P handicap blocks the .ttrm export and leaves the .json export alone'
       rounds: [{ executedTtrm: { text: '{}' } }] } });
   startedWithout.renderMatchSaveButton();
   assert.equal(startedWithout.elements['match-save-replay'].disabled, false);
+  assert.equal(startedWithout.elements['match-save-replay'].attributes['aria-disabled'], 'false');
+  assert.equal(startedWithout.elements['match-save-replay'].textContent, 'SAVE .ttrm');
 
   const startedWith = handicapDeck({ checked: false, human: true, inputMode: true,
     series: { config: { ttrmCompatible: true, stallLock: { enabled: false }, handicap: { enabled: true } },
       rounds: [{ executedTtrm: { text: '{}' } }] } });
   startedWith.renderMatchSaveButton();
-  assert.equal(startedWith.elements['match-save-replay'].disabled, true);
+  assert.equal(startedWith.elements['match-save-replay'].attributes['aria-disabled'], 'true');
   assert.match(startedWith.elements['match-save-replay'].title, /1Pハンデ/);
 
   // The legacy record keeps the start position, so .json stays available.

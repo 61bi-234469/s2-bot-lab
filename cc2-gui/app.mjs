@@ -191,7 +191,7 @@ let matchPlaybackElapsedMs = 0;
 let matchComputeRatio = 1;
 let matchComputeLimited = false;
 const preferences = loadPreferences();
-let mode = preferences.mode ?? "analysis";
+let mode = preferences.mode ?? "match";
 let humanControls = preferences.humanControls ?? defaultHumanControls();
 /* The block layout and kick table the server evaluates placements with. Fetched
    once, before the first match a human plays. */
@@ -244,7 +244,13 @@ elements["analysis-bot"].addEventListener("change", () => {
   clearAnalysisProposal();
   renderAnalysisEngineIdentity();
 });
-elements["help-button"].addEventListener("click", () => elements["help-dialog"].showModal());
+elements["help-button"].addEventListener("click", () => {
+  // Show only the help for the open tab.
+  for (const section of elements["help-dialog"].querySelectorAll("[data-help-mode]")) {
+    section.hidden = section.dataset.helpMode !== mode;
+  }
+  elements["help-dialog"].showModal();
+});
 elements["think-button"].addEventListener("click", think);
 elements["candidates-button"].addEventListener("click", toggleCandidates);
 /* Changing the width while the list is open reloads it, because the number on
@@ -258,7 +264,10 @@ elements["reset-button"].addEventListener("click", reset);
 elements["match-run"].addEventListener("click", toggleMatchRun);
 elements["match-step"].addEventListener("click", stepMatch);
 elements["match-reset"].addEventListener("click", resetMatch);
-elements["match-save-replay"].addEventListener("click", saveMatchExport);
+elements["match-save-replay"].addEventListener("click", () => {
+  if (elements["match-save-replay"].getAttribute("aria-disabled") === "true") return;
+  saveMatchExport();
+});
 elements["match-unlimited-turns"].addEventListener("change", syncMaxTurnsControl);
 elements["match-random-seed"].addEventListener("change", () => syncRandomSeedControl());
 elements["match-stall-lock"].addEventListener("change", () => {
@@ -1111,6 +1120,8 @@ function renderMode() {
     tab.tabIndex = selected ? 0 : -1;
     elements[`mode-panel-${name}`].hidden = !selected;
   }
+  // The engine lamp only tracks the analysis bot, so other tabs do not show it.
+  elements["engine-status"].hidden = mode !== "analysis";
   // Replay playback owns its own clock, so it is told when it leaves the screen.
   setReplayActive(mode === "replay");
 }
@@ -2788,18 +2799,19 @@ function renderMatchRunButton() {
   renderTurnIndicator();
 }
 
+/* The score takes the VS mark's place between the two fields, so which side is
+   ahead reads from where the boards are. Before a series it stays a plain VS. */
 function renderMatchSummary() {
-  if (matchSeries === null) {
-    elements["match-summary"].dataset.state = "empty";
-    elements["match-summary"].textContent = "NO SERIES RESULTS";
-    renderMatchSaveButton();
-    return;
+  const started = matchSeries !== null;
+  elements["match-score-vs"].hidden = started;
+  elements["match-score-wins"].hidden = !started;
+  elements["match-score-first-to"].hidden = !started;
+  elements["match-score-draws"].hidden = !started || matchSeries.draws === 0;
+  if (started) {
+    elements["match-score-wins"].textContent = `${matchSeries.leftWins} - ${matchSeries.rightWins}`;
+    elements["match-score-first-to"].textContent = `FT${matchSeries.config.firstTo}`;
+    elements["match-score-draws"].textContent = `引き分け ${matchSeries.draws}`;
   }
-  const average = matchSeries.completed === 0 ? 0 : matchSeries.totalTurns / matchSeries.completed;
-  // A series that has not completed a round has nothing to accent yet: the
-  // line lists its shape, but the result colour waits for the first result.
-  elements["match-summary"].dataset.state = matchSeries.completed === 0 ? "pending" : "result";
-  elements["match-summary"].textContent = `FT${matchSeries.config.firstTo} · PLAYED ${matchSeries.completed} · LEFT ${matchSeries.leftWins} · RIGHT ${matchSeries.rightWins} · DRAW ${matchSeries.draws} · AVG ${average.toFixed(1)} TURNS`;
   renderMatchSaveButton();
 }
 
@@ -2816,36 +2828,39 @@ function saveMatchExport() {
   return selectedExportFormat() === "ttrm" ? saveMatchTtrm() : saveMatchReplay();
 }
 
-/* The export spends most of its life disabled, and the reason is not visible on
-   the button itself, so it rides along as a title rather than leaving a dead
-   control unexplained. */
+/* The 1P rules that keep a TTRM INPUT round out of `.ttrm`, or "" when none
+   does. Before a series starts the toggles are the only claim there is; a
+   started series answers for the rounds it was actually started with. */
+function ttrmSaveBlockedReason() {
+  if (selectedExportFormat() !== "ttrm") return "";
+  const started = matchSeries !== null && inputModeActive();
+  const playing = selectedHumanSide() !== null;
+  const turn = started ? matchSeries.config.turnMatch?.enabled === true : turnMatchSelected() && playing;
+  const stall = started ? matchSeries.config.stallLock.enabled === true
+    : elements["match-stall-lock"].checked && playing;
+  const handicap = started ? matchSeries.config.handicap?.enabled === true : handicapSettings().enabled;
+  return turn ? "ターン勝負のINPUT対局は重力をOFFにして実行するため .ttrm に保存できません"
+    : stall ? "STALL PENALTYを使用したINPUT対局は .ttrm に保存できません"
+    : handicap ? "1Pハンデを使用したINPUT対局は .ttrm に保存できません"
+    : "";
+}
+
+/* A rule that rules out `.ttrm` renames the button itself, so the reason reads
+   without a hover; the full sentence stays on its title. Merely having nothing
+   to save yet leaves the label alone and says nothing. */
 function renderMatchSaveButton() {
   const button = elements["match-save-replay"];
   const format = selectedExportFormat();
+  const blocked = ttrmSaveBlockedReason();
   button.dataset.format = format;
-  button.textContent = format === "ttrm" ? "SAVE .ttrm" : "SAVE .json";
+  button.textContent = blocked !== "" ? ".ttrm 保存不可" : format === "ttrm" ? "SAVE .ttrm" : "SAVE .json";
   const busy = matchSaveInFlight ? "保存中です"
     : matchRoundFinalization !== null ? "対局の記録をまとめています"
     : "";
   if (format === "ttrm") {
-    const started = matchSeries !== null && inputModeActive();
-    const stallReplayDisabled = started && matchSeries.config.stallLock.enabled === true;
-    const turnReplayDisabled = started
-      ? matchSeries.config.turnMatch?.enabled === true
-      : turnMatchSelected() && selectedHumanSide() !== null;
-    // Before a series starts the toggles are the only claim there is; a started
-    // series answers for the rounds it was actually started with.
-    const handicapReplayDisabled = started
-      ? matchSeries.config.handicap?.enabled === true
-      : inputModeSelected() && handicapSettings().enabled;
     const ready = (matchSeries?.rounds ?? []).some((round) => round.executedTtrm?.text);
     setMatchExportButton(button,
-      busy !== "" ? busy
-        : turnReplayDisabled ? "ターン勝負のINPUT対局は重力をOFFにして実行するため .ttrm に保存できません"
-        : stallReplayDisabled ? "STALL PENALTYを使用したINPUT対局は .ttrm に保存できません"
-        : handicapReplayDisabled ? "1Pハンデを使用したINPUT対局は .ttrm に保存できません"
-        : !ready ? "保存できる完了ラウンドがまだありません。TTRM INPUT はround終了後に保存できます"
-        : "",
+      busy !== "" ? busy : blocked !== "" ? blocked : !ready ? null : "",
       "実際に消費した入力を検証済みの .ttrm として保存します");
     return;
   }
@@ -2853,14 +2868,20 @@ function renderMatchSaveButton() {
   const hasCompleted = (matchSeries?.rounds?.length ?? 0) > 0;
   setMatchExportButton(button,
     busy !== "" ? busy
-      : !(hasCurrent || hasCompleted) ? "まだ保存できる手がありません。START MATCH で対局を進めてください"
+      : !(hasCurrent || hasCompleted) ? null
       : "",
     "この対局の記録を .json ファイルで保存します");
 }
 
+/* `null` blocks the button without a reason: nothing is saveable yet, which the
+   enabled state already says once a round ends. A reason keeps the button
+   hoverable through aria-disabled, because a disabled button shows no title in
+   every browser; the click handler honours it. */
 function setMatchExportButton(button, blockedReason, enabledTitle) {
-  button.disabled = blockedReason !== "";
-  button.title = blockedReason !== "" ? blockedReason : enabledTitle;
+  const explained = blockedReason !== "" && blockedReason !== null;
+  button.disabled = blockedReason === null;
+  button.setAttribute("aria-disabled", String(explained));
+  button.title = blockedReason === "" ? enabledTitle : blockedReason ?? "";
 }
 
 /* Export results report next to the export buttons, not in match-status: that
@@ -3106,19 +3127,18 @@ function renderExecutionScopeNotes() {
     : playing
       ? "You (1P) 参加中は FAIR COMPARISON を使いません。"
       : "TTRM INPUT では適用されません。";
-  elements["match-handicap-note"].textContent = inputMode
-    ? "ONの間、1P側だけ28マスのランダムガベージ（空洞なし・完成ラインなし）から開始します。Bot側は空の盤面です。地形は局ごとのSEEDから決まります。この設定の対局は .ttrm 保存対象外です。"
-    : "ONの間、1P側だけ28マスのランダムガベージ（空洞なし・完成ラインなし）から開始します。Bot側は空の盤面です。地形は局ごとのSEEDから決まります。";
-  const penaltyLineNote = inputMode
-    ? "ONの間、指定PPSを下回ると最下段へ消去不能ラインを1段追加します。通常接地5回ごとに1段除去し、攻撃・B2B・COMBOに影響しません。STALL有効のINPUT対局は .ttrm 保存対象外です。"
-    : "ONの間、指定PPSを下回ると最下段へ消去不能ラインを1段追加します。通常接地5回ごとに1段除去し、攻撃・B2B・COMBOに影響しません。";
-  const forcedLockNote = inputMode
-    ? "ONの間、指定PPSを下回る前にスポーン位置へ強制接地します。HOLDしても手番の時間は延びません。STALL有効のINPUT対局は .ttrm 保存対象外です。"
-    : "ONの間、指定PPSを下回る前にスポーン位置へ強制接地します。HOLDしても手番の時間は延びません。";
+  // The .ttrm loss the 1P rules cause is one line under the MATCH RULES heading,
+  // so the longer notes below only describe each rule.
+  elements["match-ttrm-warning"].hidden = !inputMode;
+  elements["match-handicap-note"].textContent =
+    "ONの間、1P側だけ28マスのランダムガベージ（空洞なし・完成ラインなし）から開始します。Bot側は空の盤面です。地形は局ごとのSEEDから決まります。";
+  const penaltyLineNote = "ONの間、指定PPSを下回ると最下段へ消去不能ラインを1段追加します。通常接地5回ごとに1段除去し、攻撃・B2B・COMBOに影響しません。";
+  const forcedLockNote = "ONの間、指定PPSを下回る前にスポーン位置へ強制接地します。HOLDしても手番の時間は延びません。";
   elements["match-stall-lock-note"].textContent =
     elements["match-stall-lock-penalty"].value === "penalty-line" ? penaltyLineNote : forcedLockNote;
   renderTurnMatchNote(inputMode);
   elements["match-settings-state"].textContent = matchSettingsStateText(inputMode);
+  renderMatchSaveButton();
 }
 
 /* The turn match note states what the switch removes, so the rule is readable
@@ -3137,7 +3157,7 @@ function renderTurnMatchNote(inputMode) {
   /* A turn removes natural gravity on whichever path runs it, so each path
      states what that costs it rather than leaving one of them silent. */
   const routeNote = inputMode
-    ? "TTRM INPUT ではEngineの重力をOFFにして実行し、この対局は .ttrm 保存対象外です。"
+    ? "TTRM INPUT ではEngineの重力をOFFにして実行します。"
     : "従来モードはもともと重力落下がない経路で、EXPORT は通常どおり .json を保存できます。";
   elements["match-turn-note"].textContent = elements["match-turn-match"].checked
       ? `ONの間、${orderNote}持ち時間はなく、ミノの重力落下もありません。STALL PENALTY は使いません。${routeNote}`
@@ -3149,7 +3169,7 @@ function renderTurnMatchNote(inputMode) {
    and execution settings. */
 function matchSettingsStateText(inputMode) {
   const parts = [
-    inputMode ? "TTRM INPUT · .ttrm" : "従来モード · .json",
+    inputMode ? `TTRM INPUT · ${ttrmSaveBlockedReason() !== "" ? ".ttrm 保存不可" : ".ttrm"}` : "従来モード · .json",
     `SEED ${elements["match-random-seed"].checked ? "RND" : elements["match-seed"].value}`,
     `MAX ${elements["match-unlimited-turns"].checked ? "∞" : elements["match-max-turns"].value}`,
     `FT${elements["match-count"].value}`,
@@ -3416,6 +3436,8 @@ function paintMatchView(view) {
     elements[`match-${side}-field`].classList.toggle("input-spawn-field", inputModeActive());
     const botLabel = botLabelFor(bot.type);
     elements[`match-${side}-name`].textContent = `${side.toUpperCase()} · ${botLabel}`;
+    // The header keeps to one line and clips a long name, so the full one rides on the title.
+    elements[`match-${side}-name`].title = botLabel;
     elements[`match-${side}-stats`].textContent = `${bot.stats.attack} ATK · ${bot.stats.garbageCancelled} CNL · ${bot.stats.garbageSent} SENT · ${bot.stats.garbageReceived} RECV`;
     elements[`match-${side}-stats`].title = bot.inputExecution && bot.type !== "human"
       ? formatInputExecutionTooltip(bot.inputExecution)
