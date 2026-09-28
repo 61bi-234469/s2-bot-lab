@@ -1,5 +1,5 @@
 {
-  "source": "Fixed public-board input regressions; no new bot games. The Z board and candidate are taken from the existing seed-42 input canary (spin-targets.json, hold-t-spin-double public state); the TSD board is hand constructed.",
+  "source": "Fixed public-board input regressions; no new bot games. The Z board and candidate are taken from the existing seed-42 input canary (spin-targets.json, hold-t-spin-double public state); the TSD board is hand constructed. Four further cases (kick staircase, HOLD staircase, HOLD I tuck, two-stop S double) are real INPUT replay positions the bounded prefix search missed; the pose-graph route reaches them.",
   "cases": [
     {
       "id": "no-kick-sentinel-reverse-tsd",
@@ -22,6 +22,55 @@
       },
       "expectedSpin": "mini",
       "expectedLines": 0
+    },
+    {
+      "id": "kick-staircase-s-mini-double",
+      "source": "recorded INPUT match position (player 1, lock 206) at a fresh spawn; the bot's first-choice placement",
+      "board": "GGGGG_GGGGGGGGG_GGGG_GGGGGGGGG_GGGGGGGGGJJJJ_TTTOOZJJJ__TLOOZZJJJ__LLLZZJ___IIIIZZL_____OO_ZLLL___OO",
+      "pieces": { "current": "S", "hold": "S", "holdAvailable": true, "known": ["I", "T", "L", "O", "T", "S", "I", "J", "Z", "Z", "S", "O", "J", "T"] },
+      "expectedPlacement": {
+        "piece": "S", "rotation": "spawn", "x": 4, "y": 4, "usedHold": false,
+        "rotationEvidence": { "lastInputWasRotation": true, "kickIndex": 0, "kickId": "20", "kickOffset": [0, -1] }
+      },
+      "expectedSpin": "mini",
+      "expectedLines": 2
+    },
+    {
+      "id": "hold-kick-staircase-s-mini-double",
+      "source": "recorded INPUT match position (player 1, lock 207) at a fresh spawn; the bot's first-choice placement",
+      "board": "GGGGGGG_GGGGGGGGG_GGGGGGGGG_GGGGGGGGG_GGGGGGGGG_GGGGGGGGG_GGGGGGG_GGGGGGGGG_GGGG_GGGGGGGGG_GGGGGGGGGJJJJ_TTTOOZJJJ__TLOOZZJJJ__LLLZZJ___IIIIZZL_____OO_ZLLL___OO________S________SS________S",
+      "pieces": { "current": "I", "hold": "S", "holdAvailable": true, "known": ["T", "L", "O", "T", "S", "I", "J", "Z", "Z", "S", "O", "J", "T", "L"] },
+      "expectedPlacement": {
+        "piece": "S", "rotation": "spawn", "x": 4, "y": 10, "usedHold": true,
+        "rotationEvidence": { "lastInputWasRotation": true, "kickIndex": 0, "kickId": "20", "kickOffset": [0, -1] }
+      },
+      "expectedSpin": "mini",
+      "expectedLines": 2
+    },
+    {
+      "id": "hold-i-tuck-after-floor",
+      "source": "recorded INPUT match position (player 1, lock 17) at a fresh spawn; the bot's first-choice placement; the target witness is non-rotation, and the Engine closes the tuck with a kicked CW whose lock projects identically (spin none), which the resolver accepts after re-projection",
+      "board": "_GGGGGGGGG_GGGGGGGGG_GGGGGGGGG_GGGGGGGGG_GGGGGGGGGGGGG_GGGGGSTTLIIII_JOOTL_____J_SSZZ___ZZ__SS___ZZJ_______JJJ",
+      "pieces": { "current": "T", "hold": "I", "holdAvailable": true, "known": ["L", "O", "J", "T", "L", "I", "O", "S", "Z", "O", "J", "I", "T", "S"] },
+      "expectedPlacement": {
+        "piece": "I", "rotation": "spawn", "x": 4, "y": 5, "usedHold": true,
+        "rotationEvidence": { "lastInputWasRotation": false, "kickIndex": null, "kickId": null, "kickOffset": null }
+      },
+      "expectedLockEvidence": { "lastInputWasRotation": true, "kickIndex": 2, "kickId": "30", "kickOffset": [1, -2] },
+      "expectedSpin": "none",
+      "expectedLines": 0
+    },
+    {
+      "id": "s-double-after-two-floor-stops",
+      "source": "recorded INPUT match position (player 1, lock 170) at a fresh spawn; the bot's first-choice placement",
+      "board": "GGGG_GGGGGGGGG_GGGGGLLJ__TTSLLL____SSSOOLLL___SSOOIIII__STTTOO____ZZTJOO___ZZJJJ_______JJJ_______JZZ_______ZZ",
+      "pieces": { "current": "S", "hold": "T", "holdAvailable": true, "known": ["I", "L", "O", "S", "I", "Z", "O", "L", "J", "T", "T", "S", "L", "O"] },
+      "expectedPlacement": {
+        "piece": "S", "rotation": "right", "x": 2, "y": 1, "usedHold": false,
+        "rotationEvidence": { "lastInputWasRotation": false, "kickIndex": null, "kickId": null, "kickOffset": null }
+      },
+      "expectedSpin": "none",
+      "expectedLines": 2
     }
   ]
 }
