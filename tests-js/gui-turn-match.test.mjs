@@ -220,6 +220,7 @@ function deck({ checked = true, order = "simultaneous", human = true, inputMode 
     inputModeActive: () => inputMode,
     onOff: (control) => (control.checked ? "ON" : "OFF"),
     readBoundedNumber: (id) => Number(elements[id].value),
+    ttrmSaveBlockedReason: () => "",
   });
   // Index slicing rather than a regular expression: the production function is
   // taken verbatim from its declaration to its closing brace.
@@ -291,7 +292,8 @@ test("the settings bar leaves 1P rules to the human picker summary", () => {
   inputMode.renderTurnMatchNote(true);
   assert.doesNotMatch(inputMode.matchSettingsStateText(true), /TURN|HANDI|STALL/);
   assert.match(inputMode.matchSettingsStateText(true), /TIME ON/);
-  assert.match(inputMode.elements["match-turn-note"].textContent, /\.ttrm 保存対象外/);
+  // The .ttrm loss is stated once under the MATCH RULES heading instead.
+  assert.doesNotMatch(inputMode.elements["match-turn-note"].textContent, /\.ttrm/);
   assert.match(inputMode.elements["match-turn-note"].textContent, /Engineの重力をOFF/);
 
   const inputSimultaneous = deck({ inputMode: true, order: "simultaneous" });

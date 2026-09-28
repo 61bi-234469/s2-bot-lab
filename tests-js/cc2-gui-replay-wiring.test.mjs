@@ -254,13 +254,15 @@ test("human input rendering uses one guarded microtask", () => {
 });
 
 test("the deck exports through one button whose format follows the execution path", () => {
-  const exportGroup = markup.slice(markup.indexOf('class="match-exports"'), markup.indexOf('id="match-export-message"'));
-  assert.equal([...exportGroup.matchAll(/<button /g)].length, 1, "EXPORT must offer exactly one save button");
-  assert.ok(ids.has("match-save-replay"));
+  // The save button closes the START / STEP / RESET row, the controls that
+  // produce what it saves.
+  const controls = markup.slice(markup.indexOf('class="match-controls"'), markup.indexOf('id="match-export-message"'));
+  assert.equal([...controls.matchAll(/class="match-save-button"/g)].length, 1, "the deck must offer exactly one save button");
+  assert.ok(controls.indexOf('id="match-reset"') < controls.indexOf('id="match-save-replay"'));
   assert.ok(!ids.has("match-save-ttrm"), "a second format-specific export button must not come back");
-  assert.match(app, /elements\["match-save-replay"\]\.addEventListener\("click", saveMatchExport\)/);
+  assert.match(app, /elements\["match-save-replay"\]\.addEventListener\("click", \(\) => \{\s*if \(elements\["match-save-replay"\]\.getAttribute\("aria-disabled"\) === "true"\) return;\s*saveMatchExport\(\);/);
 
-  const format = app.slice(app.indexOf("function selectedExportFormat"), app.indexOf("/* The export spends"));
+  const format = app.slice(app.indexOf("function selectedExportFormat"), app.indexOf("/* The 1P rules that keep"));
   // A started series answers for its own rounds: moving the toggle afterwards
   // must not relabel or re-route rounds that were played on the other path.
   assert.match(format, /if \(matchSeries !== null\) return inputModeActive\(\) \? "ttrm" : "json";/);
@@ -273,7 +275,7 @@ test("the deck exports through one button whose format follows the execution pat
 });
 
 test("each match setting group names the execution path it belongs to", () => {
-  const settings = markup.slice(markup.indexOf('class="match-settings"'), markup.indexOf('class="match-outcome"'));
+  const settings = markup.slice(markup.indexOf('class="match-settings"'), markup.indexOf('class="match-fields"'));
   assert.deepEqual([...settings.matchAll(/data-scope="([a-z]+)"/g)].map((match) => match[1]),
     ["execution", "both"]);
   for (const id of ["match-execution-note", "match-legacy-note", "match-legacy-settings",
@@ -308,7 +310,7 @@ test("the settings row opens and closes as one, and its bar keeps the values", (
   const tag = markup.match(/<details class="match-settings-disclosure"[^>]*>/);
   assert.ok(tag !== null, "the settings row is one disclosure");
   assert.doesNotMatch(tag[0], /\sopen[\s>]/, "the row ships closed");
-  const inside = markup.slice(markup.indexOf('class="match-settings-disclosure"'), markup.indexOf('class="match-outcome"'));
+  const inside = markup.slice(markup.indexOf('class="match-settings-disclosure"'), markup.indexOf('class="match-fields"'));
   assert.equal([...inside.matchAll(/<details/g)].length, 0, "the groups inside must not open one by one");
   assert.ok(ids.has("match-settings-state"));
 
@@ -321,13 +323,16 @@ test("the settings row opens and closes as one, and its bar keeps the values", (
   assert.match(app, /elements\["match-settings"\]\.addEventListener\("input", \(\) => renderExecutionScopeNotes\(\)\)/);
 });
 
-test("the series result line is accented only once a round has completed", () => {
-  const outcome = markup.slice(markup.indexOf('class="match-outcome"'), markup.indexOf('id="match-export-message"'));
-  assert.match(outcome, /RESULT \/ 結果/);
-  assert.match(outcome, /id="match-summary" class="match-summary" data-state="empty"/);
-  const render = app.slice(app.indexOf("function renderMatchSummary"), app.indexOf("function renderMatchSaveButton"));
-  assert.match(render, /dataset\.state = "empty"/);
-  assert.match(render, /dataset\.state = matchSeries\.completed === 0 \? "pending" : "result"/);
+test("the series score replaces the VS mark and shows draws only once one happens", () => {
+  assert.ok(!ids.has("match-summary"), "the separate result line must not come back");
+  const score = markup.slice(markup.indexOf('id="match-score"'), markup.indexOf('id="match-right-name"'));
+  assert.match(score, /id="match-score-vs">VS</);
+  for (const id of ["match-score-wins", "match-score-first-to", "match-score-draws"])
+    assert.match(score, new RegExp(`id="${id}" hidden`), id);
+  const render = app.slice(app.indexOf("function renderMatchSummary"), app.indexOf("/* The 1P rules that keep"));
+  assert.match(render, /elements\["match-score-vs"\]\.hidden = started;/);
+  assert.match(render, /elements\["match-score-draws"\]\.hidden = !started \|\| matchSeries\.draws === 0;/);
+  assert.match(render, /matchSeries\.leftWins\} - \$\{matchSeries\.rightWins/);
   const startFailure = app.slice(app.indexOf("START FAILED"), app.indexOf("START FAILED") + 400);
   assert.match(startFailure, /matchSeries = null;\s*renderMatchSummary\(\);/, "a failed start clears the result line");
 });

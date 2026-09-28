@@ -6,15 +6,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b0b0b">
   <title>s2-bot-lab</title>
-  <meta name="description" content="Botの着手を、TETR.IO Season 2 のルールで検証するGUI">
+  <meta name="description" content="TETR.IO Season 2 再現ルールでBot vs Bot / 1P vs Bot">
   <meta property="og:type" content="website">
   <meta property="og:title" content="s2-bot-lab">
-  <meta property="og:description" content="Botの着手を、TETR.IO Season 2 のルールで検証するGUI">
+  <meta property="og:description" content="TETR.IO Season 2 再現ルールでBot vs Bot / 1P vs Bot">
   <meta property="og:url" content="https://61bi-234469.github.io/s2-bot-lab/">
   <meta property="og:image" content="https://61bi-234469.github.io/s2-bot-lab/og-image.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="s2-bot-lab: TETR.IO Season 2 bot analysis GUI">
+  <meta property="og:image:alt" content="s2-bot-lab: TETR.IO Season 2 再現ルールでBot vs Bot / 1P vs Bot">
   <meta name="twitter:card" content="summary_large_image">
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -22,13 +22,12 @@
   <main class="shell">
     <header class="masthead">
       <div>
-        <p class="eyebrow">TETR.IO SEASON 2</p>
         <h1>s2-bot-lab</h1>
-        <p class="subtitle">Botの着手を、TETR.IO Season 2 のルールで検証するGUI</p>
+        <p class="subtitle">TETR.IO Season 2 再現ルールでBot vs Bot / 1P vs Bot</p>
       </div>
       <div class="header-actions">
         <button class="help-button" id="help-button" type="button" aria-haspopup="dialog" aria-controls="help-dialog">? HELP</button>
-        <div class="engine-status" id="engine-status" data-state="idle">
+        <div class="engine-status" id="engine-status" data-state="idle" hidden>
           <span class="status-light"></span>
           <span id="status-text">READY</span>
         </div>
@@ -37,11 +36,11 @@
 
     <nav class="mode-tabs" aria-label="表示モード">
       <div class="mode-tablist" role="tablist">
-        <button class="mode-tab" id="mode-tab-analysis" type="button" role="tab" aria-selected="true" aria-controls="mode-panel-analysis">
+        <button class="mode-tab" id="mode-tab-analysis" type="button" role="tab" aria-selected="false" aria-controls="mode-panel-analysis" tabindex="-1">
           <span class="mode-tab-label">SINGLE ANALYSIS</span>
           <small>1体のbotを1手ずつ解析</small>
         </button>
-        <button class="mode-tab" id="mode-tab-match" type="button" role="tab" aria-selected="false" aria-controls="mode-panel-match" tabindex="-1">
+        <button class="mode-tab" id="mode-tab-match" type="button" role="tab" aria-selected="true" aria-controls="mode-panel-match">
           <span class="mode-tab-label">BOT vs BOT / 1P</span>
           <small>2体を対戦させて比較・自分でも戦える</small>
         </button>
@@ -52,7 +51,7 @@
       </div>
     </nav>
 
-    <div class="mode-panel" id="mode-panel-analysis" role="tabpanel" aria-labelledby="mode-tab-analysis" tabindex="0">
+    <div class="mode-panel" id="mode-panel-analysis" role="tabpanel" aria-labelledby="mode-tab-analysis" tabindex="0" hidden>
       <section class="play-layout" aria-label="Cold Clear 2 game viewer">
         <aside class="side-column left-column">
           <section class="panel piece-panel">
@@ -175,7 +174,7 @@
       </section>
     </div>
 
-    <div class="mode-panel" id="mode-panel-match" role="tabpanel" aria-labelledby="mode-tab-match" tabindex="0" hidden>
+    <div class="mode-panel" id="mode-panel-match" role="tabpanel" aria-labelledby="mode-tab-match" tabindex="0">
       <section class="match-deck" aria-label="Bot versus Bot arena">
         <div class="match-heading">
           <div>
@@ -224,8 +223,10 @@
           </div>
           <button id="match-run" class="match-run-button" type="button" data-state="start" aria-pressed="false">START MATCH</button>
           <button id="match-step" type="button" disabled>STEP</button>
-          <button id="match-reset" class="quiet" type="button" disabled>RESET</button>
+          <button id="match-reset" type="button" disabled>RESET</button>
+          <button id="match-save-replay" class="match-save-button" type="button" data-format="json" disabled>SAVE .json</button>
         </div>
+        <output id="match-export-message" class="match-export-message" hidden></output>
         <details class="match-settings-disclosure" id="match-settings-disclosure">
           <summary title="対局設定を開閉します"><span class="settings-name">MATCH SETTINGS / 対局設定</span><span class="settings-state" id="match-settings-state"></span></summary>
           <div class="match-settings" id="match-settings" aria-label="Match settings">
@@ -253,7 +254,7 @@
               </div>
             </section>
             <section class="match-setting-group" data-scope="both">
-              <h3 class="group-name">共通 / BOTH PATHS</h3>
+              <h3 class="group-name">BOTH PATHS / 共通</h3>
               <div class="match-setting-group-body">
                 <div class="match-setting">
                   <label for="match-seed">SEED</label>
@@ -277,17 +278,6 @@
             </section>
           </div>
         </details>
-        <div class="match-outcome">
-          <div class="match-outcome-copy">
-            <p class="match-outcome-label">RESULT / 結果</p>
-            <output id="match-summary" class="match-summary" data-state="empty">NO SERIES RESULTS</output>
-          </div>
-          <div class="match-exports" role="group" aria-label="対局の保存">
-            <span class="export-label">EXPORT</span>
-            <button id="match-save-replay" class="quiet" type="button" data-format="json" disabled>SAVE .json</button>
-          </div>
-        </div>
-        <output id="match-export-message" class="match-export-message" hidden></output>
         <div class="match-fields">
           <div class="match-countdown" id="match-countdown" role="status" aria-live="assertive" hidden></div>
           <article class="match-player">
@@ -316,7 +306,14 @@
             <footer><span id="match-left-score">—</span><time id="match-left-clock">00:00.000</time></footer>
             <dl class="match-metrics" id="match-left-metrics" aria-label="Left bot detailed metrics"></dl>
           </article>
-          <div class="versus-mark">VS</div>
+          <div class="versus-mark match-score" id="match-score" role="status" aria-live="polite">
+            <span id="match-score-vs">VS</span>
+            <span class="match-score-board">
+              <span class="match-score-wins" id="match-score-wins" hidden></span>
+              <span class="match-score-detail" id="match-score-first-to" hidden></span>
+              <span class="match-score-detail" id="match-score-draws" hidden></span>
+            </span>
+          </div>
           <article class="match-player">
             <header><strong id="match-right-name">RIGHT</strong><span class="match-turn" id="match-right-turn" role="status" aria-live="polite" hidden></span><span id="match-right-stats">0 ATK · 0 LINES</span></header>
             <div class="match-body">
@@ -476,6 +473,7 @@
           <section class="bot-settings-section" id="human-match-rules">
             <h3 class="bot-settings-section-heading">MATCH RULES / 対局ルール</h3>
             <small class="bot-settings-section-note">MATCH RULES は変更時にすぐ反映します。CANCEL は未保存の HANDLING / KEY BINDINGS だけを破棄します。</small>
+            <small class="ttrm-warning" id="match-ttrm-warning" hidden>以下のいずれかを ON にすると .ttrm に保存できません。</small>
             <section class="match-setting-group" id="match-turn-settings">
               <h4 class="group-name">TURN MATCH / ターン勝負</h4>
               <div class="match-setting-group-body">
@@ -538,23 +536,57 @@
           <button class="dialog-close" value="cancel" formmethod="dialog" aria-label="ヘルプを閉じる">×</button>
         </header>
         <div class="help-dialog-body">
-          <section>
-            <h3>このアプリについて</h3>
-            <p>Botが決めるのは「どこに置くか」だけです。ライン消去・攻撃・B2B・COMBO・相殺・せり上がりの判定は、すべてTETR.IO Season 2 のルールを再現したSimulatorが行います。回転やキックの入力手順そのものは再現していないため、スピン判定の一部はSimulator側の独自判定に依存します。</p>
-          </section>
-          <section>
+          <section data-help-mode="analysis">
             <h3>SINGLE ANALYSIS（1手解析）</h3>
-            <p>ANALYSIS BOTを選び「THINK」を押すと、その局面での1手を提案します。「CANDIDATES」で複数の候補手を一覧表示でき、クリックすると盤面プレビューが切り替わり、「APPLY」で確定します。「AUTOPLAY」は提案の適用を繰り返し、「RESET」で盤面を初期化します。候補の数値はSimulatorで検証済みのものだけが表示され、検証できなかった候補は理由付きで選べません。Raw CC2とchouhy forkは実際に指す1手しか返さないため、候補は1行だけになります。</p>
+            <ul>
+              <li>ANALYSIS BOTを選んで <strong>THINK</strong> → その局面の1手を提案</li>
+              <li><strong>CANDIDATES</strong>：候補手を一覧表示。クリックで盤面プレビュー</li>
+              <li><strong>APPLY</strong>：提案手を確定</li>
+              <li><strong>AUTOPLAY</strong>：提案と確定を自動で繰り返す</li>
+              <li><strong>RESET</strong>：盤面を初期化</li>
+            </ul>
+            <h4>補足</h4>
+            <ul>
+              <li>検証できなかった候補は理由付きで選べなくなります</li>
+              <li>Raw CC2・chouhy fork は候補が1行だけです</li>
+            </ul>
           </section>
-          <section>
+          <section data-help-mode="match">
             <h3>BOT vs BOT / 1P（対戦）</h3>
-            <p>LEFT BOTとRIGHT BOTを選び、START MATCHで対局を開始します。もう一度押すと一時停止、さらに押すと再開します。STEPで1手だけ進めることもできます。LEFT BOTで「You (1P)」を選ぶと自分でプレイできます（← → 移動、↓ ソフトドロップ、Space ハードドロップ、Z/X 回転、A 180度回転、C ホールド、Esc リセット）。キー割り当てや操作感（DAS・ARR・DCD・SDF）はSETTINGSから変更できます。</p>
-            <p>実行方式は2つあります。<strong>TTRM INPUT</strong>（既定でON）は実際の入力と経過時間で進み、対局後に <code>.ttrm</code> として保存できます。OFFにすると<strong>固定探索モード</strong>になり、同じSEEDで再現できる <code>.json</code> として保存できます。TTRM INPUTで使えるBotの組み合わせは限られており、使えないBotはLEFT/RIGHT BOTの一覧でグレーアウトします。</p>
-            <p>MATCH SETTINGSでは、対局条件（SEED・MAX TURNS・FIRST TOなど）を設定します。LEFT BOTで「You (1P)」を選んだあとのSETTINGSには、HANDLING / 操作とMATCH RULES / 対局ルールがあり、TURN MATCH・1P INITIAL GARBAGE・STALL PENALTYなどを設定できます。各Botの探索条件（SELECTION・THINK TIME・PPSなど）はBotごとのSETTINGSボタンから設定します。</p>
+            <ul>
+              <li>LEFT BOT・RIGHT BOTを選んで <strong>START MATCH</strong></li>
+              <li>もう一度押すと一時停止／再開、<strong>STEP</strong> で1手ずつ進行</li>
+              <li>LEFT BOTで <strong>You (1P)</strong> を選ぶと自分でプレイ</li>
+            </ul>
+            <h4>1P の操作（初期設定）</h4>
+            <ul>
+              <li>← → 移動 ／ ↓ ソフトドロップ ／ Space ハードドロップ</li>
+              <li>Z・X 回転 ／ A 180度回転 ／ C ホールド ／ Esc リセット</li>
+              <li>キー割り当て・DAS・ARRなどは <strong>SETTINGS</strong> で変更</li>
+            </ul>
+            <h4>実行方式</h4>
+            <ul>
+              <li><strong>TTRM INPUT</strong>（既定）：実時間で進行。<code>.ttrm</code> で保存</li>
+              <li>OFF：固定探索モード。同じSEEDで再現できる <code>.json</code> で保存</li>
+              <li>TTRM INPUTで使えないBotはグレー表示</li>
+            </ul>
+            <h4>設定</h4>
+            <ul>
+              <li><strong>MATCH SETTINGS</strong>：SEED・MAX TURNS・FIRST TO など</li>
+              <li>各Botの <strong>SETTINGS</strong>：思考時間・PPS など</li>
+            </ul>
           </section>
-          <section>
+          <section data-help-mode="replay">
             <h3>REPLAY（リプレイ再生）</h3>
-            <p><code>.ttrm</code>または<code>.json</code>ファイルを読み込むと、記録された対局をそのまま再生できます。PLAYで再生・一時停止、◀◀ / ▶▶ で手番送り、SPEEDで再生速度を変更できます。タイムライン下のマーカーは赤＝せり上がったガベージ、緑＝相殺したガベージです。表示されるガベージの数値は再生から計算した値で、TETR.IOの集計値そのものではありません。</p>
+            <ul>
+              <li><code>.ttrm</code> か <code>.json</code> を読み込んで再生</li>
+              <li><strong>PLAY</strong>：再生／一時停止、◀◀ ▶▶：手番送り、<strong>SPEED</strong>：速度</li>
+              <li>マーカー：赤＝せり上がったガベージ、緑＝相殺したガベージ</li>
+            </ul>
+            <h4>補足</h4>
+            <ul>
+              <li>ガベージの数値は再生から計算した値です（TETR.IO公式の集計ではありません）</li>
+            </ul>
           </section>
         </div>
       </form>
