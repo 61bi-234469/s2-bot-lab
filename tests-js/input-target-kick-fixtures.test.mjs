@@ -78,7 +78,7 @@ for (const fixture of [T_TUCK, ...spinRoutes.cases, equivalentRoute, iKickFallba
     x: fixture.expectedPlacement.x,
     y: fixture.expectedPlacement.y,
     spin: fixture.expectedSpin,
-    evidence: fixture.expectedPlacement.rotationEvidence,
+    evidence: fixture.expectedLockEvidence ?? fixture.expectedPlacement.rotationEvidence,
     frame: plan.lockedAtFrame,
   });
   assert.equal(lockResult?.spin, fixture.expectedSpin);

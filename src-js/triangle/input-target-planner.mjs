@@ -1,4 +1,4 @@
-import { Engine, Tetromino, kickData } from '@haelp/teto/engine';
+import { Engine, Tetromino, kickData, legal } from '@haelp/teto/engine';
 import { buildEngineConfig, inputExecutionOptions, INPUT_EXECUTION_PROFILE } from '../replay/engine-config.mjs';
 import { assertInputDecisionRequest } from '../input-decision-request.mjs';
 import { validateInputPublicMovement, projectInputPublicMovement } from './input-public-movement.mjs';
@@ -6,7 +6,7 @@ import { createInputRotationObserver } from './input-rotation-observer.mjs';
 import { dynamicValue } from '../dynamic-values.mjs';
 import { MAX_TTRM_FRAMES_PER_PLAYER } from '../replay/ttrm-parser.mjs';
 
-export const INPUT_TARGET_CONTROLLER = 's2-public-target-input/2';
+export const INPUT_TARGET_CONTROLLER = 's2-public-target-input/3';
 const ROTATIONS = ['spawn', 'right', 'reverse', 'left'];
 const cellKey = cells => cells.map(([x, y]) => `${x},${y}`).sort().join(';');
 const key = (frame, name, type = 'keydown') => ({ frame, type, data: { key: name, subframe: 0 } });
@@ -116,7 +116,7 @@ export function planInputTarget(request, movement, candidate, {
         }
       }
       if (input.length) tick(input);
-      return { pose: { x: engine.falling.x, rotation: engine.falling.rotation }, events, lock: null };
+      return { pose: { x: engine.falling.x, y: engine.falling.y, rotation: engine.falling.rotation }, events, lock: null };
     } catch (error) {
       if (error === frameStop || error === timeStop) return null;
       if (error !== stop) throw error;
@@ -259,6 +259,20 @@ export function planInputTarget(request, movement, candidate, {
       }
     }
   }
+  // Kick staircases and multi-stop tucks are longer than the prefix search
+  // below reaches. Search the pose graph this controller can produce instead:
+  // single shifts, CW/CCW/180 with the profile's kicks and an instant soft
+  // drop to the floor (soft drop factor 41), from the Engine's own pose after HOLD. The
+  // graph is board-only; lock delay and reset limits stay with the Engine,
+  // which verifies the one route found like any other trial.
+  if (!initial.lock && performance.now() - startedAt < maxTimeMs) {
+    const route = poseGraphRoute(decision, target, rotation, initial.pose, targetCells, witness.lastInputWasRotation === true,
+      () => performance.now() - startedAt >= maxTimeMs);
+    if (route) {
+      const trial = attempt([...hold, ...route]);
+      if (trial?.matches) return result(trial);
+    }
+  }
   const queue = [hold];
   let cursor = 0;
   while (cursor < queue.length && nodes < maxNodes) {
@@ -276,6 +290,62 @@ export function planInputTarget(request, movement, candidate, {
     }
   }
   return notFound();
+}
+
+const POSE_GRAPH_STATE_LIMIT = 4096;
+const POSE_ROTATIONS = [[1, 'rotateCW'], [-1, 'rotateCCW'], [2, 'rotate180']];
+
+/** Shortest input route (in inputs) to the target lock over the pose graph
+ * above, or null. A goal pose rests on the floor, occupies the target cells in
+ * the target rotation, and ends with a rotation exactly when the target's
+ * witness does, so the closing hard drop keeps the spin. */
+function poseGraphRoute(decision, target, targetRotation, start, targetCells, spinGoal, outOfTime) {
+  if (!Number.isSafeInteger(start?.x) || !Number.isSafeInteger(start?.y) || !Number.isSafeInteger(start?.rotation)) return null;
+  const board = Array.from({ length: 40 }, (_, y) => Array.from({ length: 10 }, (_, x) =>
+    decision.board.cells[y * 10 + x] === '_' ? null : { mino: 'gb' }));
+  const piece = new Tetromino({ symbol: target.piece.toLowerCase(), initialRotation: start.rotation, boardHeight: 20, boardWidth: 10 });
+  const table = kickData[inputExecutionOptions({ seed: 0 }).kickset];
+  const kicks = table[`${target.piece.toLowerCase()}_kicks`] ?? table.kicks;
+  const blocks = pose => piece.absoluteAt({ x: pose.x, y: pose.y, rotation: pose.rotation });
+  const fits = pose => blocks(pose).every(([x, y]) => x >= 0 && x < 10 && y >= 0 && y < 40) && legal(blocks(pose), board);
+  if (!fits(start)) return null;
+  const id = pose => `${pose.x}:${pose.y}:${pose.rotation}:${pose.rotated ? 1 : 0}`;
+  const nodes = [{ pose: { x: start.x, y: start.y, rotation: start.rotation, rotated: false }, parent: -1, action: null }];
+  const seen = new Set([id(nodes[0].pose)]);
+  for (let cursor = 0; cursor < nodes.length; cursor++) {
+    if (cursor % 256 === 0 && outOfTime()) return null;
+    const { pose } = nodes[cursor];
+    const resting = !fits({ ...pose, y: pose.y - 1 });
+    if (resting && pose.rotation === targetRotation && pose.rotated === spinGoal && cellKey(blocks(pose)) === targetCells) {
+      const actions = ['hardDrop'];
+      for (let at = cursor; nodes[at].parent >= 0; at = nodes[at].parent) actions.unshift(nodes[at].action);
+      return actions;
+    }
+    const push = (next, action) => {
+      if (nodes.length >= POSE_GRAPH_STATE_LIMIT || seen.has(id(next))) return;
+      seen.add(id(next));
+      nodes.push({ pose: next, parent: cursor, action });
+    };
+    for (const [dx, action] of [[-1, 'moveLeft'], [1, 'moveRight']]) {
+      const next = { ...pose, x: pose.x + dx, rotated: false };
+      if (fits(next)) push(next, action);
+    }
+    if (!resting) {
+      let y = pose.y;
+      while (fits({ ...pose, y: y - 1 })) y--;
+      push({ ...pose, y, rotated: false }, 'floor');
+    }
+    for (const [amount, action] of POSE_ROTATIONS) {
+      const to = ((pose.rotation + amount) % 4 + 4) % 4;
+      const direct = { ...pose, rotation: to, rotated: true };
+      if (fits(direct)) { push(direct, action); continue; }
+      for (const [dx, dy] of kicks?.[`${pose.rotation}${to}`] ?? []) {
+        const kicked = { x: pose.x + dx, y: pose.y - dy, rotation: to, rotated: true };
+        if (fits(kicked)) { push(kicked, action); break; }
+      }
+    }
+  }
+  return null;
 }
 
 /** Predict only idle movement to a future input boundary. A natural lock stops
