@@ -251,6 +251,7 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
         &self,
         to_update: Vec<BackpropUpdate<E>>,
         next_layer: &LayerCommon<E>,
+        consistent: bool,
     ) -> Vec<BackpropUpdate<E>> {
         puffin::profile_function!();
         let mut new_updates = vec![];
@@ -291,7 +292,9 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
 
             let is_best = update_child(children, update.mv, child_eval);
 
-            if is_best {
+            // With `consistent`, a demoted former best also re-derives the parent
+            // from its current best child; an unchanged maximum still notifies nobody.
+            if is_best || consistent {
                 let eval = children[0].cached_eval;
 
                 if parent.eval != eval {

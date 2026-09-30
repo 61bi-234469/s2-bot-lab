@@ -202,6 +202,7 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
         &self,
         to_update: Vec<BackpropUpdate<E>>,
         next_layer: &LayerCommon<E>,
+        consistent: bool,
     ) -> Vec<BackpropUpdate<E>> {
         puffin::profile_function!();
         let mut new_updates = vec![];
@@ -216,7 +217,9 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
 
             let is_best = update_child(list, update.mv, child_eval);
 
-            if is_best {
+            // See `known::Layer::backprop`: `consistent` also re-derives the bag
+            // average after the previous best child of a piece was demoted.
+            if is_best || consistent {
                 let best_for = |p: Piece| children[p].first().map(|c| c.cached_eval);
 
                 let eval = E::average(parent_bag.iter().map(best_for));

@@ -147,12 +147,18 @@ pub const TUNABLE_WEIGHT_KEYS: &[&str] = &[
     "leaf_ren_attack_gain",
     ROOT_DANGER_SOLVENCY_CAP_KEY,
     ROOT_DANGER_SOLVENCY_GAIN_KEY,
+    LEGACY_BACKUP_CONSISTENCY_KEY,
 ];
 
 /// Root-policy keys (not search weights): set together, both positive. See
 /// `select::DangerPreference`.
 pub const ROOT_DANGER_SOLVENCY_CAP_KEY: &str = "root_danger_solvency_cap";
 pub const ROOT_DANGER_SOLVENCY_GAIN_KEY: &str = "root_danger_solvency_gain";
+
+/// Search key (not a weight): "1" is the only admitted value. Legacy known and
+/// chance backups re-derive a parent's value from its current best children
+/// even when the previous best child was demoted, and notify the parents.
+pub const LEGACY_BACKUP_CONSISTENCY_KEY: &str = "legacy_backup_consistency";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -372,7 +378,9 @@ impl Profile {
                 (Some(cap), Some(gain)) => positive(cap) && positive(gain),
                 _ => false,
             };
+            let backup_valid = overrides.get(LEGACY_BACKUP_CONSISTENCY_KEY).map_or(true, |value| value == "1");
             danger_valid
+                && backup_valid
                 && !overrides.is_empty()
                 && overrides.iter().all(|(key, value)| {
                     TUNABLE_WEIGHT_KEYS.contains(&key.as_str())
@@ -385,6 +393,10 @@ impl Profile {
     pub(crate) fn apply_search_config_overrides(&self, config: &mut BotConfig) {
         for (key, value) in self.weight_overrides.iter().flatten() {
             if key == ROOT_DANGER_SOLVENCY_CAP_KEY || key == ROOT_DANGER_SOLVENCY_GAIN_KEY {
+                continue;
+            }
+            if key == LEGACY_BACKUP_CONSISTENCY_KEY {
+                config.enable_legacy_backup_consistency = true;
                 continue;
             }
             if key == "freestyle_exploitation" {
@@ -2917,6 +2929,26 @@ mod tests {
         let mut other = leaf_conversion_gated_b2b_charge_profile(CONFIG_HASH);
         other.weight_overrides = overrides(&[("holes", "-2.5")]);
         assert!(!other.valid());
+    }
+
+    #[test]
+    fn legacy_backup_consistency_key_enables_only_its_flag() {
+        let with = |pairs: &[(&str, &str)]| {
+            let mut profile = leaf_conversion_gated_profile(CONFIG_HASH);
+            profile.weight_overrides =
+                Some(pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect());
+            profile
+        };
+        for bad in ["0", "2", "1.5", "-1"] {
+            assert!(!with(&[(LEGACY_BACKUP_CONSISTENCY_KEY, bad)]).valid(), "{bad}");
+        }
+        let on = with(&[("holes", "-2.5"), (LEGACY_BACKUP_CONSISTENCY_KEY, "1")]);
+        let off = with(&[("holes", "-2.5")]);
+        assert!(on.valid());
+        let mut expected = serde_json::to_value(&off.search_bot_config().unwrap()).unwrap();
+        assert!(expected.get("enable_legacy_backup_consistency").is_none(), "absent when off");
+        expected["enable_legacy_backup_consistency"] = json!(true);
+        assert_eq!(serde_json::to_value(&on.search_bot_config().unwrap()).unwrap(), expected);
     }
 
     #[test]
