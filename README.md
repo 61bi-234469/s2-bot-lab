@@ -18,7 +18,7 @@ development build is published under `preview/`. The development URL is marked `
 - deterministic browser-WASM Cold Clear 2: raw upstream, the chouhy fork, the S2 `F14` development
   snapshot, and the current S2 development champion (not release-qualified)
 
-The bot selectors (single analysis and bot-vs-bot) offer the same nine bots as TTRM INPUT, plus You (1P)
+The bot selectors (single analysis and bot-vs-bot) offer the same ten bots as TTRM INPUT, plus You (1P)
 on the left; the local Node server offers the same list. The two upstream ports come first, then the
 project's bots from oldest to newest, keeping past champions. Names describe each design; only the
 parenthesis marks the current champion. Each bot's SETTINGS panel opens with its origin, what was
@@ -39,9 +39,12 @@ tuned and why, and how it plays.
   eight evaluation weights
 - CC2 S2 — SPSA-tuned v2 (former champion): a second SPSA round on the v1 weights plus eight more
   (sixteen evaluation weights)
-- CC2 S2 — REN attack gain gated leaf-conversion (current champion): the SPSA v2 weights, with the
+- CC2 S2 — REN attack gain gated leaf-conversion (former champion): the SPSA v2 weights, with the
   leaf conversion's REN (combo) bonuses counted from the pre-cancel attack so they can fire inside
-  the search; development-only, not release-qualified
+  the search
+- Sold Slear — Legacy backup consistency (current champion): the REN attack gain design, with every
+  search backup re-deriving the parent's value from its current best children so a demoted former
+  best no longer leaves a stale value; development-only, not release-qualified
 
 The champion's defaults (512 selections, THINK TIME off, queue 14) are the champion itself;
 SELECTION, THINK TIME and QUEUE DEPTH can be changed like the other bots.

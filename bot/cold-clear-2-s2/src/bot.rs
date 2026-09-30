@@ -291,6 +291,10 @@ pub struct BotConfig {
     /// Score a non-mutating T-slot preview once, including zero-line penalties.
     #[serde(default, skip_serializing_if = "is_false")]
     pub enable_tslot_nonmutating_dedup: bool,
+    /// Legacy search only: a backup re-derives a known or chance parent from its
+    /// current best children even when the former best child was demoted.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub enable_legacy_backup_consistency: bool,
     /// Charge the real-board projected-height cost once on each amount-only tank edge.
     #[serde(default, skip_serializing_if = "is_false")]
     pub enable_s2_tank_risk_shaping: bool,

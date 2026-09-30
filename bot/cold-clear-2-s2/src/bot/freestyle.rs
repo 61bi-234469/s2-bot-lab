@@ -31,8 +31,10 @@ pub struct Freestyle {
 
 impl Freestyle {
     pub fn new(options: &BotOptions, root: GameState, queue: &[Piece]) -> Self {
+        let mut dag = Dag::new(root, queue);
+        dag.set_legacy_backup_consistency(options.config.enable_legacy_backup_consistency);
         Freestyle {
-            dag: Dag::new(root, queue),
+            dag,
             rng: Mutex::new(StdRng::seed_from_u64(options.config.search_seed)),
         }
     }

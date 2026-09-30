@@ -188,6 +188,21 @@ const cc2Engines = Object.freeze({
     wasmSha256: fileSha256IfPresent(options.f14Wasm),
     config: loadS2Config("fixtures/tuning/cc2-s2-spawn-integrity-substrate-v2.json"),
   }),
+  "cc2-s2-champion-ren-gain": Object.freeze({
+    botType: "cc2-s2-champion-ren-gain",
+    engineId: f14CoreEngineId("cold-clear-2-s2-former-champion", "cc2-s2-champion-ren-gain"),
+    label: BOT_PARAMETER_DEFINITIONS["cc2-s2-champion-ren-gain"].label,
+    repository: "https://github.com/61bi-234469/s2-bot-lab",
+    commit: "local-former-champion-f14-leaf-conversion-gated-b-ren-gain",
+    comparisonSource: "cold-clear-2-s2-ren-gain-champion-gated-final-placement",
+    protocolName: "Cold Clear 2 S2",
+    binary: options.f14ChampionBinary,
+    wasm: options.f14Wasm,
+    f14Compat: options.f14ChampionBinary !== null,
+    f14WasmCompat: options.f14ChampionBinary === null && options.f14Wasm !== null,
+    wasmSha256: fileSha256IfPresent(options.f14Wasm),
+    config: loadS2Config("fixtures/tuning/cc2-s2-spawn-integrity-substrate-v2.json"),
+  }),
   "cc2-s2-champion": Object.freeze({
     botType: "cc2-s2-champion",
     engineId: f14CoreEngineId("cold-clear-2-s2-development-champion", "cc2-s2-champion"),
@@ -1116,7 +1131,7 @@ async function closeCc2MatchSessions(session) {
 }
 
 function assertBotType(value) {
-  if (!["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion", "s2-simple", "human"].includes(value)) throw new Error(`unsupported match bot ${value}`);
+  if (!["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion", "s2-simple", "human"].includes(value)) throw new Error(`unsupported match bot ${value}`);
   if (value in cc2Engines) requireCc2Engine(value);
   if (value in cc2Engines && !isPublicInputQualifiedType(value)) throw new Error("public-input-qualified resolver required");
   return value;

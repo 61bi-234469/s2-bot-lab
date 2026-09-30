@@ -114,12 +114,21 @@ export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
     ].join("\n"),
     parameters: F14_CORE_PARAMETERS,
   }),
-  "cc2-s2-champion": Object.freeze({
-    label: "CC2 S2 — REN attack gain gated leaf-conversion (current champion)",
+  "cc2-s2-champion-ren-gain": Object.freeze({
+    label: "CC2 S2 — REN attack gain gated leaf-conversion (former champion)",
     description: [
-      "由来：2026年9月27日からの現チャンピオンです。SPSA 2 回目のチャンピオン（gated leaf-conversion）を土台にしています。",
+      "由来：2026年9月27日〜30日のチャンピオンです。SPSA 2 回目のチャンピオン（gated leaf-conversion）を土台にしています。",
       "調整・意図：探索の中では受信量を 0 とみなすため、REN（コンボ）による追加火力がいつも 0 になっていました。相殺前の攻撃量で数えるように直し、REN と Quad・TSD をつなぐ加点と高 REN の加点が働くようにしました。評価の重みは SPSA 2 回目のままです（kappa=0.1164, H=8, 評価重み 16 個 + REN 追加火力）。",
-      "特徴：判断の仕組み（F14 コア、CC2 の順位どおり、root rescue）は SPSA 2 回目と同じで、探索の先の盤面を火力に変える評価だけが違います。開発版で、正式な評価（release-qualified）は受けていません。",
+      "特徴：判断の仕組み（F14 コア、CC2 の順位どおり、root rescue）は SPSA 2 回目と同じで、探索の先の盤面を火力に変える評価だけが違います。探索木の値の更新は古いままで、Legacy backup consistency 版との比較用です。",
+    ].join("\n"),
+    parameters: F14_CORE_PARAMETERS,
+  }),
+  "cc2-s2-champion": Object.freeze({
+    label: "Sold Slear — Legacy backup consistency (current champion)",
+    description: [
+      "由来：2026年9月30日からの現チャンピオンで、この時点の固定版を Sold Slear と名付けました。REN attack gain 版のチャンピオンを土台にしています。",
+      "調整・意図：探索木で、いちばん良かった手の値が下がっても親の値に反映されず、古い値が残ることがありました。値を更新するたびに親の値を子から計算し直し、古い値が残らないように直しました。評価の重みは REN attack gain 版のままです（kappa=0.1164, H=8, 評価重み 16 個 + REN 追加火力）。",
+      "特徴：判断の仕組みと評価は REN attack gain 版と同じで、探索の値の更新だけが正しくなっています。開発版で、正式な評価（release-qualified）は受けていません。",
     ].join("\n"),
     parameters: F14_CORE_PARAMETERS,
   }),

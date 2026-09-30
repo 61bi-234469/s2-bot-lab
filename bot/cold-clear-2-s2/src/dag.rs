@@ -42,6 +42,10 @@ pub trait Evaluation:
 pub struct Dag<E: Evaluation> {
     root: State<E>,
     top_layer: Box<LayerCommon<E>>,
+    /// Legacy only, opt-in: a backup re-derives a parent's value whenever its
+    /// stored value differs from its current best child, including after the
+    /// previous best was demoted. Off keeps the historical `is_best` return test.
+    legacy_backup_consistency: bool,
 }
 
 pub struct Selection<'a, E: Evaluation> {
@@ -54,6 +58,7 @@ pub struct Selection<'a, E: Evaluation> {
     root_draw_index: Option<usize>,
     path_states: Vec<State<E>>,
     committed: bool,
+    legacy_backup_consistency: bool,
 }
 
 pub struct ChildData<E: Evaluation> {
@@ -258,14 +263,20 @@ impl<E: Evaluation> Dag<E> {
         Dag {
             root,
             top_layer: Box::new(top_layer),
+            legacy_backup_consistency: false,
         }
+    }
+
+    pub fn set_legacy_backup_consistency(&mut self, enabled: bool) {
+        assert!(!E::Domain::S2, "backup consistency is a Legacy-domain option");
+        self.legacy_backup_consistency = enabled;
     }
 
     pub fn new_s2(root: State<E>) -> Self {
         assert!(E::Domain::S2);
         let top_layer = Box::<LayerCommon<E>>::default();
         top_layer.kind.initialize_root(&root);
-        Self {root, top_layer}
+        Self {root, top_layer, legacy_backup_consistency: false}
     }
 
     pub fn advance(&mut self, mv: Action<E>) {
@@ -646,6 +657,7 @@ impl<E: Evaluation> Dag<E> {
                     root_draw_index,
                     path_states,
                     committed: false,
+                    legacy_backup_consistency: self.legacy_backup_consistency,
                 })),
                 SelectResult::Advance(next, placement, target, draw_index) => {
                     if root_action.is_none() {
@@ -716,7 +728,7 @@ impl<E: Evaluation> Selection<'_, E> {
         puffin::profile_scope!("backprop");
         let mut next_layer = start_layer;
         while let Some(layer) = layers.pop() {
-            next = layer.kind.backprop(next, next_layer);
+            next = layer.kind.backprop(next, next_layer, self.legacy_backup_consistency);
             next_layer = layer;
 
             if next.is_empty() {
@@ -784,11 +796,12 @@ impl<E: Evaluation> WithBump<E> {
         &self,
         to_update: Vec<BackpropUpdate<E>>,
         next_layer: &LayerCommon<E>,
+        consistent: bool,
     ) -> Vec<BackpropUpdate<E>> {
         puffin::profile_function!();
         self.with(|this| match this.data {
-            LayerKind::Known(l) => l.backprop(to_update, next_layer),
-            LayerKind::Speculated(l) => l.backprop(to_update, next_layer),
+            LayerKind::Known(l) => l.backprop(to_update, next_layer, consistent),
+            LayerKind::Speculated(l) => l.backprop(to_update, next_layer, consistent),
         })
     }
 
@@ -1044,13 +1057,13 @@ mod s2_connection_tests {
         root_layer.kind.expand(&parent_layer,root,batch(actions.iter().take(6).enumerate()
             .map(|(i,&mv)|edge(mv,parent,100,-3*i as i32)).collect()));
         let updates=parent_layer.kind.expand(&children_layer,parent,batch(vec![edge(actions[2],a,10,0),edge(actions[3],b,9,0)]));
-        root_layer.kind.backprop(updates,&parent_layer);
+        root_layer.kind.backprop(updates,&parent_layer,false);
         assert_eq!(root_layer.kind.suggest(&root,6),actions.iter().take(6).enumerate()
             .map(|(i,&mv)|(mv,10.0-3.0*i as f32)).collect::<Vec<_>>());
         for (child,value,combo) in [(a,8,4),(b,9,5)] {
             let updates=children_layer.kind.expand(&leaves_layer,child,batch(vec![edge(actions[4],state(combo,Horizon::DepthLimit),value,0)]));
-            let updates=parent_layer.kind.backprop(updates,&children_layer);
-            root_layer.kind.backprop(updates,&parent_layer);
+            let updates=parent_layer.kind.backprop(updates,&children_layer,false);
+            root_layer.kind.backprop(updates,&parent_layer,false);
             assert_eq!(root_layer.kind.suggest(&root,6),actions.iter().take(6).enumerate()
                 .map(|(i,&mv)|(mv,9.0-3.0*i as f32)).collect::<Vec<_>>());
         }
@@ -1080,7 +1093,7 @@ mod s2_connection_tests {
             },_=>unreachable!(),
         });
         let before=stored();assert_eq!(before.0,(3,4));assert_eq!(before.2,4);
-        let probe=Selection {layers:vec![&dag.top_layer],game_state:root,root_action:None,root_draw_index:None,path_states:vec![root],committed:true};
+        let probe=Selection {layers:vec![&dag.top_layer],game_state:root,root_action:None,root_draw_index:None,path_states:vec![root],committed:true,legacy_backup_consistency:false};
         let mut children:EnumMap<Piece,Vec<ChildData<Value>>>=EnumMap::default();
         children[root.current.unwrap()]=actions.iter().take(2).map(|&mv|ChildData {
             resulting_state:next,mv,eval:Value::Finite(0),reward:0,root_priority:false}).collect();
@@ -1109,11 +1122,11 @@ mod s2_connection_tests {
         let batch=|list|{let mut e=EnumMap::default();e[Piece::T]=list;e};
         r.kind.initialize_root(&root);
         r.kind.expand(&p,root,batch(vec![edge(actions[0],parent,100),edge(actions[1],parent,100)]));
-        let updates=p.kind.expand(&c,parent,batch(vec![edge(actions[2],a,10),edge(actions[3],b,9)]));r.kind.backprop(updates,&p);
+        let updates=p.kind.expand(&c,parent,batch(vec![edge(actions[2],a,10),edge(actions[3],b,9)]));r.kind.backprop(updates,&p,false);
         let mut updates=c.kind.expand(&l,a,batch(vec![edge(actions[4],state(4,Horizon::DepthLimit),8)]));
         updates.extend(c.kind.expand(&l,b,batch(vec![edge(actions[5],state(5,Horizon::DepthLimit),7)])));
-        let updates=p.kind.backprop(updates,&c);assert_eq!(updates.len(),2);
-        r.kind.backprop(updates,&p);
+        let updates=p.kind.backprop(updates,&c,false);assert_eq!(updates.len(),2);
+        r.kind.backprop(updates,&p,false);
         assert_eq!(r.kind.suggest(&root,2),vec![(actions[0],8.0),(actions[1],8.0)]);
         r.kind.with(|this|match this.data {LayerKind::Known(layer)=>assert!(layer.states.get(&root).unwrap().closed),_=>unreachable!()});
     }
@@ -1463,7 +1476,7 @@ mod edge_cost_tests {
                 deeper[Piece::I] = vec![ChildData { resulting_state: GameState { combo: 10 + index as u8, b2b: value as u32, ..root },
                     mv: mv(5), eval: Value(value), reward: 0, root_priority: false }];
                 let updates = child.kind.expand(&grandchild, states[index], deeper);
-                parent.kind.backprop(updates, &child);
+                parent.kind.backprop(updates, &child, false);
             }
             let expected = if priorities[0] && !priorities[2] { vec![mv(1),mv(0),mv(2)] } else { vec![mv(2),mv(1),mv(0)] };
             assert_eq!(moves(), expected); // exact ties preserve current stable order
@@ -1509,8 +1522,149 @@ mod edge_cost_tests {
             let mut deeper = EnumMap::default();
             deeper[Piece::I] = vec![ChildData { resulting_state: leaf, mv: mv(5), eval: Value(200), reward: 0, root_priority: false }];
             let updates = child.kind.expand(&grandchild, shared, deeper);
-            parent.kind.backprop(updates, &child);
+            parent.kind.backprop(updates, &child, false);
             assert_eq!(scores(), vec![(mv(4), 193.0), (mv(3), 185.0)]);
+        }
+    }
+
+    // --- Legacy backup consistency (opt-in `legacy_backup_consistency`) ---
+
+    fn mv_at(x: i8) -> Placement {
+        Placement { location: PieceLocation { piece: Piece::I, rotation: Rotation::North, x, y: 0 }, spin: Spin::None }
+    }
+
+    fn legacy_root() -> GameState {
+        GameState { board: Board::default(), bag: EnumSet::only(Piece::I),
+            reserve: Piece::I, b2b: 0, combo: 0, pending_incoming_rows: 0, due_this_lock_rows: 0 }
+    }
+
+    fn known_edges(list: &[(GameState, i8, i32, i32)]) -> EnumMap<Piece, Vec<ChildData<Value>>> {
+        let mut edges = EnumMap::default();
+        edges[Piece::I] = list.iter().map(|&(state, x, eval, reward)| ChildData {
+            resulting_state: state, mv: mv_at(x), eval: Value(eval), reward, root_priority: false }).collect();
+        edges
+    }
+
+    fn known_node(layer: &LayerCommon<Value>, state: &GameState) -> (i32, Vec<(Placement, i32)>) {
+        layer.kind.with(|this| match this.data {
+            LayerKind::Known(l) => {
+                let node = l.states.get(state).unwrap();
+                (node.eval.0, node.children.as_ref().unwrap().iter().map(|c| (c.mv, c.cached_eval.0)).collect())
+            }
+            _ => unreachable!(),
+        })
+    }
+
+    fn known_layers() -> [LayerCommon<Value>; 4] {
+        let mut layers: [LayerCommon<Value>; 4] = Default::default();
+        for layer in &mut layers[..3] { layer.kind.despeculate(Piece::I); }
+        layers
+    }
+
+    /// root -> {X: 100, Y: 95}; X -> {A: 100, B: 90}. Expand A (or B) with one
+    /// child worth `value` through the real expand/backprop path.
+    /// Returns (X value, root order, notifications X sent to the root).
+    fn known_update(expand_a: bool, value: i32, consistent: bool) -> (i32, Vec<(Placement, i32)>, usize) {
+        let root = legacy_root();
+        let (x, y) = (GameState { combo: 1, ..root }, GameState { combo: 2, ..root });
+        let (a, b) = (GameState { combo: 3, ..root }, GameState { combo: 4, ..root });
+        let [r, lx, la, leaf] = known_layers();
+        r.kind.initialize_root(&root);
+        r.kind.expand(&lx, root, known_edges(&[(x, 0, 100, 0), (y, 1, 95, 0)]));
+        let updates = lx.kind.expand(&la, x, known_edges(&[(a, 2, 100, 0), (b, 3, 90, 0)]));
+        r.kind.backprop(updates, &lx, consistent);
+        assert_eq!(known_node(&r, &root).1, vec![(mv_at(0), 100), (mv_at(1), 95)]);
+        let updates = la.kind.expand(&leaf, if expand_a { a } else { b },
+            known_edges(&[(GameState { combo: 5, ..root }, 4, value, 0)]));
+        let updates = lx.kind.backprop(updates, &la, consistent);
+        let notified = updates.len();
+        r.kind.backprop(updates, &lx, consistent);
+        (known_node(&lx, &x).0, known_node(&r, &root).1, notified)
+    }
+
+    #[test]
+    fn known_old_best_downgrade_reaches_the_parent_only_when_backup_is_consistent() {
+        // A falls 100 -> 80, below B (90). Off keeps X at 100 and the root order;
+        // on re-derives X = 90, notifies the root once, and Y (95) then leads.
+        assert_eq!(known_update(true, 80, false), (100, vec![(mv_at(0), 100), (mv_at(1), 95)], 0));
+        assert_eq!(known_update(true, 80, true), (90, vec![(mv_at(1), 95), (mv_at(0), 90)], 1));
+    }
+
+    #[test]
+    fn known_updates_that_leave_the_maximum_unchanged_notify_nobody() {
+        for consistent in [false, true] {
+            // Same value: A is 100 again. Second place falls: B 90 -> 85.
+            assert_eq!(known_update(true, 100, consistent), (100, vec![(mv_at(0), 100), (mv_at(1), 95)], 0));
+            assert_eq!(known_update(false, 85, consistent), (100, vec![(mv_at(0), 100), (mv_at(1), 95)], 0));
+        }
+    }
+
+    /// One child S reachable from two parents with different edge rewards.
+    fn shared_child(consistent: bool) -> ((i32, Vec<(Placement, i32)>), (i32, Vec<(Placement, i32)>), Vec<(Placement, i32)>, usize) {
+        let root = legacy_root();
+        let (p1, p2) = (GameState { combo: 1, ..root }, GameState { combo: 2, ..root });
+        let (s, z, w) = (GameState { combo: 3, ..root }, GameState { combo: 4, ..root }, GameState { combo: 5, ..root });
+        let [r, lp, ls, leaf] = known_layers();
+        r.kind.initialize_root(&root);
+        r.kind.expand(&lp, root, known_edges(&[(p1, 0, 100, 0), (p2, 1, 100, 0)]));
+        let mut updates = lp.kind.expand(&ls, p1, known_edges(&[(s, 2, 100, 0), (z, 3, 90, 0)]));
+        updates.extend(lp.kind.expand(&ls, p2, known_edges(&[(s, 4, 100, -7), (w, 5, 92, 0)])));
+        r.kind.backprop(updates, &lp, consistent);
+        let updates = ls.kind.expand(&leaf, s, known_edges(&[(GameState { combo: 6, ..root }, 6, 80, 0)]));
+        let updates = lp.kind.backprop(updates, &ls, consistent);
+        let notified = updates.len();
+        r.kind.backprop(updates, &lp, consistent);
+        (known_node(&lp, &p1), known_node(&lp, &p2), known_node(&r, &root).1, notified)
+    }
+
+    #[test]
+    fn shared_child_demotion_reaches_every_parent_with_its_own_edge_reward() {
+        let (p1, p2, root_order, notified) = shared_child(false);
+        assert_eq!((p1.0, p2.0, notified), (100, 93, 0));
+        assert_eq!(root_order, vec![(mv_at(0), 100), (mv_at(1), 93)]);
+        // S is 80: Q(P1,S) = 80, Q(P2,S) = 80 - 7 = 73; each parent re-derives
+        // its own maximum and tells the root once.
+        let (p1, p2, root_order, notified) = shared_child(true);
+        assert_eq!(p1, (90, vec![(mv_at(3), 90), (mv_at(2), 80)]));
+        assert_eq!(p2, (92, vec![(mv_at(5), 92), (mv_at(4), 73)]));
+        assert_eq!((root_order, notified), (vec![(mv_at(1), 92), (mv_at(0), 90)], 2));
+    }
+
+    /// Chance parent with bag {I, T}: I has children {10, 8}, T has {6}.
+    /// Expand the I child worth 10 (or the one worth 8) to `value`.
+    /// Returns (stored average, notifications to the grandparent).
+    fn chance_update(expand_best: bool, value: i32, consistent: bool) -> (i32, usize) {
+        let root = GameState { bag: EnumSet::only(Piece::I) | Piece::T, ..legacy_root() };
+        let child = |combo, piece| GameState { combo, bag: EnumSet::only(piece), ..root };
+        let (ia, ib, tc) = (child(1, Piece::I), child(2, Piece::I), child(3, Piece::T));
+        let place = |piece, x| Placement { location: PieceLocation { piece, rotation: Rotation::North, x, y: 0 }, spin: Spin::None };
+        let (parent, next, leaf) = (LayerCommon::<Value>::default(), LayerCommon::<Value>::default(), LayerCommon::<Value>::default());
+        parent.kind.initialize_root(&root);
+        let mut edges: EnumMap<Piece, Vec<ChildData<Value>>> = EnumMap::default();
+        let edge = |state, mv, eval| ChildData { resulting_state: state, mv, eval: Value(eval), reward: 0, root_priority: false };
+        edges[Piece::I] = vec![edge(ia, place(Piece::I, 0), 10), edge(ib, place(Piece::I, 1), 8)];
+        edges[Piece::T] = vec![edge(tc, place(Piece::T, 0), 6)];
+        parent.kind.expand(&next, root, edges);
+        let stored = || parent.kind.with(|this| match this.data {
+            LayerKind::Speculated(l) => l.states.get(&root).unwrap().eval.0, _ => unreachable!() });
+        assert_eq!(stored(), 8); // (10 + 6) / 2
+        let mut deeper: EnumMap<Piece, Vec<ChildData<Value>>> = EnumMap::default();
+        deeper[Piece::I] = vec![edge(GameState { combo: 9, bag: EnumSet::only(Piece::I), ..root }, place(Piece::I, 2), value)];
+        let updates = next.kind.expand(&leaf, if expand_best { ia } else { ib }, deeper);
+        let notified = parent.kind.backprop(updates, &next, consistent).len();
+        (stored(), notified)
+    }
+
+    #[test]
+    fn chance_old_best_downgrade_updates_the_bag_average_only_when_backup_is_consistent() {
+        // The best I child falls 10 -> 4, below its sibling (8): the average
+        // becomes (8 + 6) / 2 = 7. Off keeps the stale 8.
+        assert_eq!(chance_update(true, 4, false).0, 8);
+        assert_eq!(chance_update(true, 4, true).0, 7);
+        for consistent in [false, true] {
+            // Unchanged value and a second-place drop leave the average alone.
+            assert_eq!(chance_update(true, 10, consistent), (8, 0));
+            assert_eq!(chance_update(false, 5, consistent), (8, 0));
         }
     }
 }

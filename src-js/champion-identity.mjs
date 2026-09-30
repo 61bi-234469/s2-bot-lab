@@ -1,9 +1,9 @@
 import { createF14LeafConversionGatedProfile } from "./s2-f14-compat-browser.mjs";
 
-// The development champion (2026-09-27, leaf REN attack gain): the SPSA v2
-// tuned gated leaf-conversion profile plus the opt-in pre-cancel REN attack
-// gain. Its evidence and identity record live with the development records.
-export const CHAMPION_PROFILE_ARGS = Object.freeze({
+/** The REN attack gain champion (2026-09-27..30): the SPSA v2 tuned gated
+ * leaf-conversion profile plus the opt-in pre-cancel REN attack gain. Kept as a
+ * former-champion GUI bot and pinned by older evaluation contracts. */
+export const REN_GAIN_CHAMPION_PROFILE_ARGS = Object.freeze({
   scale: "0.1164",
   maxHeight: "8",
   weightOverrides: Object.freeze({
@@ -69,7 +69,7 @@ export const SPSA_V1_CHAMPION_PROFILE_ARGS = Object.freeze({
     "spin_clears.2": "4.6297",
   }),
 });
-export const CHAMPION_NATIVE_BINARY_SHA256 =
+export const REN_GAIN_CHAMPION_NATIVE_BINARY_SHA256 =
   "sha256:935c249e890e5a5eb1f5e897603129b640d72bfd854009988478e916df2b354a";
 
 /** The SPSA v1/v2 champion binary, still pinned by older evaluation contracts
@@ -80,6 +80,15 @@ export const SPSA_V2_CHAMPION_NATIVE_BINARY_SHA256 =
 /** The previous development champion (2026-09-25..26): the gated profile at
  * kappa 0.25, H 8 and its default weights. Kept as a GUI comparison bot only. */
 export const PREVIOUS_CHAMPION_PROFILE_ARGS = Object.freeze({ scale: "0.25", maxHeight: "8" });
+
+// The current champion (2026-09-30, Legacy backup consistency): the REN attack
+// gain champion plus the opt-in legacy_backup_consistency key.
+export const CHAMPION_PROFILE_ARGS = Object.freeze({
+  ...REN_GAIN_CHAMPION_PROFILE_ARGS,
+  weightOverrides: Object.freeze({ ...REN_GAIN_CHAMPION_PROFILE_ARGS.weightOverrides, legacy_backup_consistency: "1" }),
+});
+export const CHAMPION_NATIVE_BINARY_SHA256 =
+  "sha256:4d6cea66dd37474ef851d2d5a3dc4710850fb5c5e707ae36f2dcced746bcf0b9";
 
 /** The champion's gated profile at its default budget (512 selections). */
 export function createChampionBaseProfile() {
