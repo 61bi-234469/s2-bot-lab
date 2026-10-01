@@ -69,13 +69,6 @@ export const SPSA_V1_CHAMPION_PROFILE_ARGS = Object.freeze({
     "spin_clears.2": "4.6297",
   }),
 });
-export const REN_GAIN_CHAMPION_NATIVE_BINARY_SHA256 =
-  "sha256:935c249e890e5a5eb1f5e897603129b640d72bfd854009988478e916df2b354a";
-
-/** The SPSA v1/v2 champion binary, still pinned by older evaluation contracts
- * so their frozen specs keep loading after the champion moves on. */
-export const SPSA_V2_CHAMPION_NATIVE_BINARY_SHA256 =
-  "sha256:f10b1315660034e5ebad6114ac53594263d4105836e40a11228652cfa214f3ad";
 
 /** The previous development champion (2026-09-25..26): the gated profile at
  * kappa 0.25, H 8 and its default weights. Kept as a GUI comparison bot only. */
@@ -87,8 +80,6 @@ export const CHAMPION_PROFILE_ARGS = Object.freeze({
   ...REN_GAIN_CHAMPION_PROFILE_ARGS,
   weightOverrides: Object.freeze({ ...REN_GAIN_CHAMPION_PROFILE_ARGS.weightOverrides, legacy_backup_consistency: "1" }),
 });
-export const CHAMPION_NATIVE_BINARY_SHA256 =
-  "sha256:4d6cea66dd37474ef851d2d5a3dc4710850fb5c5e707ae36f2dcced746bcf0b9";
 
 /** The champion's gated profile at its default budget (512 selections). */
 export function createChampionBaseProfile() {

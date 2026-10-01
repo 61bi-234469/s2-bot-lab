@@ -10,7 +10,7 @@ import { createF14LeafConversionGatedProfile } from "./s2-f14-compat-browser.mjs
 import { CHAMPION_PROFILE_ARGS, PREVIOUS_CHAMPION_PROFILE_ARGS, REN_GAIN_CHAMPION_PROFILE_ARGS, SPSA_V1_CHAMPION_PROFILE_ARGS, SPSA_V2_CHAMPION_PROFILE_ARGS } from "./champion-identity.mjs";
 import { EVALUATION_SCORE_SEMANTICS, evaluatorModelIdentity, extractEvaluationFeatures, scoreEvaluationFeatures } from "./evaluation.mjs";
 
-export { CHAMPION_NATIVE_BINARY_SHA256, CHAMPION_PROFILE_ARGS, createChampionBaseProfile } from "./champion-identity.mjs";
+export { CHAMPION_PROFILE_ARGS, createChampionBaseProfile } from "./champion-identity.mjs";
 
 // The F14 core admits 1..1,000,000 selections. Its public profile searches a
 // queue of up to 28 pieces like the other CC2 bots (the default request keeps

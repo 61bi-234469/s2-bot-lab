@@ -925,6 +925,15 @@ pub fn admit(raw: &Json, profile: &Profile) -> Result<(), Json> {
     Ok(())
 }
 
+/// Opt-in `"diagnostics": {"rootValues": true}`: a core-decision move
+/// response then carries `diagnostics.rootValues`, the native root value q of
+/// each returned candidate in cc2Rank order (`ranking.returnedIdentities`
+/// order), for hosts that show a value per candidate. Requests without it are
+/// unchanged.
+pub(crate) fn root_values_requested(raw: &Json) -> bool {
+    raw.pointer("/diagnostics/rootValues") == Some(&json!(true))
+}
+
 pub fn decide(raw: Json, profile: &Profile, moves: &[Placement], search: SearchStats) -> Json {
     decide_limited(raw, profile, moves, search, None, None, 0)
 }
@@ -984,6 +993,12 @@ fn decide_limited_with_core_admission(
     let core_post_stage_counters = root_decision
         .as_ref()
         .map(|decision| decision.post_stage_counters);
+    // A core-decision move response is formatted from this decision, so its
+    // native values index `returnedIdentities` (cc2Rank order).
+    let root_values = root_decision
+        .as_ref()
+        .filter(|_| root_values_requested(&raw) && profile.uses_core_decision())
+        .map(|decision| decision.native_values.iter().map(|&q| f64::from(q)).collect::<Vec<_>>());
     let (mut response, audit) = crate::s2_audit::run_native_f14_compat(|| {
         crate::s2_audit::with_legacy_selector_guard(profile.uses_core_decision(), || {
             decide_limited_inner(
@@ -1007,6 +1022,13 @@ fn decide_limited_with_core_admission(
         core_post_stage_counters,
         audit,
     );
+    if let Some(root_values) = root_values {
+        if response["status"] == "move"
+            && response["search"]["returnedCount"].as_u64() == Some(root_values.len() as u64)
+        {
+            response["diagnostics"]["rootValues"] = json!(root_values);
+        }
+    }
     response
 }
 
@@ -4260,6 +4282,58 @@ mod tests {
             without_opt_in["reason"], "rerank-mismatch",
             "{without_opt_in}"
         );
+    }
+
+    #[test]
+    fn root_values_are_opt_in_and_follow_the_native_order() {
+        let mut profile = leaf_conversion_gated_profile(CONFIG_HASH);
+        profile.budget.selections = 64;
+        let mut request = request_with_selector(load_p5()["decisions"][0]["selector"].clone());
+        request["execution"] = json!(profile);
+        let mut asked = request.clone();
+        asked["diagnostics"] = json!({ "rootValues": true });
+        let off = run_f14_driver(&profile, request.clone());
+        let mut on = run_f14_driver(&profile, asked.clone());
+        assert_eq!(off["status"], "move", "{off}");
+        let values = on["diagnostics"]
+            .as_object_mut()
+            .unwrap()
+            .remove("rootValues")
+            .expect("requested root values");
+        // Reading the values observes only: the rest is byte-identical.
+        assert_eq!(serde_json::to_string(&off).unwrap(), serde_json::to_string(&on).unwrap());
+        assert!(!serde_json::to_string(&off).unwrap().contains("rootValues"));
+        let values = values.as_array().unwrap().clone();
+        assert_eq!(values.len() as u64, off["search"]["returnedCount"].as_u64().unwrap());
+        let mut previous = f64::INFINITY;
+        for value in &values {
+            let q = value.as_f64().unwrap();
+            assert!(q <= previous, "native q must not increase along cc2Rank");
+            previous = q;
+        }
+        // Only the exact opt-in value enables it.
+        let mut not_true = request.clone();
+        not_true["diagnostics"] = json!({ "rootValues": false });
+        assert!(run_f14_driver(&profile, not_true)["diagnostics"].get("rootValues").is_none());
+
+        // A retained rerank formats from its own published decision and
+        // carries the values too; without the flag it is unchanged.
+        let rerank = |source: &Json| {
+            let (_, retained) = run_f14_driver_with_retained(&profile, source.clone());
+            let retained = retained.expect("gated decision retained its root result");
+            let mut target = source.clone();
+            target["requestId"] = json!("root-values-rerank");
+            target["generation"] = json!(3);
+            rerank_retained(target, &retained.request, &retained.profile, &retained.outcome, false)
+        };
+        let mut reranked = rerank(&asked);
+        assert_eq!(reranked["status"], "move", "{reranked}");
+        assert_eq!(reranked["diagnostics"]["rootValues"], json!(values));
+        let mut plain = rerank(&request);
+        reranked["diagnostics"].as_object_mut().unwrap().remove("rootValues");
+        without_timing_fields(&mut reranked);
+        without_timing_fields(&mut plain);
+        assert_eq!(reranked, plain);
     }
 
     #[test]
