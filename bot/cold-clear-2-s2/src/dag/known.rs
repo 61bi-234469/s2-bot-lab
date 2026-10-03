@@ -16,9 +16,12 @@ use super::{
 };
 
 pub(super) struct Layer<'bump, E: Evaluation> {
-    pub states: StateMap<Node<'bump, E>, ahash::RandomState, State<E>>,
+    pub states: StateMap<Node<'bump, E>, crate::map::StateBuildHasher, State<E>>,
     pub piece: PieceSource,
     pub parent_storage_slots: AtomicUsize,
+    /// Ids of the nodes expanded in this layer, in expansion order (tree reuse
+    /// reads only these instead of scanning every shard).
+    pub expanded: parking_lot::Mutex<Vec<u64>>,
 }
 
 type Parent<E> = (u64, Action<E>, Piece);
@@ -232,6 +235,7 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
         parent.eval = E::average(std::iter::once(childs.first().map(|c| c.cached_eval)));
         parent.closed = E::Domain::S2 && childs.iter().all(|child| child.closed);
         parent.children = Some(herd.get().alloc_slice_copy(&childs));
+        self.expanded.lock().push(parent_index);
 
         let mut next = vec![];
 

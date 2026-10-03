@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
-use ahash::AHashMap;
+type AHashMap<K, V> = std::collections::HashMap<K, V, crate::map::StateBuildHasher>;
 use serde::Serialize;
 
 use crate::data::*;
@@ -82,7 +82,7 @@ pub fn find_direct_180_route_witness_complete(
 ) -> Direct180RouteSearch {
     let collision_map = CollisionMaps::new(board, piece);
     let fast_mode = board.cols.iter().all(|&c| c.leading_zeros() > 64 - 16);
-    let mut states: AHashMap<(Placement, bool), DiagnosticState> = AHashMap::new();
+    let mut states: AHashMap<(Placement, bool), DiagnosticState> = AHashMap::default();
     let mut queue = BinaryHeap::new();
     let mut best_witness: Option<Direct180RouteWitness> = None;
     let mut target_candidates = 0;
@@ -524,8 +524,8 @@ fn find_moves_core(
 ) -> CompleteRootMoves {
     puffin::profile_function!();
     let mut queue = BinaryHeap::new();
-    let mut values = AHashMap::new();
-    let mut underground_locks = AHashMap::new();
+    let mut values = AHashMap::default();
+    let mut underground_locks = AHashMap::default();
     let mut locks = Vec::with_capacity(64);
     let mut collision_map = CollisionMaps::new(board, piece).with_ceiling(
         if entry == RootEntry::SpawnBufferFallback { 21 } else { 20 },

@@ -604,6 +604,12 @@ impl RootObjectiveSession {
         }
     }
 
+    /// Tree reuse: count inherited expanded nodes as selections this request
+    /// already completed, so the decision publishes after the remaining ones.
+    pub(crate) fn credit_inherited(&self, credited: u64) {
+        self.completed_selections.store(credited, Ordering::Release);
+    }
+
     pub(crate) fn attach_observation(&self, observation: RootObservation) {
         *self.observation.lock() = Some(observation);
     }

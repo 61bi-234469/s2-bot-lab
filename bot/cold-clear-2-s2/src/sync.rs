@@ -36,6 +36,9 @@ pub struct BotSyncronizer {
     // channel so at most one old DAG is being reclaimed. An unbounded backlog
     // retains one mature DAG per suggestion and can exhaust host memory.
     retired_bots: SyncSender<Bot>,
+    /// Tree reuse (`tree_reuse_floor`): the last F14 bot whose selection
+    /// budget completed, kept for the next F14 request instead of retired.
+    retained: Mutex<Option<Bot>>,
 }
 
 impl BotSyncronizer {
@@ -52,13 +55,20 @@ impl BotSyncronizer {
             blocker: Condvar::new(),
             bot: RwLock::new(None),
             retired_bots: spawn_retirement_reclaimer(),
+            retained: Mutex::new(None),
         }
     }
 
     pub fn start(&self, initial_state: Bot) {
+        self.start_credited(initial_state, 0);
+    }
+
+    /// `start` with `credited` selections already counted (tree reuse): the
+    /// workers stop after `search_selection_limit - credited` new selections.
+    pub(crate) fn start_credited(&self, initial_state: Bot, credited: u64) {
         let retired = {
             let mut state = self.state.lock();
-            state.stats = Default::default();
+            state.stats = Statistics { selections: credited, ..Default::default() };
             state.nodes_since_start = 0;
             state.start = Instant::now();
             state.selection_limit = initial_state.search_selection_limit();
@@ -77,9 +87,38 @@ impl BotSyncronizer {
     }
 
     pub fn stop(&self) {
-        let retired = self.bot.write().take();
+        // Hold the retained slot while taking the active bot (same order as
+        // `stop_retaining`), so a concurrent retention cannot store a bot
+        // after this stop.
+        let (retired, retained) = {
+            let mut slot = self.retained.lock();
+            let retired = self.bot.write().take();
+            (retired, slot.take())
+        };
         self.reclaim(retired);
+        self.reclaim(retained);
         self.blocker.notify_all();
+    }
+
+    /// Like `stop`, but keep the bot for the next F14 request (tree reuse).
+    /// Workers are idle at the selection limit, so the tree is exactly the
+    /// one the decision was published from.
+    pub(crate) fn stop_retaining(&self) {
+        let previous = {
+            let mut slot = self.retained.lock();
+            let bot = self.bot.write().take();
+            std::mem::replace(&mut *slot, bot)
+        };
+        self.reclaim(previous);
+        self.blocker.notify_all();
+    }
+
+    pub(crate) fn take_retained(&self) -> Option<Bot> {
+        self.retained.lock().take()
+    }
+
+    pub(crate) fn retire(&self, bot: Option<Bot>) {
+        self.reclaim(bot);
     }
 
     pub fn suggest(&self) -> (Vec<Placement>, MoveInfo) {
@@ -1117,13 +1156,17 @@ pub(crate) fn f14_decide_job_with_observation(
     if flag.load(Ordering::Acquire) {
         return f14::error(&request, "incomplete", "cancelled");
     }
-    let mut prepared = match inproc::prepare_after_admit_with_cancel(
+    // Tree reuse: offer the previous budget-complete tree; without the key
+    // any retained tree is retired.
+    let retained = bot.take_retained();
+    let mut prepared = match inproc::prepare_after_admit_with_cancel_reusing(
         request.clone(),
         profile,
         config,
         token,
         observation,
         Arc::clone(flag),
+        retained,
     ) {
         Ok(prepared) => prepared,
         Err(response) => return response,
@@ -1134,7 +1177,10 @@ pub(crate) fn f14_decide_job_with_observation(
         if !gate.allow_start(token, flag) {
             return f14::error(&request, "incomplete", "cancelled");
         }
-        bot.start(prepared.take_bot());
+        let credited = prepared.reuse.as_ref().map_or(0, |report| report.credited);
+        bot.start_credited(prepared.take_bot(), credited);
+        // The replaced or unusable previous tree goes to the reclaimer thread.
+        bot.retire(prepared.unusable_tree.take());
         #[cfg(test)]
         F14_BOT_STARTS.with(|count| count.set(count.get() + 1));
     }
@@ -1147,7 +1193,11 @@ pub(crate) fn f14_decide_job_with_observation(
         SuggestEnd::Stopped => FinishEnd::Stopped,
         SuggestEnd::Failed(reason) => FinishEnd::Failed(reason),
     };
-    bot.stop();
+    if prepared.reuse.is_some() && finish_end == FinishEnd::Budget {
+        bot.stop_retaining();
+    } else {
+        bot.stop();
+    }
     inproc::finish_with_hook(prepared, &moves, info, finish_end, hook)
 }
 pub(crate) fn run_f14(

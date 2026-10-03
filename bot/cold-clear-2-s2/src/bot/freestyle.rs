@@ -124,6 +124,23 @@ impl Mode for Freestyle {
 }
 
 impl Freestyle {
+    /// Tree reuse: the root's child moves in stored order, `None` before the
+    /// root is expanded.
+    pub(super) fn reuse_root_actions(&self) -> Option<Vec<Placement>> {
+        match self.dag.legacy_root_snapshot() {
+            LegacyRootSnapshot::Unexpanded => None,
+            LegacyRootSnapshot::Expanded { actions } => Some(actions.into_iter().map(|(mv, _)| mv).collect()),
+        }
+    }
+
+    pub(super) fn reuse_speculated_layer_expanded(&self) -> bool {
+        self.dag.first_speculated_layer_expanded()
+    }
+
+    pub(super) fn reuse_root_reachable_expanded(&self) -> usize {
+        self.dag.root_reachable_expanded()
+    }
+
     pub(super) fn root_priorities(&self) -> Vec<(Placement, bool, f32)> {
         self.dag.root_priorities()
     }

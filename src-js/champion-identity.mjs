@@ -74,14 +74,24 @@ export const SPSA_V1_CHAMPION_PROFILE_ARGS = Object.freeze({
  * kappa 0.25, H 8 and its default weights. Kept as a GUI comparison bot only. */
 export const PREVIOUS_CHAMPION_PROFILE_ARGS = Object.freeze({ scale: "0.25", maxHeight: "8" });
 
-// The current champion (2026-09-30, Legacy backup consistency): the REN attack
-// gain champion plus the opt-in legacy_backup_consistency key.
-export const CHAMPION_PROFILE_ARGS = Object.freeze({
+// The champion 2026-09-30..10-03 (Sold Slear, Legacy backup consistency): the
+// REN attack gain champion plus the opt-in legacy_backup_consistency key. Kept
+// as a former-champion GUI bot at 512 selections.
+export const BACKUP_CONSISTENCY_CHAMPION_PROFILE_ARGS = Object.freeze({
   ...REN_GAIN_CHAMPION_PROFILE_ARGS,
   weightOverrides: Object.freeze({ ...REN_GAIN_CHAMPION_PROFILE_ARGS.weightOverrides, legacy_backup_consistency: "1" }),
 });
 
-/** The champion's gated profile at its default budget (512 selections). */
+// The current champion (2026-10-03): Legacy backup consistency searched at
+// 2,048 selections with the search tree kept across requests
+// (tree_reuse_floor 256). Its decisions depend on the request sequence.
+export const CHAMPION_PROFILE_ARGS = Object.freeze({
+  ...BACKUP_CONSISTENCY_CHAMPION_PROFILE_ARGS,
+  selections: 2048,
+  weightOverrides: Object.freeze({ ...BACKUP_CONSISTENCY_CHAMPION_PROFILE_ARGS.weightOverrides, tree_reuse_floor: "256" }),
+});
+
+/** The champion's gated profile at its default budget (2,048 selections, tree reuse). */
 export function createChampionBaseProfile() {
   return createF14LeafConversionGatedProfile(CHAMPION_PROFILE_ARGS);
 }

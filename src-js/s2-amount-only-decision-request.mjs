@@ -4,7 +4,7 @@ import { sha256Hex } from "./sha256.mjs";
 export const S2_AMOUNT_ONLY_DECISION_STATE_ID = "s2-amount-only-decision-state/1";
 export const S2_AMOUNT_ONLY_DECISION_REQUEST_ID = "s2-amount-only-decision-request/1";
 
-const QUALIFIED_TYPES = new Set(["cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain"]);
+const QUALIFIED_TYPES = new Set(["cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion-backup"]);
 
 export function isPublicInputQualifiedType(type) {
   return QUALIFIED_TYPES.has(type);

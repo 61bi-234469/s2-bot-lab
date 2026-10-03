@@ -148,6 +148,7 @@ pub const TUNABLE_WEIGHT_KEYS: &[&str] = &[
     ROOT_DANGER_SOLVENCY_CAP_KEY,
     ROOT_DANGER_SOLVENCY_GAIN_KEY,
     LEGACY_BACKUP_CONSISTENCY_KEY,
+    TREE_REUSE_FLOOR_KEY,
 ];
 
 /// Root-policy keys (not search weights): set together, both positive. See
@@ -159,6 +160,13 @@ pub const ROOT_DANGER_SOLVENCY_GAIN_KEY: &str = "root_danger_solvency_gain";
 /// chance backups re-derive a parent's value from its current best children
 /// even when the previous best child was demoted, and notify the parents.
 pub const LEGACY_BACKUP_CONSISTENCY_KEY: &str = "legacy_backup_consistency";
+
+/// Search key: a positive integer F no larger than the selection budget.
+/// The session keeps the finished Legacy tree and, when the next request's
+/// root is that tree's root or one of its children (same state and queue),
+/// continues it: inherited expanded nodes are credited against the budget,
+/// leaving at least F new selections. Absent keeps every request fresh.
+pub const TREE_REUSE_FLOOR_KEY: &str = "tree_reuse_floor";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -379,8 +387,14 @@ impl Profile {
                 _ => false,
             };
             let backup_valid = overrides.get(LEGACY_BACKUP_CONSISTENCY_KEY).map_or(true, |value| value == "1");
+            let tree_reuse_valid = overrides.get(TREE_REUSE_FLOOR_KEY).map_or(true, |value| {
+                value.parse::<u64>().map_or(false, |floor| {
+                    floor >= 1 && floor <= self.budget.selections && floor.to_string() == *value
+                }) && !self.is_time_budget()
+            });
             danger_valid
                 && backup_valid
+                && tree_reuse_valid
                 && !overrides.is_empty()
                 && overrides.iter().all(|(key, value)| {
                     TUNABLE_WEIGHT_KEYS.contains(&key.as_str())
@@ -397,6 +411,10 @@ impl Profile {
             }
             if key == LEGACY_BACKUP_CONSISTENCY_KEY {
                 config.enable_legacy_backup_consistency = true;
+                continue;
+            }
+            if key == TREE_REUSE_FLOOR_KEY {
+                config.tree_reuse_floor = value.parse().expect("admitted override value");
                 continue;
             }
             if key == "freestyle_exploitation" {
@@ -2336,6 +2354,200 @@ mod tests {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn reuse_profile(floor: &str) -> Profile {
+        let mut profile = leaf_conversion_gated_profile(CONFIG_HASH);
+        profile.weight_overrides = Some([(TREE_REUSE_FLOOR_KEY.to_string(), floor.to_string())].into_iter().collect());
+        profile
+    }
+
+    fn reuse_request(profile: &Profile, start: Json) -> Json {
+        let mut request = request_with_selector(load_p5()["decisions"][0]["selector"].clone());
+        request["execution"] = json!(profile);
+        request["start"] = start;
+        request
+    }
+
+    fn run_reuse(profile: &Profile, request: Json, tree: Option<crate::bot::Bot>) -> (Json, Option<crate::bot::Bot>) {
+        let mut driver = F14Driver::start_reusing(profile.clone(), request, tree).expect("F14 driver start");
+        while !driver.work(64).complete {}
+        let (response, _, tree) = driver.finish_with_retained_tree();
+        (response, tree)
+    }
+
+    /// The request after the tree's first root child was played and `revealed`
+    /// joined the queue; `garbage` adds one bottom row the tree cannot know.
+    fn next_start(tree: &crate::bot::Bot, start: &Json, revealed: &str, garbage: bool) -> Json {
+        let (_, state, queue) = tree.first_root_child_for_test();
+        let filled = |x: usize, y: usize| -> bool {
+            if garbage {
+                if y == 0 { return x != 0; }
+                (state.board.cols[x] >> (y - 1)) & 1 == 1
+            } else {
+                (state.board.cols[x] >> y) & 1 == 1
+            }
+        };
+        let board: Vec<Vec<Option<char>>> =
+            (0..40).map(|y| (0..10).map(|x| filled(x, y).then_some('G')).collect()).collect();
+        let mut next: Vec<Json> = queue[1..].iter().map(|piece| json!(piece)).collect();
+        next.push(json!(revealed));
+        json!({
+            "board": board, "queue": next, "hold": state.reserve, "combo": state.combo,
+            "back_to_back": state.b2b > 0, "b2b": state.b2b, "randomizer": start["randomizer"],
+        })
+    }
+
+    #[test]
+    fn tree_reuse_continues_the_same_root_within_the_budget_and_deterministically() {
+        let profile = reuse_profile("128");
+        let request = || reuse_request(&profile, opening_start());
+        let run = || {
+            let (first, tree) = run_reuse(&profile, request(), None);
+            let (mut again, tree) = run_reuse(&profile, request(), tree);
+            again["search"]["reuse"].as_object_mut().unwrap().remove("micros");
+            (first, again, tree.is_some())
+        };
+        let (first, again, kept) = run();
+        assert_eq!(first["status"], "move");
+        assert_eq!(first["search"]["reuse"]["reason"], "no-tree");
+        assert_eq!((first["search"]["requestedSelections"].clone(), first["search"]["actualSelections"].clone()), (json!(512), json!(512)));
+        // The same request again continues the whole tree: only the floor is new.
+        let reuse = &again["search"]["reuse"];
+        assert_eq!(reuse["reused"], true, "{reuse}");
+        assert!(reuse["inherited"].as_u64().unwrap() >= 512, "{reuse}");
+        assert_eq!((reuse["credited"].clone(), reuse["newSelections"].clone()), (json!(512 - 128), json!(128)));
+        assert_eq!(again["search"]["actualSelections"], 512);
+        assert!(kept);
+        // Reuse is part of a deterministic sequence.
+        assert_eq!(run().1, again);
+    }
+
+    #[test]
+    fn tree_reuse_native_job_keeps_the_budget_complete_tree_for_the_next_job() {
+        let profile = reuse_profile("128");
+        let bot = Arc::new(crate::sync::BotSyncronizer::new());
+        let worker_bot = bot.clone();
+        let _worker = std::thread::spawn(move || worker_bot.work_loop());
+        let flag = Arc::new(AtomicBool::new(false));
+        let gate = parking_lot::Mutex::new(F14StartGate::new());
+        let mut job = |token: u64| {
+            gate.lock().begin(token);
+            crate::sync::f14_decide_job(
+                reuse_request(&profile, opening_start()), &profile, job_config(&profile), &bot, &flag, token, &gate, None,
+            )
+        };
+        let first = job(1);
+        let second = job(2);
+        assert_eq!(first["search"]["reuse"]["reason"], "no-tree", "{first}");
+        assert_eq!(second["search"]["reuse"]["reused"], true, "{second}");
+        assert_eq!(second["search"]["reuse"]["newSelections"], 128);
+        assert_eq!(second["search"]["actualSelections"], 512);
+        bot.stop();
+    }
+
+    fn reuse_bot(profile: &Profile, start: &Json, selections: usize) -> crate::bot::Bot {
+        let mut bot = crate::create_bot(serde_json::from_value(start.clone()).unwrap(), job_config(profile)).unwrap();
+        bot.reuse_profile_key = serde_json::to_string(profile).ok();
+        for _ in 0..selections {
+            bot.do_work().unwrap();
+        }
+        bot
+    }
+
+    #[test]
+    fn tree_reuse_continues_at_a_played_child_after_a_revealed_piece() {
+        let profile = reuse_profile("128");
+        let start = opening_start();
+        let tree = reuse_bot(&profile, &start, 256);
+        let next = next_start(&tree, &start, "T", false);
+        let fresh = reuse_bot(&profile, &next, 0);
+        let (continued, inherited, _) = tree.reuse_for(&fresh, true).map_err(|(_, reason)| reason).expect("child reuse");
+        assert!(inherited >= 1, "the played child was expanded under 256 selections");
+        // The continued bot searches on from the new root like any bot.
+        for _ in 0..64 {
+            continued.do_work().unwrap();
+        }
+        assert!(!continued.suggest().is_empty());
+    }
+
+    #[test]
+    fn tree_reuse_starts_fresh_when_garbage_reached_the_board() {
+        let profile = reuse_profile("128");
+        let start = opening_start();
+        let tree = reuse_bot(&profile, &start, 256);
+        let garbage = next_start(&tree, &start, "T", true);
+        let fresh = reuse_bot(&profile, &garbage, 0);
+        let (_, reason) = tree.reuse_for(&fresh, true).err().expect("no child reaches a board with garbage");
+        assert_eq!(reason, "no-child-board");
+    }
+
+    #[test]
+    fn tree_reuse_refuses_another_profile() {
+        let start = opening_start();
+        let profile = reuse_profile("128");
+        // Session-side settings (here the leaf-conversion scale) are part of the key.
+        let mut other = reuse_profile("128");
+        other.leaf_conversion_scale = Some(Some("0.5".into()));
+        let tree = reuse_bot(&profile, &start, 64);
+        let (_, reason) = tree.reuse_for(&reuse_bot(&other, &start, 0), true).err().expect("profile differs");
+        assert_eq!(reason, "profile");
+    }
+
+    #[test]
+    fn tree_reuse_matches_the_bag_only_when_the_request_carries_none() {
+        let profile = reuse_profile("128");
+        let a = reuse_bot(&profile, &opening_start(), 0).current_state_for_test();
+        let b = crate::data::GameState { bag: !a.bag, ..a };
+        assert_ne!(a.bag, b.bag);
+        assert!(crate::bot::Bot::same_root(&a, &b, true), "an unknown bag is not compared");
+        assert!(!crate::bot::Bot::same_root(&a, &b, false), "a known bag must match");
+        assert!(!crate::bot::Bot::same_root(&a, &crate::data::GameState { combo: a.combo + 1, ..a }, true));
+    }
+
+    #[test]
+    fn tree_reuse_retained_tree_is_cleared_by_stop() {
+        let profile = reuse_profile("128");
+        let bot = Arc::new(crate::sync::BotSyncronizer::new());
+        let worker_bot = bot.clone();
+        let _worker = std::thread::spawn(move || worker_bot.work_loop());
+        let flag = Arc::new(AtomicBool::new(false));
+        let gate = parking_lot::Mutex::new(F14StartGate::new());
+        let mut job = |token: u64| {
+            gate.lock().begin(token);
+            crate::sync::f14_decide_job(
+                reuse_request(&profile, opening_start()), &profile, job_config(&profile), &bot, &flag, token, &gate, None,
+            )
+        };
+        let _ = job(1);
+        bot.stop();
+        let after = job(2);
+        assert_eq!(after["search"]["reuse"]["reason"], "no-tree", "{after}");
+        // A retention that runs after a stop finds no active bot to keep.
+        bot.stop();
+        bot.stop_retaining();
+        assert!(bot.take_retained().is_none());
+        bot.stop();
+    }
+
+    #[test]
+    fn tree_reuse_key_absent_keeps_requests_fresh_and_unreported() {
+        let mut profile = leaf_conversion_gated_profile(CONFIG_HASH);
+        profile.weight_overrides = None;
+        let (response, tree) = run_reuse(&profile, reuse_request(&profile, opening_start()), None);
+        assert!(tree.is_none(), "no tree is kept without the key");
+        assert!(response["search"].get("reuse").is_none());
+        assert!(serde_json::to_value(profile.search_bot_config().unwrap()).unwrap().get("tree_reuse_floor").is_none());
+    }
+
+    #[test]
+    fn tree_reuse_floor_admits_only_a_canonical_integer_within_the_budget() {
+        for bad in ["0", "513", "01", "1.5", "-1"] {
+            assert!(!reuse_profile(bad).valid(), "{bad}");
+        }
+        for good in ["1", "256", "512"] {
+            assert!(reuse_profile(good).valid(), "{good}");
         }
     }
 

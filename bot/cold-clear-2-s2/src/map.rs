@@ -28,7 +28,54 @@ impl<K> Default for ExactIndex<K> {
     fn default() -> Self { Self { buckets: IntMap::default(), keys: vec![] } }
 }
 
-pub struct StateMap<V, S = ahash::RandomState, K: StateKey = GameState> {
+/// Hasher for search-state keys and move-generation maps, using only 64-bit
+/// multiplies: ahash's fallback multiplies in 128 bits, which wasm32 emulates.
+/// Hash values never order decisions (native ahash already reseeds per
+/// process). Legacy states are addressed by hash alone:
+/// each word step is a bijection of the running state, so keys that differ in
+/// one word never collide, and `finish` applies the splitmix64 finalizer for
+/// the shard and bucket bits.
+#[derive(Clone, Copy, Default)]
+pub struct StateBuildHasher;
+
+impl BuildHasher for StateBuildHasher {
+    type Hasher = StateHasher;
+    #[inline]
+    fn build_hasher(&self) -> StateHasher { StateHasher(0x9e37_79b9_7f4a_7c15) }
+}
+
+pub struct StateHasher(u64);
+
+#[inline]
+fn mix64(mut z: u64) -> u64 {
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+impl Hasher for StateHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        let mut chunks = bytes.chunks_exact(8);
+        for chunk in &mut chunks {
+            self.write_u64(u64::from_le_bytes(chunk.try_into().unwrap()));
+        }
+        let rest = chunks.remainder();
+        if !rest.is_empty() {
+            let mut word = [0u8; 8];
+            word[..rest.len()].copy_from_slice(rest);
+            self.write_u64(u64::from_le_bytes(word) ^ ((rest.len() as u64) << 56));
+        }
+    }
+    #[inline] fn write_u8(&mut self, i: u8) { self.write_u64(u64::from(i)); }
+    #[inline] fn write_u16(&mut self, i: u16) { self.write_u64(u64::from(i)); }
+    #[inline] fn write_u32(&mut self, i: u32) { self.write_u64(u64::from(i)); }
+    #[inline] fn write_usize(&mut self, i: usize) { self.write_u64(i as u64); }
+    #[inline] fn write_u64(&mut self, i: u64) { self.0 = (self.0.rotate_left(5) ^ i).wrapping_mul(0x517c_c1b7_2722_0a95); }
+    #[inline] fn finish(&self) -> u64 { mix64(self.0) }
+}
+
+pub struct StateMap<V, S = StateBuildHasher, K: StateKey = GameState> {
     hasher: S,
     buckets: Box<[RwLock<IntMap<u64, V>>; SHARDS]>,
     exact: Option<RwLock<ExactIndex<K>>>,

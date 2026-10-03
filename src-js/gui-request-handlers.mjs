@@ -50,7 +50,7 @@ import { lockedPieceCells, toS2GuiState, createGame, extendSeededQueue,
 const HUMAN_BOT = Object.freeze({ id: "human", available: true, ...botParameterCapability("human") });
 // The GUI offers exactly the bots TTRM INPUT admits; the local server offers the same set.
 const CC2_LABELS = Object.freeze(Object.fromEntries(["cc2-raw", "cc2-chouhy", "cc2-s2-f14",
-  "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion"]
+  "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion-backup", "cc2-s2-champion"]
   .map((id) => [id, BOT_PARAMETER_DEFINITIONS[id].label])));
 /**
  * Transport-neutral browser API. Native CC2 engines are deliberately absent;
@@ -93,6 +93,9 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
           if (isF14CoreType(engine)) {
             assertChampionParameters(parameters);
             const state = guiStateToCanonical(body.state);
+            // Each analysis starts from a new core session, as the local host's
+            // analysis does, so a retained search tree never carries over.
+            await cc2Runtime.closeSessions?.({ sessionKeys: ["analysis"] });
             const decision = await decideChampion("analysis", state, body.state, parameters, engine);
             return ok({
               engine: publicEngine(engine),

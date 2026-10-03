@@ -26,7 +26,7 @@ test("bot parameters have independent defaults and normalize supported values", 
 });
 
 test("the champion exposes no engine selector and keeps its budget defaults", () => {
-  const defaults = { ppsEnabled: true, pps: 1, selectionEnabled: true, selectionLimit: 512, thinkTimeEnabled: false, thinkMs: 250, queueDepth: 14 };
+  const defaults = { ppsEnabled: true, pps: 1, selectionEnabled: true, selectionLimit: 2048, thinkTimeEnabled: false, thinkMs: 250, queueDepth: 14 };
   const legacySavedSet = { ppsEnabled: false, pps: 2, selectionEnabled: true, selectionLimit: 640,
     thinkTimeEnabled: false, thinkMs: 250, queueDepth: 12 };
 
@@ -111,7 +111,7 @@ test("capabilities are safe to serialize for the GUI", () => {
 // Names describe each bot's design; only the parenthesis marks the current
 // champion. Every introduction gives origin, tuning/intent and character.
 test("GUI bots have design names and a three-part introduction", () => {
-  const bots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion"];
+  const bots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion-backup", "cc2-s2-champion"];
   for (const id of bots) {
     const { label, description } = botParameterCapability(id);
     assert.doesNotMatch(label, /development champion/);

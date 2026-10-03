@@ -17,7 +17,9 @@ use super::{
 
 #[derive(Default)]
 pub(super) struct Layer<'bump, E: Evaluation> {
-    pub states: StateMap<Node<'bump, E>, ahash::RandomState, State<E>>,
+    pub states: StateMap<Node<'bump, E>, crate::map::StateBuildHasher, State<E>>,
+    /// Ids of the nodes expanded in this layer (see `known::Layer::expanded`).
+    pub expanded: parking_lot::Mutex<Vec<u64>>,
 }
 
 pub(super) struct Node<'bump, E: Evaluation> {
@@ -183,6 +185,7 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
         );
 
         parent.children = Some(children);
+        self.expanded.lock().push(parent_index);
 
         let mut next = vec![];
 
