@@ -252,7 +252,13 @@ test("local INPUT runtime re-finalizes the gated champion search through an exis
     target.positionId = 'local-rerank-target-position';
     target.generation += 1;
     const reranked = await runtime.rerankF14({ ...payload, request: target });
-    const fresh = await runtime.decideF14({ ...payload, request: target });
+    // The champion keeps its search tree across requests, so the reference is a
+    // new session's first decision; a rerank reports no tree-reuse block.
+    const session = await createCc2WasmSession({ wasmBytes });
+    let fresh;
+    try { fresh = await session.decideF14({ request: target, profile }); } finally { await session.close(); }
+    assert.equal(fresh.search.reuse.reason, "no-tree");
+    delete fresh.search.reuse;
     assert.deepEqual(stripF14Timing(reranked), stripF14Timing(fresh));
   } finally { await runtime.closeSessions(); }
 });
@@ -265,18 +271,30 @@ test("champion INPUT match locks the WASM F14 core selection, also under incomin
     f14SessionFor: () => createCc2WasmSession({ wasmBytes }) });
   const decisions = [];
   const plans = [];
+  // Every core call in order (the champion's tree carries over between them).
+  const coreCalls = [];
+  let order = 0;
   const handlers = createGuiInputMatchHandlers({ championQueuePrefixSpeculation: true, runtime: {
     ...runtime,
-    decideF14: async (payload) => { const response = await runtime.decideF14(payload); decisions.push({ payload, response }); return response; },
+    decideF14: async (payload) => {
+      const call = { op: "decide", payload, seq: order++ }; coreCalls.push(call);
+      const response = await runtime.decideF14(payload); call.response = response;
+      decisions.push({ payload, response, seq: call.seq }); return response;
+    },
+    speculateF14: async (payload) => {
+      const call = { op: payload.inputSpeculation ? "speculateInput" : "speculate", payload, seq: order++ }; coreCalls.push(call);
+      const response = await runtime.speculateF14(payload); call.response = response; return response;
+    },
     // An incoming-only change, or the next piece whose `start` a speculative
     // search predicted, re-ranks the retained search; it is a core decision
     // too. A refused rerank falls back to decideF14.
     rerankF14: async (payload) => {
-      const response = await runtime.rerankF14(payload);
-      if (response.status === "move") decisions.push({ payload, response, reranked: true });
+      const call = { op: "rerank", payload, seq: order++ }; coreCalls.push(call);
+      const response = await runtime.rerankF14(payload); call.response = response;
+      if (response.status === "move") decisions.push({ payload, response, reranked: true, seq: call.seq });
       return response;
     },
-    resolveInput: async (payload) => { const result = await runtime.resolveInput(payload); plans.push({ payload, result }); return result; },
+    resolveInput: async (payload) => { const seq = order++; const result = await runtime.resolveInput(payload); plans.push({ payload, result, seq }); return result; },
   } });
   try {
     const start = await handlers.handle({ method: "POST", path: "/api/input-match/start",
@@ -295,8 +313,10 @@ test("champion INPUT match locks the WASM F14 core selection, also under incomin
     const pose = (placement) => [placement.piece, placement.rotation, placement.x, placement.y, placement.usedHold];
     const planned = plans.filter(({ payload, result }) => payload.request.type === "cc2-s2-champion" && result.status === "planned");
     // The first move handed to the planner is always the core's selection.
-    for (const { payload, result } of planned) {
-      const decided = decisions.findLast(({ response }) => canonicalize(JSON.parse(response.selectedIdentity)) === canonicalize(payload.request.moves[0]));
+    for (const { payload, result, seq } of planned) {
+      // The decision behind this plan was made before it (an identity can recur on a later piece).
+      const decided = decisions.findLast(({ response, seq: decidedAt }) => decidedAt < seq
+        && canonicalize(JSON.parse(response.selectedIdentity)) === canonicalize(payload.request.moves[0]));
       assert.ok(decided, "the planner's first target is a core selection");
       if (result.selection.adoptionRank === 0) assert.deepEqual(pose(result.placement), pose(decided.response.selectedPlacement));
     }
@@ -315,14 +335,19 @@ test("champion INPUT match locks the WASM F14 core selection, also under incomin
       assert.equal(response.search.searchedQueueLength, payload.request.start.queue.length - 1);
       assert.equal(response.search.queueLength, response.search.searchedQueueLength);
     }
-    // A fresh core session answers the same request identically, also for
-    // the other re-ranked (exact speculative or incoming-only) decisions.
-    const exact = decisions.filter(({ response }) => response.search?.searchedQueueLength === undefined);
+    // The champion's decisions depend on the request sequence (tree reuse), so a
+    // fresh core session replaying every core call in order answers identically.
+    assert.ok(decisions.some(({ response }) => response.search?.reuse?.reused), "the match continued the search tree");
+    const withoutWallTime = (response) => { const copy = structuredClone(response); if (copy?.search?.reuse) delete copy.search.reuse.micros; return copy; };
     const fresh = await createCc2WasmSession({ wasmBytes });
     try {
-      for (const { payload, response } of [...exact.slice(0, 5), ...exact.filter((decision) => decision.reranked).slice(0, 20)]) {
-        const again = await fresh.decideF14({ request: payload.request, profile: payload.profile });
-        assert.equal(firstResponseMismatch(again, response), null);
+      for (const { op, payload, response } of coreCalls.sort((a, b) => a.seq - b.seq)) {
+        const again = op === "rerank" ? await fresh.rerankF14({ request: payload.request, profile: payload.profile })
+          : op === "speculateInput" ? await fresh.speculateInputF14({ request: payload.request, profile: payload.profile })
+            : await fresh.decideF14({ request: payload.request, profile: payload.profile });
+        if (op === "decide" || (op === "rerank" && response.status === "move")) {
+          assert.equal(firstResponseMismatch(withoutWallTime(again), withoutWallTime(response)), null, op);
+        }
       }
     } finally { await fresh.close(); }
   } finally {
@@ -354,10 +379,14 @@ test("champion GUI parameters always build the gated leaf-conversion profile and
   assert.equal(canonicalize(createChampionProfile(gatedParameters)), canonicalize({
     ...gatedBase, budget: { ...gatedBase.budget, selections: 384 },
   }));
+  // THINK TIME runs without tree reuse (the core reuses only on selection budgets).
   const gatedTimed = createChampionProfile({ ...gatedParameters, selectionEnabled: false, thinkTimeEnabled: true, thinkMs: 300 });
+  const { tree_reuse_floor: _floor, ...untimedOverrides } = gatedBase.weightOverrides;
   assert.equal(canonicalize(gatedTimed), canonicalize({
-    ...gatedBase, budget: { mode: "time", selections: 1_000_000, maxMillis: 300 },
+    ...gatedBase, budget: { mode: "time", selections: 1_000_000, maxMillis: 300 }, weightOverrides: untimedOverrides,
   }));
+  // A SELECTION below the reuse floor lowers the floor to it.
+  assert.equal(createChampionProfile({ ...defaults, selectionLimit: 100 }).weightOverrides.tree_reuse_floor, "100");
   assert.throws(() => createChampionProfile({ ...defaults, queueDepth: 29 }), /QUEUE DEPTH must be 2-28/);
   // The core's search needs a NEXT piece; depth 1 crashed the WASM core.
   assert.throws(() => createChampionProfile({ ...defaults, queueDepth: 1 }), /QUEUE DEPTH must be 2-28/);

@@ -2,7 +2,7 @@
 //!
 //! This module is the Rust counterpart of the JS F14 reference selector. It runs
 //! on the legacy TBP/Freestyle path (`--f14-compat-profile` / `run_f14`, and the
-//! WASM `f14_*` operations). It is not the ADR-063 `s2-native-integrated/1` route
+//! WASM `f14_*` operations). It is not the native `s2-native-integrated/1` route
 //! and must not be mixed into `native_s2::transport`. Its decisions are checked
 //! against the JS reference on frozen fixtures; skip/error/cleanup,
 //! start/selector projection, deadline and cancel follow the same contract.

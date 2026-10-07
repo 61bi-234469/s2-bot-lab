@@ -344,6 +344,64 @@ impl<E: Evaluation> Dag<E> {
         })
     }
 
+    /// Tree reuse: whether the first speculated layer, the one the next
+    /// `add_piece` despeculates, holds an expanded node. Walks down only while
+    /// a layer holds an expanded node (every expanded node has an expanded
+    /// parent one layer up), so it never forces a layer.
+    pub(crate) fn first_speculated_layer_expanded(&self) -> bool {
+        assert!(!E::Domain::S2, "tree reuse is a Legacy-domain operation");
+        let mut layer: &LayerCommon<E> = &self.top_layer;
+        loop {
+            let (speculated, expanded) = layer.kind.with(|this| match this.data {
+                LayerKind::Known(l) => (false, !l.expanded.lock().is_empty()),
+                LayerKind::Speculated(l) => (true, !l.expanded.lock().is_empty()),
+            });
+            if speculated || !expanded { return speculated && expanded; }
+            layer = &layer.next_layer;
+        }
+    }
+
+    /// Tree reuse: expanded nodes reachable from the root, root included,
+    /// de-duplicated per layer. Only expanded nodes can lie on a path to an
+    /// expanded node, so each layer keeps the expanded nodes that have a
+    /// reachable expanded parent (on a known layer, through that layer's
+    /// piece); leaves are never copied.
+    pub(crate) fn root_reachable_expanded(&self) -> usize {
+        assert!(!E::Domain::S2, "tree reuse is a Legacy-domain operation");
+        let root = self.top_layer.kind.with(|this| match this.data {
+            LayerKind::Known(l) => l.states.get(&self.root).map(|node| (l.states.index(&self.root), node.children.is_some())),
+            LayerKind::Speculated(l) => l.states.get(&self.root).map(|node| (l.states.index(&self.root), node.children.is_some())),
+        });
+        let Some((root_id, true)) = root else { return 0; };
+        let mut reach: std::collections::HashSet<u64> = std::iter::once(root_id).collect();
+        let mut expanded = 1;
+        let mut layer: &LayerCommon<E> = &self.top_layer;
+        loop {
+            let fixed = layer.kind.with(|this| match this.data {
+                LayerKind::Known(l) => match l.piece { PieceSource::LegacyFixed(piece) => Some(piece), _ => None },
+                LayerKind::Speculated(_) => None,
+            });
+            layer = &layer.next_layer;
+            let mut next = std::collections::HashSet::new();
+            let keep = |id: u64, parents: &[(u64, Action<E>, Piece)], next: &mut std::collections::HashSet<u64>| {
+                if parents.iter().any(|&(parent, _, piece)| reach.contains(&parent) && fixed.map_or(true, |fixed| fixed == piece)) {
+                    next.insert(id);
+                }
+            };
+            layer.kind.with(|this| match this.data {
+                LayerKind::Known(l) => for &id in l.expanded.lock().iter() {
+                    if let Some(node) = l.states.get_raw(id) { keep(id, node.parents.as_slice(), &mut next); }
+                },
+                LayerKind::Speculated(l) => for &id in l.expanded.lock().iter() {
+                    if let Some(node) = l.states.get_raw(id) { keep(id, &node.parents, &mut next); }
+                },
+            });
+            if next.is_empty() { return expanded; }
+            expanded += next.len();
+            reach = next;
+        }
+    }
+
     /// Order scored Legacy root children ahead of every unscored child.
     ///
     /// The score and CC2 rank form the same order used by F14's post-stage
@@ -533,7 +591,7 @@ impl<E: Evaluation> Dag<E> {
         use std::mem::size_of;
         assert!(E::Domain::S2);
         AllocationUnits {
-            layer:StateMap::<known::Node<'static,E>,ahash::RandomState,State<E>>::shard_storage_bytes()+size_of::<LayerCommon<E>>()+4096,
+            layer:StateMap::<known::Node<'static,E>,crate::map::StateBuildHasher,State<E>>::shard_storage_bytes()+size_of::<LayerCommon<E>>()+4096,
             // Capacity growth, index buckets/IDs, allocator alignment, and
             // arena children. Every edge is charged as a fresh node even when shared.
             node_and_edge:4*(size_of::<State<E>>()+size_of::<known::Node<'static,E>>()+size_of::<Child<E>>()+96),
@@ -871,6 +929,7 @@ impl<E: Evaluation> WithBump<E> {
                 }),
                 piece: PieceSource::LegacyFixed(piece),
                 parent_storage_slots: Default::default(),
+                expanded: parking_lot::Mutex::new(std::mem::take(&mut *old.expanded.lock())),
             };
 
             *this.data = LayerKind::Known(layer);
@@ -930,7 +989,7 @@ impl<E: Evaluation> WithBump<E> {
 impl<E: Evaluation> Default for WithBump<E> {
     fn default() -> Self {
         WithBump::new(Herd::new(),std::sync::atomic::AtomicBool::new(false), |_| if E::Domain::S2 {
-            LayerKind::Known(known::Layer {states: Default::default(), piece: PieceSource::S2FromState, parent_storage_slots: Default::default()})
+            LayerKind::Known(known::Layer {states: Default::default(), piece: PieceSource::S2FromState, parent_storage_slots: Default::default(), expanded: Default::default()})
         } else { LayerKind::Speculated(Default::default()) })
     }
 }
@@ -1666,5 +1725,27 @@ mod edge_cost_tests {
             assert_eq!(chance_update(true, 10, consistent), (8, 0));
             assert_eq!(chance_update(false, 5, consistent), (8, 0));
         }
+    }
+
+    /// root -> {X: 100, Y: 95}; X -> {A: 100}; A -> {B: 80}.
+    fn root_chain(consistent: bool) -> Dag<Value> {
+        let root = legacy_root();
+        let (x, y, a) = (GameState { combo: 1, ..root }, GameState { combo: 2, ..root }, GameState { combo: 3, ..root });
+        let dag = Dag::<Value>::new(root, &[Piece::I, Piece::I, Piece::I]);
+        let (l0, l1) = (&*dag.top_layer, dag.top_layer.next());
+        let (l2, l3) = (l1.next(), l1.next().next());
+        l0.kind.expand(l1, root, known_edges(&[(x, 0, 100, 0), (y, 1, 95, 0)]));
+        let updates = l1.kind.expand(l2, x, known_edges(&[(a, 2, 100, 0)]));
+        l0.kind.backprop(updates, l1, consistent);
+        let updates = l2.kind.expand(l3, a, known_edges(&[(GameState { combo: 4, ..root }, 3, 80, 0)]));
+        let updates = l1.kind.backprop(updates, l2, consistent);
+        l0.kind.backprop(updates, l1, consistent);
+        dag
+    }
+
+    #[test]
+    fn root_reachable_expanded_counts_the_root_and_its_expanded_descendants() {
+        // The root, X and A are expanded; Y and A's child are leaves.
+        assert_eq!(root_chain(true).root_reachable_expanded(), 3);
     }
 }

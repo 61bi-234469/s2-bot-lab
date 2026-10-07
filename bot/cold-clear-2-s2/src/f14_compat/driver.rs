@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde_json::Value as Json;
 
-use crate::bot::Statistics;
+use crate::bot::{Bot, Statistics};
 use crate::tbp::MoveInfo;
 
 use super::inproc::{self, FinishEnd, Prepared};
@@ -38,17 +38,24 @@ pub(crate) struct F14Driver {
 
 impl F14Driver {
     pub(crate) fn start(profile: Profile, request: Json) -> Result<Self, Json> {
-        Self::start_with_input_speculation(profile, request, false)
+        Self::start_with_input_speculation(profile, request, false, None)
+    }
+
+    /// `start` that may continue `retained` (the previous finished tree) when
+    /// the profile carries `tree_reuse_floor`.
+    pub(crate) fn start_reusing(profile: Profile, request: Json, retained: Option<Bot>) -> Result<Self, Json> {
+        Self::start_with_input_speculation(profile, request, false, retained)
     }
 
     pub(crate) fn start_input_speculation(profile: Profile, request: Json) -> Result<Self, Json> {
-        Self::start_with_input_speculation(profile, request, true)
+        Self::start_with_input_speculation(profile, request, true, None)
     }
 
     fn start_with_input_speculation(
         profile: Profile,
         request: Json,
         input_speculation: bool,
+        retained: Option<Bot>,
     ) -> Result<Self, Json> {
         // Keep this admission check before every other start-side operation. It
         // is the same first check performed by inproc::prepare and the native
@@ -65,16 +72,19 @@ impl F14Driver {
             .unwrap_or(0);
         let limit = profile.budget.selections;
         // Admitted above with this profile; prepare must not repeat it.
-        let prepared = inproc::prepare_admitted(
+        let prepared = inproc::prepare_admitted_reusing(
             request,
             &profile,
             Arc::new(config),
             token,
             None,
+            retained,
         )?;
+        // Inherited expanded nodes count as completed selections (tree reuse).
+        let credited = prepared.reuse.as_ref().map_or(0, |report| report.credited);
         Ok(Self {
             prepared,
-            stats: Statistics::default(),
+            stats: Statistics { selections: credited, ..Statistics::default() },
             limit,
             ended: None,
             input_speculation,
@@ -157,7 +167,15 @@ impl F14Driver {
         self.finish_with_retained().0
     }
 
-    pub(crate) fn finish_with_retained(mut self) -> (Json, Option<F14RerankState>) {
+    pub(crate) fn finish_with_retained(self) -> (Json, Option<F14RerankState>) {
+        let (response, retained, _) = self.finish_with_retained_tree();
+        (response, retained)
+    }
+
+    /// `finish_with_retained` that also hands back the finished bot for tree
+    /// reuse: only with `tree_reuse_floor`, only when the selection budget
+    /// completed and the response is a move or a terminal no-move.
+    pub(crate) fn finish_with_retained_tree(mut self) -> (Json, Option<F14RerankState>, Option<Bot>) {
         // Complete the budget if the caller did not drive `work` to the end;
         // a bot that stops making progress ends the loop like the old adapter.
         while self.ended.is_none() && self.stats.selections < self.limit {
@@ -197,6 +215,12 @@ impl F14Driver {
         };
         let retained_request = self.prepared.request.clone();
         let retained_profile = self.prepared.profile.clone();
+        let tree = (self.prepared.reuse.is_some()
+            && self.ended.is_none()
+            && !self.prepared.profile.is_time_budget()
+            && self.stats.selections >= self.limit)
+            .then(|| self.prepared.bot.take())
+            .flatten();
         let response = inproc::finish(
             self.prepared,
             &moves,
@@ -222,7 +246,9 @@ impl F14Driver {
             }),
             _ => None,
         };
-        (response, retained)
+        let tree = tree.filter(|_| matches!(response["status"].as_str(), Some("move") | Some("root-no-move"))
+            || response["reason"].as_str() == Some("empty-candidates"));
+        (response, retained, tree)
     }
 }
 

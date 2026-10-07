@@ -19,6 +19,7 @@ import { buildEngineConfig, inputExecutionNaturalGravity, inputExecutionTimeProg
   inputExecutionOptions, INPUT_EXECUTION_PROFILE } from "./engine-config.mjs";
 import { timeProgressionRulesetId } from "../ruleset-profiles.mjs";
 import { createInputLockConformance } from "../triangle/input-lock-conformance.mjs";
+import { clearStaleSpin } from "../triangle/input-rotation-observer.mjs";
 import { projectInputPublicMovement } from "../triangle/input-public-movement.mjs";
 import { triangleSnapshotToCanonical } from "../triangle/garbage-adapter.mjs";
 import { createS2AmountOnlyDecisionState } from "../s2-amount-only-decision-state.mjs";
@@ -234,6 +235,8 @@ export function simulatePlayerRound(playerRound, options = {}) {
  * Session snapshots and observations are not policy input.
  */
 export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, signal = null, now = nowMs, canonicalProfile = null,
+  verifyCanonicalReplay = false,
+  onRefereeObservation = null,
   forgiveStallPenalty = false, initialGarbageCells = null } = {}) {
   validateTtrmPlayerRound(playerRound);
   if (!Number.isFinite(maxTimeMs) || maxTimeMs <= 0 || maxTimeMs > 10_000) {
@@ -264,13 +267,22 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
       throw new TtrmError("validate", `unsupported handling ${key}`);
     }
   }
-  if (canonicalProfile !== null) {
+  if (typeof verifyCanonicalReplay !== 'boolean' || verifyCanonicalReplay && canonicalProfile !== null) {
+    throw new TtrmError('profile', 'canonical replay verification must preserve the original input profile');
+  }
+  if (onRefereeObservation !== null && (typeof onRefereeObservation !== 'function' || !verifyCanonicalReplay
+    || !Object.hasOwn(playerRound.replay.options, 'nextcount')
+      && !Object.hasOwn(playerRound.replay.events.find(event => event.type === 'end')?.data?.options ?? {}, 'nextcount')
+    || !Number.isInteger(options.nextcount) || options.nextcount < 0 || options.nextcount > 14)) {
+    throw new TtrmError('observe', 'referee observations require verified original replay and recorded NEXT count');
+  }
+  if (canonicalProfile !== null || verifyCanonicalReplay) {
     // Time progression and natural gravity are the two things a local round may
     // switch off. Reading them back from the replay keeps every other key, and
     // the disabled values themselves, compared against the canonical profile.
-    const expected = inputExecutionOptions({ seed: options.seed, profileId: canonicalProfile, handling: options.handling,
-      timeProgression: inputExecutionTimeProgression(options),
-      naturalGravity: inputExecutionNaturalGravity(options) });
+    const expected = inputExecutionOptions({ seed: options.seed, profileId: canonicalProfile ?? INPUT_EXECUTION_PROFILE.id, handling: options.handling,
+      timeProgression: verifyCanonicalReplay ? true : inputExecutionTimeProgression(options),
+      naturalGravity: verifyCanonicalReplay ? true : inputExecutionNaturalGravity(options) });
     for (const key of Object.keys(expected)) {
       if (JSON.stringify(options[key]) !== JSON.stringify(expected[key])) {
         throw new TtrmError("profile", `canonical input profile option mismatch: ${key}`);
@@ -287,7 +299,7 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
   // The referee comparison runs under the rules this round is actually played
   // under: a fixed-rules round is compared against the static-time ruleset, so
   // the Engine and the S2 Simulator agree about attack past the S2 margin.
-  const conformance = canonicalProfile === null ? null
+  const conformance = canonicalProfile === null && !verifyCanonicalReplay ? null
     : createInputLockConformance(engine, timeProgressionRulesetId(inputExecutionTimeProgression(options)));
   let externallyMutated = false;
 
@@ -312,6 +324,24 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
     return result;
   };
   const outgoing = [];
+  const readDecision = () => createS2AmountOnlyDecisionState({
+    rulesetId: INPUT_EXECUTION_PROFILE.rulesetId,
+    board: { width: 10, height: 40, visibleHeight: 20, fidelity: 'exact',
+      cells: engine.board.state.flatMap(row => row.map(cell => cell === null ? '_' :
+        cell.mino.length === 1 ? cell.mino.toUpperCase() : 'G')).join('') },
+    pieces: { current: engine.falling.symbol.toUpperCase(), hold: engine.held?.toUpperCase() ?? null,
+      holdAvailable: !engine.holdLocked, known: Array.from(engine.queue).map(piece => piece.toUpperCase()), fidelity: 'exact' },
+    chain: { combo: Math.max(0, engine.stats.combo + 1), b2b: Math.max(0, engine.stats.b2b + 1), fidelity: 'exact' },
+    time: { logicalFrame: engine.frame, piecesPlaced: engine.stats.pieces, frameSemantics: 'engine-frame', fidelity: 'exact' },
+    garbage: triangleSnapshotToCanonical(engine.garbageQueue.snapshot(), { capState: { consumedThisTick: 0 }, fidelity: 'exact' }),
+  });
+  const observe = (kind, extra = {}) => {
+    if (onRefereeObservation === null) return;
+    const decision = readDecision();
+    decision.pieces.known = decision.pieces.known.slice(0, Math.min(5, options.nextcount));
+    onRefereeObservation(structuredClone({ kind, frame: engine.frame, subframe: engine.subframe,
+      decision, movement: projectInputPublicMovement(engine), ...extra }));
+  };
   const send = engine.igeHandler.send.bind(engine.igeHandler);
   engine.igeHandler.send = (packet) => {
     send(packet);
@@ -363,6 +393,8 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
   let lastPlacedBlocks = new Set();
   const add = engine.board.add;
   engine.board.add = function (...args) {
+    // The Engine reads lastSpin after this merge; keep it in TETR.IO parity.
+    clearStaleSpin(engine);
     const rotationEvidence = !externallyMutated ? conformance?.beforeMerge() ?? null : null;
     lastPlacedBlocks = new Set(args.map(([block]) => block));
     preLock = {
@@ -376,14 +408,16 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
       y: engine.falling.y,
       cells: engine.falling.absoluteBlocks.map(([x, y]) => [x, y]),
     };
+    observe('before-lock', { pieceIndex: locks.length, usedHold: heldSinceLock, rotationEvidence });
     return add.apply(this, args);
   };
 
   // HOLD and the post-lock spawn take effect on this raw frame rather than at
   // the end of the tick. Several spawns inside one frame collapse to the last.
-  engine.events.on("falling.new", () => {
+  engine.events.on("falling.new", ({ isHold }) => {
     recordActive(engine.frame);
     recordQueue(engine.frame);
+    observe('spawn', { isHold });
   });
   engine.events.on("queue.add", () => {
     recordQueue(engine.frame);
@@ -430,6 +464,7 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
       sourceHeight: after.sourceHeight,
       clippedRowCount: after.clippedRowCount,
     });
+    observe('lock', { lock: locks.at(-1) });
     recordBoard(engine.frame, after);
     recordActive(engine.frame);
     recordQueue(engine.frame, queue);
@@ -543,6 +578,7 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
       if (ordinaryLocks === 0) removeStallPenaltyLine();
     });
   }
+  observe('spawn', { isHold: false });
   return {
     get frame() { return engine.frame; },
     get canonicalProfile() { return canonicalProfile; },
@@ -574,18 +610,7 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
     },
     publicState() {
       if (canonicalProfile === null || status !== 'active') throw new TtrmError('profile', 'active input profile required');
-      const state = {
-        rulesetId: INPUT_EXECUTION_PROFILE.rulesetId,
-        board: { width: 10, height: 40, visibleHeight: 20, fidelity: 'exact',
-          cells: engine.board.state.flatMap(row => row.map(cell => cell === null ? '_' :
-            cell.mino.length === 1 ? cell.mino.toUpperCase() : 'G')).join('') },
-        pieces: { current: engine.falling.symbol.toUpperCase(), hold: engine.held?.toUpperCase() ?? null,
-          holdAvailable: !engine.holdLocked, known: Array.from(engine.queue).map(value => value.toUpperCase()), fidelity: 'exact' },
-        chain: { combo: Math.max(0, engine.stats.combo + 1), b2b: Math.max(0, engine.stats.b2b + 1), fidelity: 'exact' },
-        time: { logicalFrame: engine.frame, piecesPlaced: engine.stats.pieces, frameSemantics: 'engine-frame', fidelity: 'exact' },
-        garbage: triangleSnapshotToCanonical(engine.garbageQueue.snapshot(), { capState: { consumedThisTick: 0 }, fidelity: 'exact' }),
-      };
-      return { decision: createS2AmountOnlyDecisionState(state), movement: projectInputPublicMovement(engine) };
+      return { decision: readDecision(), movement: projectInputPublicMovement(engine) };
     },
     executedEvents() { return structuredClone(executedEvents); },
     takeOutgoing() { return outgoing.splice(0); },
@@ -647,9 +672,13 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
         }
         if (!externallyMutated) conformance?.beforeTick(consumed);
         engine.tick(consumed);
+        // Published movement (planner start states, observations) shows the
+        // same spin the next merge will use.
+        clearStaleSpin(engine);
         if (!externallyMutated) conformance?.checkBoundary();
         executedEvents.push(...consumed);
         recordActive(engine.frame);
+        if (onRefereeObservation !== null) observe('tick', { rotationEvidence: conformance.rotationEvidence() });
         processingMs += now() - startedAt;
         checkBudget();
       } catch (error) {

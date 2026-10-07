@@ -21,6 +21,7 @@ test("the defaults are the reference fork's own handling values", () => {
     dcdFrames: 0,
     sdf: SDF_INFINITE,
     softDropPriority: false,
+    irs: "off",
     ghost: true,
   });
   assert.deepEqual(controls.keys, {
@@ -101,6 +102,25 @@ test("key names are read as printed on the key", () => {
 test("the deck summary reports the values a match will run under", () => {
   assert.equal(
     describeHumanControls(defaultHumanControls()),
-    "DAS 10F · ARR 1F · DCD 0F · SDF ∞ · HARD DROP Space",
+    "DAS 10F · ARR 1F · DCD 0F · SDF ∞ · IRS OFF · HARD DROP Space",
   );
+});
+
+test('IRS TAP survives persisted settings and reaches the human referee handling', () => {
+  const controls = sanitizeHumanControls({ handling: { irs: 'tap' } });
+  assert.equal(sanitizeHumanControls(JSON.parse(JSON.stringify(controls))).handling.irs, 'tap');
+  assert.equal(humanEngineHandling(controls).irs, 'tap');
+  assert.equal(humanEngineHandling(controls).ihs, 'off');
+  assert.match(describeHumanControls(controls), /IRS TAP/);
+  for (const irs of ['TAP', true, 1, null]) {
+    assert.equal(sanitizeHumanControls({ handling: { irs } }).handling.irs, 'off');
+  }
+});
+
+test('IRS HOLD survives persisted settings and reaches only human handling', () => {
+  const controls = sanitizeHumanControls({ handling: { irs: 'hold' } });
+  assert.equal(sanitizeHumanControls(JSON.parse(JSON.stringify(controls))).handling.irs, 'hold');
+  assert.equal(humanEngineHandling(controls).irs, 'hold');
+  assert.equal(humanEngineHandling(controls).ihs, 'off');
+  assert.match(describeHumanControls(controls), /IRS HOLD/);
 });

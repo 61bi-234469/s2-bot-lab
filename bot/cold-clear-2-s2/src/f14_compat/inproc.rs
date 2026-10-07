@@ -23,6 +23,37 @@ pub(crate) struct Prepared {
     pub(crate) root_session: Option<Arc<RootObjectiveSession>>,
     pub(crate) limits: F14RuntimeLimits,
     pub(crate) token: u64,
+    /// Tree reuse (`tree_reuse_floor`): what this request did with the
+    /// previous tree; `None` when the key is absent.
+    pub(crate) reuse: Option<ReuseReport>,
+    /// A previous tree that could not be continued, for the host to retire.
+    pub(crate) unusable_tree: Option<Bot>,
+}
+
+/// Reported as `search.reuse` on profiles with `tree_reuse_floor`.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ReuseReport {
+    pub(crate) reused: bool,
+    /// Expanded nodes reachable from the continued root.
+    pub(crate) inherited: u64,
+    /// Selections credited against the budget: min(inherited, budget - floor).
+    pub(crate) credited: u64,
+    pub(crate) reason: &'static str,
+    /// Wall time of the reuse attempt (matching, advance, counting), in µs.
+    pub(crate) micros: u64,
+}
+
+impl ReuseReport {
+    pub(crate) fn to_json(&self, budget: u64) -> Json {
+        serde_json::json!({
+            "reused": self.reused,
+            "inherited": self.inherited,
+            "credited": self.credited,
+            "newSelections": budget - self.credited,
+            "reason": self.reason,
+            "micros": self.micros,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,6 +99,19 @@ pub(crate) fn prepare_admitted(
     token: u64,
     observation: Option<RootObservation>,
 ) -> Result<Prepared, Json> {
+    prepare_admitted_reusing(request, profile, config, token, observation, None)
+}
+
+/// `prepare_admitted` that may continue `retained`, the previous request's
+/// finished bot, when the profile carries `tree_reuse_floor`.
+pub(crate) fn prepare_admitted_reusing(
+    request: Json,
+    profile: &Profile,
+    config: Arc<BotConfig>,
+    token: u64,
+    observation: Option<RootObservation>,
+    retained: Option<Bot>,
+) -> Result<Prepared, Json> {
     prepare_inner(
         request,
         profile,
@@ -76,6 +120,7 @@ pub(crate) fn prepare_admitted(
         observation,
         Arc::new(AtomicBool::new(false)),
         true,
+        retained,
     )
 }
 
@@ -95,7 +140,23 @@ pub(crate) fn prepare_after_admit_with_cancel(
     if profile.is_time_budget() {
         return Err(f14::error(&request, "unsupported", "time-budget-requires-wasm-host"));
     }
-    prepare_inner(request, profile, config, token, observation, cancel, true)
+    prepare_after_admit_with_cancel_reusing(request, profile, config, token, observation, cancel, None)
+}
+
+/// Native counterpart of `prepare_admitted_reusing`.
+pub(crate) fn prepare_after_admit_with_cancel_reusing(
+    request: Json,
+    profile: &Profile,
+    config: Arc<BotConfig>,
+    token: u64,
+    observation: Option<RootObservation>,
+    cancel: Arc<AtomicBool>,
+    retained: Option<Bot>,
+) -> Result<Prepared, Json> {
+    if profile.is_time_budget() {
+        return Err(f14::error(&request, "unsupported", "time-budget-requires-wasm-host"));
+    }
+    prepare_inner(request, profile, config, token, observation, cancel, true, retained)
 }
 
 fn prepare_inner(
@@ -106,6 +167,7 @@ fn prepare_inner(
     observation: Option<RootObservation>,
     cancel: Arc<AtomicBool>,
     admitted: bool,
+    retained: Option<Bot>,
 ) -> Result<Prepared, Json> {
     if !admitted {
         f14::admit(&request, profile)?;
@@ -128,9 +190,38 @@ fn prepare_inner(
         },
         None => return Err(f14::error(&request, "error", "invalid-input")),
     };
+    let reuse_floor = config.tree_reuse_floor;
+    let bag_unknown = matches!(start.randomizer, crate::tbp::Randomizer::SevenBag { bag_state } if bag_state.is_empty());
     let mut bot = match crate::create_bot(start, config) {
         Ok(bot) => bot,
         Err(_) => return Err(f14::error(&request, "error", "invalid-input")),
+    };
+    if reuse_floor > 0 {
+        bot.reuse_profile_key = serde_json::to_string(profile).ok();
+    }
+    let mut unusable_tree = None;
+    let reuse_started = crate::time::Instant::now();
+    let reuse = if reuse_floor > 0 {
+        Some(match retained {
+            None => ReuseReport { reused: false, inherited: 0, credited: 0, reason: "no-tree", micros: 0 },
+            Some(previous) => match previous.reuse_for(&bot, bag_unknown) {
+                Ok((continued, inherited, bag_differs)) => {
+                    unusable_tree = Some(std::mem::replace(&mut bot, continued));
+                    let credited = inherited.min(profile.budget.selections.saturating_sub(reuse_floor));
+                    let reason = if bag_differs { "continued-bag" } else { "continued" };
+                    let micros = reuse_started.elapsed().as_micros() as u64;
+                    ReuseReport { reused: true, inherited, credited, reason, micros }
+                }
+                Err((previous, reason)) => {
+                    unusable_tree = Some(previous);
+                    let micros = reuse_started.elapsed().as_micros() as u64;
+                    ReuseReport { reused: false, inherited: 0, credited: 0, reason, micros }
+                }
+            },
+        })
+    } else {
+        unusable_tree = retained;
+        None
     };
     let composed_state = if profile.uses_core_decision() {
         match f14::composed_public_state(&request) {
@@ -189,6 +280,9 @@ fn prepare_inner(
         if let Some(observation) = observation {
             session.attach_observation(observation);
         }
+        if let Some(report) = reuse.as_ref() {
+            session.credit_inherited(report.credited);
+        }
         Some(Arc::new(session))
     } else {
         None
@@ -207,6 +301,8 @@ fn prepare_inner(
         root_session,
         limits,
         token,
+        reuse,
+        unusable_tree,
     })
 }
 
@@ -232,6 +328,23 @@ pub(crate) fn finish_with_hook(
     ended: FinishEnd,
     hook: Option<&f14::F14CancelHook>,
 ) -> Json {
+    let reuse = prepared.reuse.as_ref().map(|report| report.to_json(prepared.profile.budget.selections));
+    let mut response = finish_response(prepared, moves, info, ended, hook);
+    if let Some(reuse) = reuse {
+        if response["search"].is_object() {
+            response["search"]["reuse"] = reuse;
+        }
+    }
+    response
+}
+
+fn finish_response(
+    prepared: Prepared,
+    moves: &[crate::data::Placement],
+    info: MoveInfo,
+    ended: FinishEnd,
+    hook: Option<&f14::F14CancelHook>,
+) -> Json {
     let Prepared {
         request,
         profile,
@@ -239,6 +352,8 @@ pub(crate) fn finish_with_hook(
         root_session,
         limits,
         token,
+        reuse: _,
+        unusable_tree: _,
     } = prepared;
     let root_outcome = root_session.as_ref().map(|session| session.take_outcome());
 

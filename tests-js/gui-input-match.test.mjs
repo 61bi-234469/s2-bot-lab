@@ -272,18 +272,18 @@ test('missing, inactive or malformed empty evidence remains a failed unsaveable 
 const move = canonicalPlacementToGuiMove({ piece: 'Z', rotation: 'spawn', x: 3, y: 0, usedHold: false,
   rotationEvidence: { lastInputWasRotation: false, kickIndex: null, kickId: null, kickOffset: null } });
 
-test('human Engine handling keeps finite soft drop, DAS and subframes through production export', async () => {
+test('human Engine handling keeps IRS HOLD, finite soft drop, DAS and subframes through production export', async () => {
   const handlers = createGuiInputMatchHandlers({ runtime: {
     propose: () => new Promise(() => {}), closeSessions: async () => {}, resolveInput: resolveInputJob,
   } });
   const { body: started } = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
-    ...config, humanControls: { handling: { sdf: 5, dasFrames: 10, arrFrames: 1, dcdFrames: 2 } },
+    ...config, humanControls: { handling: { sdf: 5, dasFrames: 10, arrFrames: 1, dcdFrames: 2, irs: 'hold' } },
   } });
   const step = (frame, inputs = []) => handlers.handle({ method: 'POST', path: '/api/input-match/step', body: {
     sessionId: started.sessionId, frame, inputs,
   } });
   const key = (frame, key, type, subframe = 0.5) => ({ frame, type, data: { key, subframe } });
-  const first = await step(1, [key(0, 'softDrop', 'keydown'), key(0, 'moveLeft', 'keydown')]);
+  const first = await step(1, [key(0, 'softDrop', 'keydown'), key(0, 'moveLeft', 'keydown'), key(0, 'rotateCW', 'keydown')]);
   assert.equal(first.status, 200, JSON.stringify(first.body));
   const player = first.body.bots[0];
   assert.ok(Math.min(...player.activeCells.map(([, y]) => y)) > 15, 'finite SDF must not slam to floor');
@@ -309,8 +309,37 @@ test('human Engine handling keeps finite soft drop, DAS and subframes through pr
   assert.equal(players[0].replay.options.handling.das, 10);
   assert.equal(players[0].replay.options.handling.dcd, 2);
   assert.equal(players[0].replay.options.handling.may20g, false);
+  assert.equal(players[0].replay.options.handling.irs, 'hold');
+  assert.equal(players[1].replay.options.handling.irs, 'off', 'bot retains its own input handling');
   assert.equal(players[1].replay.options.handling.das, 0, 'bot keeps fixed handling');
+  assert.equal(saved.body.players[0].locks[1].rotation, 1, 'held rotation really applied and survived production self-replay');
   assert.ok(saved.body.players[0].locks.some(lock => lock.subframe === 0.25));
+});
+
+test('live GUI IRS HOLD rotates the next ARE-zero piece while OFF and TAP do not', async () => {
+  for (const action of ['rotateCW', 'rotateCCW', 'rotate180']) {
+    const views = {};
+    for (const irs of ['off', 'tap', 'hold']) {
+      const handlers = createGuiInputMatchHandlers({ runtime: {
+        propose: () => new Promise(() => {}), closeSessions: async () => {},
+      } });
+      const start = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
+        ...config, humanControls: { handling: { irs } },
+      } });
+      assert.equal(start.status, 200);
+      const step = (frame, inputs) => handlers.handle({ method: 'POST', path: '/api/input-match/step', body: {
+        sessionId: start.body.sessionId, frame, inputs,
+      } });
+      const pressed = await step(1, [{ frame: 0, type: 'keydown', data: { key: action, subframe: 0.25 } }]);
+      assert.equal(pressed.status, 200);
+      const spawned = await step(2, tap(1, 'hardDrop'));
+      assert.equal(spawned.status, 200, JSON.stringify(spawned.body));
+      assert.equal(spawned.body.bots[0].stats.turns, 1);
+      views[irs] = spawned.body.bots[0].activeCells;
+    }
+    assert.deepEqual(views.tap, views.off, 'TAP has no sleep buffer in the S2 live route');
+    assert.notDeepEqual(views.hold, views.off, `${action}: HOLD must visibly rotate the newly spawned piece`);
+  }
 });
 
 function spawnMove(state) {

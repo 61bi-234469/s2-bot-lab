@@ -7,6 +7,7 @@ import {
   triangleSnapshotToCanonical,
 } from "./garbage-adapter.mjs";
 import { canonicalBoardToTriangle, createPlacedTetromino } from "./placement-adapter.mjs";
+import { clearStaleSpin } from "./input-rotation-observer.mjs";
 
 export const ENGINE_FRAME_CONTROLLER = "engine-frame-single-held-controller/4";
 export const ENGINE_FRAME_MAX_INPUT_FRAMES = 7;
@@ -877,9 +878,21 @@ function triangleBoardSnapshotCells(board) {
   ).join("");
 }
 
+// TETR.IO clears a spin on a successful shift; the pinned Engine's input shift
+// path keeps lastSpin. Every Engine here drops that stale value before a merge
+// reads it, so lock labels, chain state and continuations follow TETR.IO.
+function withSpinParity(engine) {
+  const add = engine.board.add;
+  engine.board.add = function (...args) {
+    clearStaleSpin(engine);
+    return add.apply(this, args);
+  };
+  return engine;
+}
+
 function createEngine(state, knownQueue = state.pieces.known.length) {
   const options = S2_OBSERVED_MANIFEST.normalizedOptions;
-  const engine = new Engine(engineOptions(options, state.movement.handling, knownQueue));
+  const engine = withSpinParity(new Engine(engineOptions(options, state.movement.handling, knownQueue)));
   const sourceBoard = canonicalBoardToTriangle(state.board);
   engine.board.state = structuredClone(sourceBoard.state);
   engine.garbageQueue.fromSnapshot(canonicalGarbageToTriangleSnapshot(state.garbage));
@@ -892,10 +905,10 @@ function createEngine(state, knownQueue = state.pieces.known.length) {
 }
 
 function createRestoreTarget(state) {
-  return new Engine(engineOptions(
+  return withSpinParity(new Engine(engineOptions(
     S2_OBSERVED_MANIFEST.normalizedOptions,
     state.movement.handling,
-  ));
+  )));
 }
 
 function restoreEngine(state, snapshot, restoreTarget = null) {
@@ -1087,6 +1100,8 @@ function step(engine, input, previousEvidence) {
       ? [keyEvent(engine.frame, "keydown", input), keyEvent(engine.frame, "keyup", input)]
       : [keyEvent(engine.frame, "keydown", input), keyEvent(engine.frame, "keyup", input)];
   engine.tick(frames);
+  // A shift in this frame ends any rotation witness (and its stale lastSpin).
+  clearStaleSpin(engine);
   const after = lock?.falling ?? engine.falling.snapshot();
   let evidence = previousEvidence;
   if (predicted !== null) evidence = predicted.evidence;

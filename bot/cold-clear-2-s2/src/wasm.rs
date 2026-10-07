@@ -20,6 +20,9 @@ thread_local! {
     static DRIVER: RefCell<Option<Driver>> = const { RefCell::new(None) };
     static F14_DRIVER: RefCell<Option<F14Driver>> = const { RefCell::new(None) };
     static RETAINED_F14: RefCell<Option<F14RerankState>> = const { RefCell::new(None) };
+    /// Tree reuse (`tree_reuse_floor`): the last finished F14 bot, offered to
+    /// the next `f14_start`. Every other start clears it.
+    static RETAINED_TREE: RefCell<Option<crate::bot::Bot>> = const { RefCell::new(None) };
 }
 
 #[derive(Deserialize)]
@@ -106,12 +109,14 @@ fn handle_request(request: Request) -> Result<Value, &'static str> {
             let bot = super::create_bot(state, Arc::new(config))
                 .map_err(|_| "s2-amount-only-start-admission")?;
             F14_DRIVER.with(|slot| *slot.borrow_mut() = None);
+            RETAINED_TREE.with(|slot| *slot.borrow_mut() = None);
             DRIVER.with(|slot| *slot.borrow_mut() = Some(Driver { bot, stats: Statistics::default(), limit }));
             Ok(Value::Null)
         }
         Request::F14Start { profile, request } => {
             RETAINED_F14.with(|slot| *slot.borrow_mut() = None);
-            let driver = match F14Driver::start(profile, request) {
+            let tree = RETAINED_TREE.with(|slot| slot.borrow_mut().take());
+            let driver = match F14Driver::start_reusing(profile, request, tree) {
                 Ok(driver) => driver,
                 Err(response) => {
                     DRIVER.with(|slot| *slot.borrow_mut() = None);
@@ -125,6 +130,7 @@ fn handle_request(request: Request) -> Result<Value, &'static str> {
         }
         Request::F14InputSpeculateStart { profile, request } => {
             RETAINED_F14.with(|slot| *slot.borrow_mut() = None);
+            RETAINED_TREE.with(|slot| *slot.borrow_mut() = None);
             let driver = match F14Driver::start_input_speculation(profile, request) {
                 Ok(driver) => driver,
                 Err(response) => {
@@ -180,14 +186,16 @@ fn handle_request(request: Request) -> Result<Value, &'static str> {
         }),
         Request::F14Finish => F14_DRIVER.with(|slot| {
             let driver = slot.borrow_mut().take().ok_or("no-active-bot")?;
-            let (response, retained) = driver.finish_with_retained();
+            let (response, retained, tree) = driver.finish_with_retained_tree();
             RETAINED_F14.with(|slot| *slot.borrow_mut() = retained);
+            RETAINED_TREE.with(|slot| *slot.borrow_mut() = tree);
             Ok(response)
         }),
         Request::F14FinishEarly => F14_DRIVER.with(|slot| {
             let driver = slot.borrow_mut().take().ok_or("no-active-bot")?;
             let (response, retained) = driver.finish_early_with_retained();
             RETAINED_F14.with(|slot| *slot.borrow_mut() = retained);
+            RETAINED_TREE.with(|slot| *slot.borrow_mut() = None);
             Ok(response)
         }),
         Request::F14Rerank { request } => {
@@ -207,6 +215,7 @@ fn handle_request(request: Request) -> Result<Value, &'static str> {
             DRIVER.with(|slot| *slot.borrow_mut() = None);
             F14_DRIVER.with(|slot| *slot.borrow_mut() = None);
             RETAINED_F14.with(|slot| *slot.borrow_mut() = None);
+            RETAINED_TREE.with(|slot| *slot.borrow_mut() = None);
             Ok(Value::Null)
         }
     }

@@ -49,6 +49,11 @@ export const HUMAN_HANDLING_FIELDS = Object.freeze([
     description: "横移動とソフトドロップが同時に連射されるとき、先にソフトドロップを適用します。",
   }),
   Object.freeze({
+    key: "irs", label: "IRS / 出現時の先行回転", type: "select", defaultValue: "off",
+    choices: Object.freeze([{ value: "off", label: "OFF" }, { value: "tap", label: "TAP" }, { value: "hold", label: "HOLD" }]),
+    description: "HOLDは出現時に押し続けている回転を先行適用します（TTRM INPUT）。TAPは出現待ち用で、S2のARE 0では効果がありません。",
+  }),
+  Object.freeze({
     key: "ghost", label: "ゴースト表示", type: "boolean", defaultValue: true,
     description: "落下位置をフィールド上に表示します。",
   }),
@@ -67,6 +72,10 @@ export function sanitizeHumanControls(input) {
   const handling = plainObject(stored.handling);
   for (const field of HUMAN_HANDLING_FIELDS) {
     const value = handling[field.key];
+    if (field.type === "select") {
+      if (field.choices.some(choice => choice.value === value)) controls.handling[field.key] = value;
+      continue;
+    }
     if (field.type === "boolean") {
       if (typeof value === "boolean") controls.handling[field.key] = value;
       continue;
@@ -103,6 +112,7 @@ export function humanHandling(controls) {
     sdf: handling.sdf === SDF_INFINITE ? Infinity : handling.sdf,
     softDropPriority: handling.softDropPriority,
     ghost: handling.ghost,
+    irs: handling.irs,
   });
 }
 
@@ -111,7 +121,7 @@ export function humanEngineHandling(controls) {
   const handling = humanHandling(controls);
   return { das: handling.dasFrames, arr: handling.arrFrames, dcd: handling.dcdFrames,
     sdf: handling.sdf === Infinity ? 41 : handling.sdf,
-    may20g: handling.softDropPriority, cancel: true, safelock: false, irs: 'off', ihs: 'off' };
+    may20g: handling.softDropPriority, cancel: true, safelock: false, irs: handling.irs, ihs: 'off' };
 }
 
 /**
@@ -132,6 +142,7 @@ export function describeHumanControls(controls) {
     `ARR ${handling.arrFrames}F`,
     `DCD ${handling.dcdFrames}F`,
     `SDF ${handling.sdf === SDF_INFINITE ? "∞" : handling.sdf}`,
+    `IRS ${handling.irs.toUpperCase()}`,
     `HARD DROP ${formatKeyCode(keys.HardDrop)}`,
   ].join(" · ");
 }

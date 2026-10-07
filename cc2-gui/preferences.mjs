@@ -10,6 +10,15 @@
    browser from the GUI root, where `src-js` is not reachable. */
 
 export const PREFERENCES_STORAGE_KEY = "s2-analysis-engine.gui-preferences/1";
+/* Revision of the bot parameter defaults the stored document was written
+   against. A document from an older revision keeps the user's settings except
+   the keys listed here, which are reset to the current default whatever their
+   stored value: an older document cannot tell an explicit value from the
+   default it was written with. Revision 2 (2026-10-08): the champion's
+   SELECTION default became 2,048 on 2026-10-03, so documents written before
+   mostly carry the former 512 as the champion limit. */
+export const BOT_DEFAULTS_REVISION = 2;
+const BOT_DEFAULTS_REVISION_RESETS = Object.freeze({ "cc2-s2-champion": Object.freeze(["selectionLimit"]) });
 export const GUI_MODES = Object.freeze(["analysis", "match", "replay"]);
 export const PREFERENCE_SIDES = Object.freeze(["left", "right"]);
 /* Controls read back through `element.value`, so they are stored as strings. */
@@ -68,10 +77,16 @@ export function sanitizePreferences(input, normalizeParameters, sanitizeControls
   }
 
   const botParameters = plainObject(stored.botParameters);
+  const outdatedDefaults = stored.botDefaultsRevision !== BOT_DEFAULTS_REVISION;
   for (const side of PREFERENCE_SIDES) {
     for (const [botType, values] of Object.entries(plainObject(botParameters[side]))) {
       try {
-        preferences.botParameters[side][botType] = { ...normalizeParameters(botType, values) };
+        let kept = plainObject(values);
+        if (outdatedDefaults && Object.hasOwn(BOT_DEFAULTS_REVISION_RESETS, botType)) {
+          kept = { ...kept };
+          for (const key of BOT_DEFAULTS_REVISION_RESETS[botType]) delete kept[key];
+        }
+        preferences.botParameters[side][botType] = { ...normalizeParameters(botType, kept) };
       } catch {
         // A bot or parameter this build no longer accepts keeps its default.
       }

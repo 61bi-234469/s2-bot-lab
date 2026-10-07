@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  BOT_DEFAULTS_REVISION,
   CONTROL_PREFERENCE_IDS,
   GUI_MODES,
   PREFERENCE_SIDES,
@@ -37,6 +38,24 @@ test("saved champion ENGINE values and its former Analysis preference are silent
     assert.equal(Object.hasOwn(preferences.controls, "analysis-engine-profile"), false);
     assert.deepEqual(preferences.botParameters.left["cc2-s2-champion"], defaultBotParameters("cc2-s2-champion"));
   }
+});
+
+test("a document from an older defaults revision drops the champion's stored SELECTION limit only", () => {
+  const champion = defaultBotParameters("cc2-s2-champion");
+  assert.equal(champion.selectionLimit, 2048);
+  const stored = {
+    botParameters: {
+      left: { "cc2-s2-champion": { ...champion, selectionLimit: 512, queueDepth: 7 }, "cc2-chouhy": { ...defaultBotParameters("cc2-chouhy"), selectionLimit: 512 } },
+      right: { "cc2-s2-champion": { ...champion, selectionLimit: 640 } },
+    },
+  };
+  const migrated = sanitizePreferences(stored, normalizeBotParameters);
+  assert.deepEqual(migrated.botParameters.left["cc2-s2-champion"], { ...champion, queueDepth: 7 });
+  assert.deepEqual(migrated.botParameters.right["cc2-s2-champion"], champion);
+  assert.equal(migrated.botParameters.left["cc2-chouhy"].selectionLimit, 512);
+  const current = sanitizePreferences({ ...stored, botDefaultsRevision: BOT_DEFAULTS_REVISION }, normalizeBotParameters);
+  assert.equal(current.botParameters.left["cc2-s2-champion"].selectionLimit, 512);
+  assert.equal(current.botParameters.right["cc2-s2-champion"].selectionLimit, 640);
 });
 
 test("an unreadable or foreign document leaves every control on its default", () => {

@@ -96,7 +96,8 @@ export function inputExecutionOptions({ seed, profileId = INPUT_EXECUTION_PROFIL
     const valid = ['arr', 'das', 'dcd', 'sdf'].includes(key)
       ? Number.isFinite(value) && value >= 0 && value <= 60 && (key !== 'arr' || value === 0 || value >= 0.01)
       : ['safelock', 'cancel', 'may20g'].includes(key) ? typeof value === 'boolean'
-      : ['irs', 'ihs'].includes(key) && value === 'off';
+      : key === 'irs' ? ['off', 'tap', 'hold'].includes(value)
+      : key === 'ihs' && ['off', 'tap'].includes(value);
     if (!valid) throw new Error(`unsupported input handling ${key}`);
   }
   return {

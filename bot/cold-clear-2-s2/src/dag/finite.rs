@@ -1,7 +1,7 @@
-//! Known-only ADR-063 DAG. Legacy speculative layers cannot represent this state.
+//! Known-only DAG of the native S2 route. Legacy speculative layers cannot represent this state.
 //! Shares rank exploration, but closes finite frontiers instead of retrying them.
 use std::collections::BTreeSet;
-use ahash::AHashMap as HashMap;
+type HashMap<K, V> = std::collections::HashMap<K, V, crate::map::StateBuildHasher>;
 use std::rc::Rc;
 use rand::{Rng, SeedableRng};
 use serde_json::{json, Value as Json};
@@ -145,7 +145,7 @@ impl Search {
         let committed_nodes=self.nodes.len();
         let committed_counters=(self.lookups,self.hits,self.transition_reuses);
         // Witnesses with identical locked cells/spin share the transition, never the edge reward.
-        let mut transitions=HashMap::with_capacity_and_hasher(moves.len()/4+16,ahash::RandomState::default());
+        let mut transitions=HashMap::with_capacity_and_hasher(moves.len()/4+16,crate::map::StateBuildHasher);
         for (ordinal,(hold,mv)) in moves.into_iter().enumerate() {
             // Bounded cooperative cancellation; at most 16 constant-size lock transitions per poll.
             if ordinal%16==0 && stopped() {

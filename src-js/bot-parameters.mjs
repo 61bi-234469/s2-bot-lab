@@ -37,6 +37,11 @@ const F14_CORE_PARAMETERS = Object.freeze(CC2_PARAMETERS.map((parameter) =>
   parameter.key === "selectionLimit" ? Object.freeze({ ...parameter, maximum: 1_000_000 })
     : parameter.key === "queueDepth" ? Object.freeze({ ...parameter, minimum: 2 }) : parameter));
 
+// The current champion searches 2,048 selections by default (with tree reuse);
+// the other F14-core bots keep 512.
+const CHAMPION_PARAMETERS = Object.freeze(F14_CORE_PARAMETERS.map((parameter) =>
+  parameter.key === "selectionLimit" ? Object.freeze({ ...parameter, defaultValue: 2048 }) : parameter));
+
 /* Each GUI bot's display name and settings introduction, shared by both hosts.
    The project bots run oldest to newest; names describe the design, and only
    the parenthesis marks which one is the current champion. Descriptions give
@@ -123,14 +128,23 @@ export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
     ].join("\n"),
     parameters: F14_CORE_PARAMETERS,
   }),
-  "cc2-s2-champion": Object.freeze({
-    label: "Sold Slear — Legacy backup consistency (current champion)",
+  "cc2-s2-champion-backup": Object.freeze({
+    label: "Sold Slear — Legacy backup consistency (former champion)",
     description: [
-      "由来：2026年9月30日からの現チャンピオンで、この時点の固定版を Sold Slear と名付けました。REN attack gain 版のチャンピオンを土台にしています。",
+      "由来：2026年9月30日〜10月3日のチャンピオンで、この時点の固定版を Sold Slear と名付けました。REN attack gain 版のチャンピオンを土台にしています。",
       "調整・意図：探索木で、いちばん良かった手の値が下がっても親の値に反映されず、古い値が残ることがありました。値を更新するたびに親の値を子から計算し直し、古い値が残らないように直しました。評価の重みは REN attack gain 版のままです（kappa=0.1164, H=8, 評価重み 16 個 + REN 追加火力）。",
       "特徴：判断の仕組みと評価は REN attack gain 版と同じで、探索の値の更新だけが正しくなっています。開発版で、正式な評価（release-qualified）は受けていません。",
     ].join("\n"),
     parameters: F14_CORE_PARAMETERS,
+  }),
+  "cc2-s2-champion": Object.freeze({
+    label: "Sold Slear — 2,048 selections with tree reuse (current champion)",
+    description: [
+      "由来：2026年10月3日からの現チャンピオンです。Sold Slear（Legacy backup consistency）を土台にしています。",
+      "調整・意図：評価はそのままで、探索数を 512 から 2,048 に増やしました。前の手で探索した木のうち、実際に指した手の先を次の手に引き継ぎます（tree reuse、新しい探索は最低 256）。引き継ぎの条件に合う局面では、新しく探索する量を減らせます。評価の重みは Sold Slear と同じです（REN attack gain 版の kappa=0.1164, H=8, 評価重み 16 個 + REN 追加火力）。",
+      "特徴：探索の予算を増やした構成です。探索量は SELECTION で、置く間隔は PPS で調整できます。開発版で、正式な評価（release-qualified）は受けていません。",
+    ].join("\n"),
+    parameters: CHAMPION_PARAMETERS,
   }),
   "s2-simple": Object.freeze({
     label: "S2 placement bot",

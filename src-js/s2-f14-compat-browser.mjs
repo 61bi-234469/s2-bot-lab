@@ -49,6 +49,7 @@ export const F14_TUNABLE_WEIGHT_KEYS = Object.freeze([
   "spin_clears.1", "spin_clears.2", "spin_clears.3",
   "hole_columns", "leaf_ren_attack_gain",
   "root_danger_solvency_cap", "root_danger_solvency_gain", "legacy_backup_consistency",
+  "tree_reuse_floor",
 ]);
 const CANONICAL_SIGNED_DECIMAL = /^-?(?:0|[1-9]\d*)(?:\.\d*[1-9])?$/u;
 
@@ -68,6 +69,10 @@ function canonicalWeightOverrides(overrides) {
     }
     if (key === "legacy_backup_consistency" && value !== "1") {
       throw new Error(`F14 weightOverrides ${key} must be "1"`);
+    }
+    // Tree reuse floor: a positive integer; the core also bounds it by the selection budget.
+    if (key === "tree_reuse_floor" && !(/^[1-9]\d*$/u.test(value) && Number(value) <= 1_000_000)) {
+      throw new Error("F14 weightOverrides tree_reuse_floor must be a positive integer");
     }
     canonical[key] = value;
   }

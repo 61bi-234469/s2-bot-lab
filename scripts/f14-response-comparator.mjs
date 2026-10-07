@@ -18,6 +18,8 @@ export function firstResponseMismatch(left, right, { excludeDiagnostics = false,
 
   function visit(a, b, path) {
     if (path.length > 0 && excluded.has(path[path.length - 1])) return null;
+    // Tree reuse reports its own wall time.
+    if (path.length > 1 && path[path.length - 2] === "reuse" && path[path.length - 1] === "micros") return null;
     if (Object.is(a, b)) return null;
     if (Array.isArray(a) || Array.isArray(b)) {
       if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return path.join(".");
@@ -61,5 +63,5 @@ export function firstResponseMismatch(left, right, { excludeDiagnostics = false,
 }
 
 export function excludedResponseKeys({ excludeDiagnostics = false } = {}) {
-  return [...F14_TIMING_KEYS, ...(excludeDiagnostics ? ["diagnostics"] : [])];
+  return [...F14_TIMING_KEYS, "reuse.micros", ...(excludeDiagnostics ? ["diagnostics"] : [])];
 }

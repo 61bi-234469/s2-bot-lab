@@ -23,6 +23,9 @@ pub struct Bot {
     queue: VecDeque<Piece>,
     mode: ModeEnum,
     root_session: Option<Arc<RootObjectiveSession>>,
+    /// Tree reuse: the canonical F14 profile this tree was searched under
+    /// (session-side settings such as the leaf-conversion scale live there).
+    pub(crate) reuse_profile_key: Option<String>,
 }
 
 /// Entry for the existing root diagnostic executable. Each call
@@ -295,6 +298,11 @@ pub struct BotConfig {
     /// current best children even when the former best child was demoted.
     #[serde(default, skip_serializing_if = "is_false")]
     pub enable_legacy_backup_consistency: bool,
+    /// F14 sessions only: continue the previous request's Legacy tree when the
+    /// new root is reachable in it, with at least this many new selections.
+    /// 0 (absent) builds a fresh tree for every request.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub tree_reuse_floor: u64,
     /// Charge the real-board projected-height cost once on each amount-only tank edge.
     #[serde(default, skip_serializing_if = "is_false")]
     pub enable_s2_tank_risk_shaping: bool,
@@ -316,6 +324,7 @@ pub struct BotConfig {
 }
 
 fn is_false(value: &bool) -> bool { !*value }
+fn is_zero_u64(value: &u64) -> bool { *value == 0 }
 
 impl BotConfig {
     /// Reject combinations that would enable a reward without retaining the
@@ -390,6 +399,7 @@ impl Bot {
             mode: Freestyle::new(&options, root, queue).into(),
             options,
             root_session: None,
+            reuse_profile_key: None,
         }
     }
 
@@ -408,6 +418,113 @@ impl Bot {
 
     pub fn advance(&mut self, mv: Placement) {
         self.try_advance(mv).expect("Bot advance failed");
+    }
+
+    /// Tree reuse: continue this finished tree at `fresh`'s root. `fresh` is
+    /// what `create_bot` built for the new request. The root must be this
+    /// tree's root or one of its children with the same state; newly revealed
+    /// pieces are added unless the layer they despeculate was already expanded.
+    /// Returns the continued bot (no root session) and the expanded nodes it
+    /// inherits, or the reason the request starts fresh with the unusable bot,
+    /// so the host can retire it off the request's critical path.
+    pub(crate) fn reuse_for(self, fresh: &Bot, bag_unknown: bool) -> Result<(Bot, u64, bool), (Bot, &'static str)> {
+        let mut bot = self;
+        match bot.continue_at(fresh, bag_unknown) {
+            Ok((inherited, bag_differs)) => Ok((bot, inherited, bag_differs)),
+            Err(reason) => Err((bot, reason)),
+        }
+    }
+
+    /// Root states match on every field, except `bag` when the request carries
+    /// no bag state (`bag_state` empty, as every F14 host sends today): then
+    /// `create_bot` re-derives the bag as if the queue ended on a bag boundary,
+    /// and the derived bag shifts with the queue window. The continued tree
+    /// keeps the bag it advanced to, which also enters evaluation (T-slot
+    /// cutouts) and the layers beyond the known queue.
+    pub(crate) fn same_root(a: &GameState, b: &GameState, bag_unknown: bool) -> bool {
+        if bag_unknown { GameState { bag: b.bag, ..*a } == *b } else { a == b }
+    }
+
+    fn continue_at(&mut self, fresh: &Bot, bag_unknown: bool) -> Result<(u64, bool), &'static str> {
+        if self.reuse_profile_key.is_none() || self.reuse_profile_key != fresh.reuse_profile_key {
+            return Err("profile");
+        }
+        let config = |options: &BotOptions| serde_json::to_value(&*options.config).ok();
+        if self.options.speculate != fresh.options.speculate || config(&self.options) != config(&fresh.options) {
+            return Err("config");
+        }
+        let ModeEnum::Freestyle(_) = &self.mode;
+        if !(Self::same_root(&self.current, &fresh.current, bag_unknown) && self.queue == fresh.queue) {
+            let next = *self.queue.front().ok_or("queue")?;
+            let surge = self.options.config.enable_s2_b2b_surge;
+            let ModeEnum::Freestyle(mode) = &self.mode;
+            let actions = mode.reuse_root_actions().ok_or("unexpanded-root")?;
+            if actions.is_empty() {
+                return Err("dead-root");
+            }
+            let current = self.current;
+            let children: Vec<(Placement, GameState)> = actions
+                .into_iter()
+                .filter_map(|mv| {
+                    let mut state = current;
+                    state.try_advance_with_surge(next, mv, surge).ok().map(|_| (mv, state))
+                })
+                .collect();
+            let Some(&(mv, _)) = children.iter().find(|(_, state)| Self::same_root(state, &fresh.current, bag_unknown)) else {
+                // The first field no child matches (the next request differs there).
+                let target = fresh.current;
+                let board: Vec<_> = children.iter().filter(|(_, s)| s.board == target.board).collect();
+                return Err(if board.is_empty() {
+                    "no-child-board"
+                } else if !board.iter().any(|(_, s)| s.reserve == target.reserve) {
+                    "no-child-reserve"
+                } else if !bag_unknown && !board.iter().any(|(_, s)| s.reserve == target.reserve && s.bag == target.bag) {
+                    "no-child-bag"
+                } else {
+                    "no-child-chain"
+                });
+            };
+            self.try_advance(mv).map_err(|_| "advance")?;
+            if self.queue.len() > fresh.queue.len() || !self.queue.iter().zip(fresh.queue.iter()).all(|(a, b)| a == b) {
+                return Err("queue");
+            }
+            let revealed: Vec<Piece> = fresh.queue.iter().skip(self.queue.len()).copied().collect();
+            for piece in revealed {
+                let ModeEnum::Freestyle(mode) = &self.mode;
+                if mode.reuse_speculated_layer_expanded() {
+                    return Err("speculated-expanded");
+                }
+                self.new_piece(piece);
+            }
+        }
+        if !Self::same_root(&self.current, &fresh.current, bag_unknown) || self.queue != fresh.queue {
+            return Err("state");
+        }
+        let ModeEnum::Freestyle(mode) = &self.mode;
+        if mode.reuse_root_actions().is_some_and(|actions| actions.is_empty()) {
+            return Err("dead-root");
+        }
+        let inherited = mode.reuse_root_reachable_expanded() as u64;
+        self.root_session = None;
+        Ok((inherited, self.current.bag != fresh.current.bag))
+    }
+
+    /// Test access for tree reuse: the root's first child move and state, and
+    /// the known queue (current piece first).
+    #[cfg(test)]
+    pub(crate) fn current_state_for_test(&self) -> GameState {
+        self.current
+    }
+
+    #[cfg(test)]
+    pub(crate) fn first_root_child_for_test(&self) -> (Placement, GameState, Vec<Piece>) {
+        let ModeEnum::Freestyle(mode) = &self.mode;
+        let mv = mode.reuse_root_actions().expect("expanded root")[0];
+        let mut state = self.current;
+        state
+            .try_advance_with_surge(*self.queue.front().unwrap(), mv, self.options.config.enable_s2_b2b_surge)
+            .unwrap();
+        (mv, state, self.queue.iter().copied().collect())
     }
 
     pub fn new_piece(&mut self, piece: Piece) {

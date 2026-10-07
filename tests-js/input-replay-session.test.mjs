@@ -11,6 +11,127 @@ const confirm = (frame, iid = 1) => ({ frame, type: 'ige', data: { type: 'intera
 function source() { return { id: 'fixture', replay: { frames: 0, events: [], options: inputExecutionOptions({ seed: 42 }), results: { stats: { garbage: { sent: 0 } } } } }; }
 const session = () => createInputReplaySession(source(), { canonicalProfile: INPUT_EXECUTION_PROFILE.id });
 
+test('referee observations preserve raw replay identity, same-frame order and NEXT boundary', () => {
+  const replay = source();
+  replay.replay.options.nextcount = 5;
+  const observations = [];
+  const observed = createInputReplaySession(replay, { verifyCanonicalReplay: true,
+    onRefereeObservation: point => {
+      observations.push(structuredClone(point));
+      point.decision.board.cells = 'G'.repeat(400);
+      point.decision.pieces.known.push('I');
+    } });
+  const control = createInputReplaySession(replay, { verifyCanonicalReplay: true });
+  const events = [key(0, 'hold'), key(0, 'hold', 'keyup'), key(0, 'hardDrop'), key(0, 'hardDrop', 'keyup'),
+    key(0, 'hardDrop'), key(0, 'hardDrop', 'keyup')];
+  for (const run of [observed, control]) run.tick(events);
+  assert.deepEqual(observed.finish(), control.finish());
+  assert.deepEqual(observations.map(point => point.kind),
+    ['spawn', 'spawn', 'before-lock', 'spawn', 'lock', 'before-lock', 'spawn', 'lock', 'tick']);
+  assert.equal(observations[1].isHold, true);
+  assert.equal(observations[2].usedHold, true);
+  assert.equal(observations[5].pieceIndex, 1);
+  for (const point of observations) {
+    assert.equal(point.decision.pieces.known.length, 5);
+    assert.deepEqual(Object.keys(point.decision.incoming).sort(), ['dueThisLockRows', 'pendingRows']);
+    assert.equal('garbage' in point.decision, false);
+  }
+});
+
+test('referee observations require verified original replay and explicit NEXT count', () => {
+  assert.throws(() => createInputReplaySession(source(), { onRefereeObservation() {} }), /verified original/);
+  const missing = source();
+  delete missing.replay.options.nextcount;
+  assert.throws(() => createInputReplaySession(missing, { verifyCanonicalReplay: true, onRefereeObservation() {} }), /recorded NEXT/);
+  const replay = source();
+  replay.replay.options.nextcount = 0;
+  assert.throws(() => createInputReplaySession(replay, { verifyCanonicalReplay: true,
+    onRefereeObservation() {} }), /option mismatch: nextcount/);
+});
+
+test('canonical human replay verification preserves original queue, handling, and all replay observations', () => {
+  const replay = source();
+  replay.replay.options = inputExecutionOptions({ seed: 42, handling: { irs: 'tap', ihs: 'tap', das: 4.2 } });
+  const plain = createInputReplaySession(replay);
+  const checked = createInputReplaySession(replay, { verifyCanonicalReplay: true });
+  const live = createInputReplaySession(replay, { canonicalProfile: INPUT_EXECUTION_PROFILE.id });
+  const stripWitness = locks => locks.map(({ rotationEvidence, usedHold, ...lock }) => lock);
+  let differentQueueMinimumObserved = false;
+  for (let frame = 0; frame < 7; frame++) {
+    const events = [key(frame, 'rotateCW'), key(frame, 'rotateCW', 'keyup'), key(frame, 'hardDrop'), key(frame, 'hardDrop', 'keyup')];
+    for (const run of [plain, checked, live]) run.tick(events);
+    const view = checked.refereeView();
+    view.lastLock = stripWitness([view.lastLock])[0];
+    assert.deepEqual(view, plain.refereeView());
+    differentQueueMinimumObserved ||= live.refereeView().next.length !== checked.refereeView().next.length;
+  }
+  const original = plain.finish(), verified = checked.finish();
+  assert.equal(verified.canonicalLockVerification.comparedLocks, 7);
+  assert.deepEqual(verified.resolvedOptions, original.resolvedOptions);
+  assert.deepEqual(verified.initial, original.initial);
+  assert.deepEqual(verified.terminal, original.terminal);
+  assert.deepEqual(verified.visual, original.visual);
+  assert.deepEqual(verified.garbageEvents, original.garbageEvents);
+  assert.deepEqual(stripWitness(verified.locks), original.locks);
+  assert.equal(differentQueueMinimumObserved, true, 'replay must not inherit the bot queue minimum');
+  assert.throws(() => checked.publicState(), /active input profile required/);
+});
+
+test('canonical replay verification refuses mixed profiles and non-observed rule variants', () => {
+  assert.throws(() => createInputReplaySession(source(), { verifyCanonicalReplay: true, canonicalProfile: INPUT_EXECUTION_PROFILE.id }), /preserve the original/);
+  for (const key of ['g', 'gincrease', 'garbageincrease']) {
+    const replay = source();
+    replay.replay.options[key] = 0;
+    assert.throws(() => createInputReplaySession(replay, { verifyCanonicalReplay: true }), /option mismatch/);
+  }
+  for (const mode of ['unknown']) {
+    assert.throws(() => inputExecutionOptions({ seed: 1, handling: { irs: mode } }), /unsupported input handling irs/);
+  }
+  assert.throws(() => inputExecutionOptions({ seed: 1, handling: { ihs: 'hold' } }), /unsupported input handling ihs/);
+});
+
+test('IRS HOLD applies CW, CCW and 180 at real ARE-zero spawns and hold replacements with Simulator conformance', () => {
+  for (const [action, rotation] of [['rotateCW', 1], ['rotateCCW', 3], ['rotate180', 2]]) {
+    for (const irs of ['off', 'tap', 'hold']) {
+      const replay = source();
+      replay.replay.options = inputExecutionOptions({ seed: 42, handling: { irs } });
+      const run = createInputReplaySession(replay, { canonicalProfile: INPUT_EXECUTION_PROFILE.id });
+      run.tick([key(0, action)]);
+      run.tick([key(1, 'hardDrop'), key(1, 'hardDrop', 'keyup')]);
+      assert.equal(run.lockCount, 1);
+      const movement = run.publicState().movement;
+      assert.equal(movement.state & 128, 0, 'production spawn must not require sleep');
+      assert.equal(movement.falling.rotation, irs === 'hold' ? rotation : 0);
+      assert.equal(movement.falling.totalRotations, irs === 'hold' ? 1 : 0);
+      run.tick([key(2, 'hold'), key(2, 'hold', 'keyup')]);
+      assert.equal(run.publicState().movement.falling.rotation, irs === 'hold' ? rotation : 0,
+        'empty hold replacement uses the real pressed rotation key');
+      run.tick([key(3, action, 'keyup'), key(3, 'hardDrop'), key(3, 'hardDrop', 'keyup')]);
+      assert.equal(run.publicState().movement.falling.rotation, 0, 'released rotation must not carry into the next spawn');
+      const result = run.finish();
+      assert.equal(result.locks[1].usedHold, true);
+      assert.deepEqual(result.canonicalLockVerification, { comparedLocks: 2, scope: 'lock-and-garbage-queue', matched: true });
+    }
+  }
+});
+
+test('original replay conformance observes real IRS HOLD spawns without changing the Engine replay', () => {
+  const replay = source();
+  replay.replay.options = inputExecutionOptions({ seed: 42, handling: { irs: 'hold' } });
+  const plain = createInputReplaySession(replay);
+  const checked = createInputReplaySession(replay, { verifyCanonicalReplay: true });
+  const events = [[key(0, 'rotateCW')], [key(1, 'hardDrop'), key(1, 'hardDrop', 'keyup')],
+    [key(2, 'hold'), key(2, 'hold', 'keyup')], [key(3, 'hardDrop'), key(3, 'hardDrop', 'keyup')],
+    [key(4, 'rotateCW', 'keyup'), key(4, 'hardDrop'), key(4, 'hardDrop', 'keyup')]];
+  for (const frame of events) { plain.tick(frame); checked.tick(frame); }
+  const original = plain.finish(), result = checked.finish();
+  assert.equal(result.locks[1].rotation, 1);
+  assert.equal(result.canonicalLockVerification.comparedLocks, 3);
+  result.canonicalLockVerification = null;
+  result.locks = result.locks.map(({ rotationEvidence, usedHold, ...lock }) => lock);
+  assert.deepEqual(result, original);
+});
+
 test('display chunks survive partial double cancellation and stay separate from bot input', () => {
   const run = session();
   for (let frame = 0; frame <= 28; frame++) {
@@ -203,4 +324,61 @@ test('a STALL floor alone does not top out at the skyline but cannot exhaust the
     assert.deepEqual(run.applyStallPenaltyLine(), { rows, toppedOut: false });
   }
   assert.deepEqual(run.applyStallPenaltyLine(), { rows: 40, toppedOut: true });
+});
+
+test('a shift after a rotation clears the spin in the Engine label and the rotation evidence', () => {
+  // TETR.IO clears a spin on a successful shift (recorded clear stats of real
+  // rounds agree); the pinned Engine's input shift path kept lastSpin. A T
+  // rotates on row 1 over a hole and then shifts two columns before locking.
+  const tap = (frame, name) => [key(frame, name), key(frame, name, 'keyup')];
+  for (const [block, atRotation] of [[[7, 2], 'none'], [[3, 2], 'mini']]) {
+    const replay = source();
+    replay.replay.options = { ...inputExecutionOptions({ seed: 3 }), nextcount: 5 };
+    const cells = [...Array.from({ length: 10 }, (_, x) => [x, 0]).filter(([x]) => x !== 4), block];
+    const spins = [];
+    let current = null, locked = null;
+    const run = createInputReplaySession(replay, { verifyCanonicalReplay: true, initialGarbageCells: cells,
+      onRefereeObservation: point => {
+        current ??= point.decision.pieces.current;
+        if (point.kind === 'tick') spins.push(point.movement.lastSpin);
+        if (point.kind === 'lock') locked = point.lock;
+      } });
+    assert.equal(current, 'T');
+    run.tick(tap(0, 'rotateCW'));
+    run.tick([key(1, 'softDrop')]);
+    run.tick([key(2, 'softDrop', 'keyup')]);
+    run.tick(tap(3, 'rotateCCW'));
+    run.tick(tap(4, 'moveRight'));
+    run.tick(tap(5, 'moveRight'));
+    run.tick(tap(6, 'hardDrop'));
+    run.finish();
+    // At the rotation pose the spin is `atRotation`; at the lock pose a fresh
+    // rotation would give the other label. After the shift neither applies.
+    assert.equal(spins[3], atRotation);
+    assert.equal(spins[4], null);
+    assert.deepEqual(locked.cells, [[6, 2], [5, 1], [6, 1], [7, 1]]);
+    assert.equal(locked.clear.spin, 'none');
+    assert.equal(locked.rotationEvidence.lastInputWasRotation, false);
+  }
+});
+
+test('the stupid spin-bonus mode keeps a spin through a shift, as the Engine does', () => {
+  // The Engine's own movement paths skip their spin reset in this mode, so a
+  // rotate-then-shift lock still scores its spin there and only there.
+  const tap = (frame, name) => [key(frame, name), key(frame, name, 'keyup')];
+  const cells = Array.from({ length: 10 }, (_, x) => [x, 0]).filter(([x]) => x !== 5);
+  const clearFor = (spinbonuses) => {
+    const replay = source();
+    replay.replay.options = { ...inputExecutionOptions({ seed: 3 }), spinbonuses };
+    const run = createInputReplaySession(replay, { initialGarbageCells: cells });
+    run.tick([key(0, 'softDrop')]);
+    run.tick([key(1, 'softDrop', 'keyup')]);
+    run.tick(tap(2, 'rotate180'));
+    run.tick(tap(3, 'moveRight'));
+    run.tick(tap(4, 'hardDrop'));
+    const [lock] = run.finish().locks;
+    return [lock.clear.spin, lock.clear.lines, lock.attack];
+  };
+  assert.deepEqual(clearFor('stupid'), ['normal', 1, 3]);
+  assert.deepEqual(clearFor('all-mini+'), ['none', 1, 0]);
 });

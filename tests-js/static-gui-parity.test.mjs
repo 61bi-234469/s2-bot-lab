@@ -114,16 +114,24 @@ async function exerciseStaleOnePlayerProposal(makeSecondError) {
 
 test("static handler lists exactly the INPUT bots and You, unavailable without WASM", async () => {
   const capabilities = await request(createGuiRequestHandlers(), "GET", "/api/bots");
-  assert.deepEqual(capabilities.bots.map((bot) => bot.id), ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion", "human"]);
+  assert.deepEqual(capabilities.bots.map((bot) => bot.id), ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion-backup", "cc2-s2-champion", "human"]);
   assert.ok(capabilities.bots.filter((bot) => bot.id.startsWith("cc2-")).every((bot) => !bot.available));
   const available = await request(createGuiRequestHandlers({ cc2: { decideF14: async () => { throw new Error("must not run"); } } }), "GET", "/api/bots");
   const champion = available.bots.find((bot) => bot.id === "cc2-s2-champion");
   assert.equal(champion.parameters.some((parameter) => parameter.key === "engineProfile"), false);
   assert.equal(champion.execution.profileId, "f14-leaf-conversion-gated-b/1");
   assert.match(champion.description, /REN attack gain/);
-  assert.equal(Object.keys(champion.execution.weightOverrides).length, 18);
+  assert.equal(Object.keys(champion.execution.weightOverrides).length, 19);
   assert.equal(champion.execution.weightOverrides.leaf_ren_attack_gain, "1");
   assert.equal(champion.execution.weightOverrides.legacy_backup_consistency, "1");
+  assert.equal(champion.execution.weightOverrides.tree_reuse_floor, "256");
+  assert.equal(champion.execution.budget.selections, 2048);
+  // The Legacy backup consistency champion (Sold Slear) keeps its eighteen overrides at 512, without tree reuse.
+  const backup = available.bots.find((bot) => bot.id === "cc2-s2-champion-backup");
+  assert.equal(backup.fixedDecision, true);
+  assert.equal(Object.keys(backup.execution.weightOverrides).length, 18);
+  assert.equal(backup.execution.weightOverrides.tree_reuse_floor, undefined);
+  assert.equal(backup.execution.budget.selections, 512);
   // The REN attack gain champion keeps its seventeen overrides without backup consistency.
   const renGain = available.bots.find((bot) => bot.id === "cc2-s2-champion-ren-gain");
   assert.equal(renGain.fixedDecision, true);
@@ -305,7 +313,7 @@ test("selectors offer the upstream bots, then the project bots oldest to newest"
   const html = await readFile(new URL("../cc2-gui/index.html", import.meta.url), "utf8");
   const optionsFor = (id) => [...(html.match(new RegExp(`<select id="${id}">([\\s\\S]*?)</select>`))?.[1] ?? "")
     .matchAll(/<option value="([^"]+)"/g)].map((match) => match[1]);
-  const orderedBots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion"];
+  const orderedBots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion-backup", "cc2-s2-champion"];
   assert.deepEqual(new Set(orderedBots), new Set(Object.keys(INPUT_BOT_PROFILES)));
   assert.deepEqual(optionsFor("analysis-bot"), orderedBots);
   assert.doesNotMatch(html, /analysis-engine-profile|analysis-engine-control/);
@@ -324,6 +332,7 @@ const CHAMPION_HISTORY = Object.freeze([
   { id: "cc2-s2-champion-spsa-v1", args: "SPSA_V1_CHAMPION_PROFILE_ARGS" },
   { id: "cc2-s2-champion-spsa-v2", args: "SPSA_V2_CHAMPION_PROFILE_ARGS" },
   { id: "cc2-s2-champion-ren-gain", args: "REN_GAIN_CHAMPION_PROFILE_ARGS" },
+  { id: "cc2-s2-champion-backup", args: "BACKUP_CONSISTENCY_CHAMPION_PROFILE_ARGS" },
   { id: "cc2-s2-champion", args: "CHAMPION_PROFILE_ARGS" },
 ]);
 
@@ -421,7 +430,7 @@ test("CC2 pace is bot-specific and the former match-wide pace toggle is absent",
   const capability = (await request(createGuiRequestHandlers({ proposeCc2: async () => ({}) }), "GET", "/api/bots"))
     .bots.find((bot) => bot.id === "cc2-s2-champion");
   assert.equal(capability.fixedDecision, true);
-  assert.deepEqual(capability.execution.budget, { mode: "selection", selections: 512, maxMillis: 30000 });
+  assert.deepEqual(capability.execution.budget, { mode: "selection", selections: 2048, maxMillis: 30000 });
   assert.equal(capability.execution.profileId, "f14-leaf-conversion-gated-b/1");
   assert.deepEqual(capability.parameters.slice(0, 2).map(({ key, controlledBy }) => ({ key, controlledBy })), [
     { key: "ppsEnabled", controlledBy: undefined },
@@ -431,7 +440,7 @@ test("CC2 pace is bot-specific and the former match-wide pace toggle is absent",
   // within what the F14 core runs; the defaults are the champion.
   const byKey = Object.fromEntries(capability.parameters.map((parameter) => [parameter.key, parameter]));
   assert.equal(byKey.selectionLimit.maximum, 1_000_000);
-  assert.equal(byKey.selectionLimit.defaultValue, 512);
+  assert.equal(byKey.selectionLimit.defaultValue, 2048);
   assert.equal(byKey.thinkTimeEnabled.defaultValue, false);
   assert.equal(byKey.queueDepth.maximum, 28);
   assert.equal(byKey.queueDepth.minimum, 2);
@@ -463,8 +472,8 @@ test("static CC2 suggestion preserves the gated GUI response identity contract",
   assert.equal(body.info.version, "F14 gated leaf-conversion WASM");
   assert.equal(body.nativeDecision.profileId, "f14-leaf-conversion-gated-b/1");
   assert.equal(body.engine.botType, "cc2-s2-champion");
-  assert.equal(body.nativeDecision.search.actualSelections, 512);
-  assert.equal(proposalRequest.execution.budget.selections, 512);
+  assert.equal(body.nativeDecision.search.actualSelections, 2048);
+  assert.equal(proposalRequest.execution.budget.selections, 2048);
 });
 
 test("static CC2 champion always uses the fixed gated leaf-conversion profile", async () => {

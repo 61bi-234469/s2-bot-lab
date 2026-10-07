@@ -7,7 +7,7 @@ import { guiStateToCanonical } from "./gui-state.mjs";
 import { fullStateKey } from "./state-keys.mjs";
 import { applyTransition } from "./transition.mjs";
 import { createF14LeafConversionGatedProfile } from "./s2-f14-compat-browser.mjs";
-import { CHAMPION_PROFILE_ARGS, PREVIOUS_CHAMPION_PROFILE_ARGS, REN_GAIN_CHAMPION_PROFILE_ARGS, SPSA_V1_CHAMPION_PROFILE_ARGS, SPSA_V2_CHAMPION_PROFILE_ARGS } from "./champion-identity.mjs";
+import { BACKUP_CONSISTENCY_CHAMPION_PROFILE_ARGS, CHAMPION_PROFILE_ARGS, PREVIOUS_CHAMPION_PROFILE_ARGS, REN_GAIN_CHAMPION_PROFILE_ARGS, SPSA_V1_CHAMPION_PROFILE_ARGS, SPSA_V2_CHAMPION_PROFILE_ARGS } from "./champion-identity.mjs";
 import { EVALUATION_SCORE_SEMANTICS, evaluatorModelIdentity, extractEvaluationFeatures, scoreEvaluationFeatures } from "./evaluation.mjs";
 
 export { CHAMPION_PROFILE_ARGS, createChampionBaseProfile } from "./champion-identity.mjs";
@@ -23,13 +23,15 @@ export const CHAMPION_QUEUE_MAXIMUM = 28;
  * default budget. The former champions stay for comparison: profile-B
  * (2026-09-16..25), the gated profile at kappa 0.25 (2026-09-25..26) and the
  * SPSA v1 tuned profile (2026-09-26), the SPSA v2 tuned profile (2026-09-26..27)
- * and the REN attack gain profile (2026-09-27..30). */
+ * the REN attack gain profile (2026-09-27..30) and Legacy backup consistency
+ * (2026-09-30..10-03, Sold Slear). */
 const F14_CORE_BASE_PROFILES = Object.freeze({
   "cc2-s2-champion-profile-b": () => createPublicCompatProfile(),
   "cc2-s2-champion-previous": () => createF14LeafConversionGatedProfile(PREVIOUS_CHAMPION_PROFILE_ARGS),
   "cc2-s2-champion-spsa-v1": () => createF14LeafConversionGatedProfile(SPSA_V1_CHAMPION_PROFILE_ARGS),
   "cc2-s2-champion-spsa-v2": () => createF14LeafConversionGatedProfile(SPSA_V2_CHAMPION_PROFILE_ARGS),
   "cc2-s2-champion-ren-gain": () => createF14LeafConversionGatedProfile(REN_GAIN_CHAMPION_PROFILE_ARGS),
+  "cc2-s2-champion-backup": () => createF14LeafConversionGatedProfile(BACKUP_CONSISTENCY_CHAMPION_PROFILE_ARGS),
   "cc2-s2-champion": () => createF14LeafConversionGatedProfile(CHAMPION_PROFILE_ARGS),
 });
 export const F14_CORE_BOT_TYPES = Object.freeze(Object.keys(F14_CORE_BASE_PROFILES));
@@ -60,7 +62,8 @@ export function f14CoreEngineId(role, type) {
 
 /**
  * The champion's gated leaf-conversion F14 execution for GUI parameters. Its defaults
- * (512 selections, THINK TIME off, queue 14) are exactly the champion.
+ * (2,048 selections with tree reuse, THINK TIME off, queue 14) are exactly the champion;
+ * the former-champion bots default to 512.
  * THINK TIME becomes a host-clocked time budget with SELECTION as its cap;
  * only the WASM core runs it. `type` picks another gated-core bot's profile.
  */
@@ -71,7 +74,16 @@ export function createChampionProfile(parameters, type = "cc2-s2-champion") {
   const budget = parameters.thinkTimeEnabled
     ? { mode: "time", selections, maxMillis: parameters.thinkMs }
     : { ...base.budget, selections };
-  return Object.freeze({ ...base, budget: Object.freeze(budget) });
+  // Tree reuse runs only on a selection budget and needs a floor no larger than it:
+  // THINK TIME drops the key, a SELECTION below the floor lowers the floor to it.
+  const floor = base.weightOverrides?.tree_reuse_floor;
+  if (floor === undefined) return Object.freeze({ ...base, budget: Object.freeze(budget) });
+  const { tree_reuse_floor: _floor, ...rest } = base.weightOverrides;
+  const chosen = parameters.thinkTimeEnabled ? rest
+    : { ...rest, tree_reuse_floor: String(Math.min(Number(floor), selections)) };
+  // Same sorted key order as the profile factory's canonical weightOverrides.
+  const weightOverrides = Object.fromEntries(Object.keys(chosen).sort().map((key) => [key, chosen[key]]));
+  return Object.freeze({ ...base, budget: Object.freeze(budget), weightOverrides: Object.freeze(weightOverrides) });
 }
 
 export function assertChampionParameters(parameters) {

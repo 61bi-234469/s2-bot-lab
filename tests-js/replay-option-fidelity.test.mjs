@@ -57,3 +57,14 @@ test("replay option validation refuses unsupported non-default semantic values",
     );
   }
 });
+
+test("an end-only garbage multiplier is the ramped end state; the round starts at its base", () => {
+  // TETR.IO grows the multiplier by garbageincrease / 60 per frame after
+  // garbagemargin; a 14,819-frame round ends at 1 + 0.008 / 60 * 4,019.
+  const ended = (frame, garbagemultiplier, options = {}) => resolveTtrmOptions({ options, frames: frame,
+    events: [{ frame, type: "end", data: { options: { garbagemultiplier } } }] }).options.garbagemultiplier;
+  assert.equal(ended(14819, 1.5358666666666076), 1);
+  assert.equal(ended(9000, 1), 1, "a round inside the margin ends at its base");
+  assert.equal(ended(14819, 2.5358666666666076), 2, "a non-default base is recovered too");
+  assert.equal(ended(14819, 1.5358666666666076, { garbagemultiplier: 1.25 }), 1.25, "a recorded replay option still wins");
+});

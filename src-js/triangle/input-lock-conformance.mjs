@@ -72,6 +72,10 @@ export function createInputLockConformance(engine, rulesetId) {
       if (!enabled) return;
       rotationObserver.beforeTick(events);
     },
+    /** Referee-only witness for the active piece at a tick boundary. */
+    rotationEvidence() {
+      return enabled ? structuredClone(rotationObserver.evidenceForLock()) : null;
+    },
     beforeMerge() {
       if (!enabled) return null;
       rotationObserver.beforeMerge();
