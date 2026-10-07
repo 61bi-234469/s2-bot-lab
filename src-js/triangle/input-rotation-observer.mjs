@@ -3,6 +3,22 @@ import { performKick } from '@haelp/teto/engine';
 const NO_ROTATION = Object.freeze({ lastInputWasRotation: false, kickIndex: null, kickId: null, kickOffset: null });
 const ROTATIONS = Object.freeze({ rotateCW: 1, rotateCCW: -1, rotate180: 2 });
 const STATE_SLEEP = 128;
+// Engine state flags ROTATION_LEFT | ROTATION_RIGHT: set by every successful
+// rotation, cleared by a successful shift or a row change.
+const STATE_ROTATED = 1 | 2;
+
+/**
+ * TETR.IO clears a spin on a successful shift. The pinned Engine's input and
+ * DAS/ARR shift path clears its rotation flags but keeps `lastSpin`, so a
+ * rotate-then-shift lock would carry the spin judged at the rotation pose.
+ * Drop that stale value (recorded clear stats of real rounds agree). The
+ * `stupid` spin-bonus mode keeps a spin through movement by design (the
+ * Engine's own movement paths skip their reset there), so it is left alone.
+ */
+export function clearStaleSpin(engine) {
+  if (engine.gameOptions?.spinBonuses === "stupid") return;
+  if (engine.lastSpin !== null && (engine.state & STATE_ROTATED) === 0) engine.lastSpin = null;
+}
 
 /**
  * Referee-only observation of the Engine's actual rotation operations.
@@ -16,8 +32,8 @@ const STATE_SLEEP = 128;
  */
 export function createInputRotationObserver(engine) {
   if (engine === null || typeof engine !== 'object') throw new TypeError('an Engine instance is required');
-  if (engine.handling?.irs !== 'off' || engine.handling?.ihs !== 'off') {
-    throw new Error('canonical input rotation observer requires IRS/IHS off');
+  if (!['off', 'tap', 'hold'].includes(engine.handling?.irs) || !['off', 'tap'].includes(engine.handling?.ihs)) {
+    throw new Error('canonical input rotation observer requires IRS off/tap/hold and IHS off/tap');
   }
 
   let rotationWitness = null;
@@ -220,9 +236,11 @@ export function createInputRotationObserver(engine) {
 
     evidenceForLock() {
       verifyPrivateResult();
-      const evidence = engine.lastSpin !== null && rotationWitness?.falling === engine.falling
+      // Only a rotation that is still the last successful action is evidence.
+      const rotated = engine.lastSpin !== null && (engine.state & STATE_ROTATED) !== 0;
+      const evidence = rotated && rotationWitness?.falling === engine.falling
         ? rotationWitness.evidence : NO_ROTATION;
-      if (engine.lastSpin !== null && engine.lastSpin !== 'none' && rotationWitness?.falling !== engine.falling) {
+      if (rotated && engine.lastSpin !== 'none' && rotationWitness?.falling !== engine.falling) {
         throw new Error('unqualified spin evidence');
       }
       return evidence;

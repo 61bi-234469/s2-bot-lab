@@ -138,7 +138,7 @@ export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
     parameters: F14_CORE_PARAMETERS,
   }),
   "cc2-s2-champion": Object.freeze({
-    label: "CC2 S2 — 2,048 selections with tree reuse (current champion)",
+    label: "Sold Slear — 2,048 selections with tree reuse (current champion)",
     description: [
       "由来：2026年10月3日からの現チャンピオンです。Sold Slear（Legacy backup consistency）を土台にしています。",
       "調整・意図：評価はそのままで、探索数を 512 から 2,048 に増やしました。前の手で探索した木のうち、実際に指した手の先を次の手に引き継ぎます（tree reuse、新しい探索は最低 256）。引き継ぎの条件に合う局面では、新しく探索する量を減らせます。評価の重みは Sold Slear と同じです（REN attack gain 版の kappa=0.1164, H=8, 評価重み 16 個 + REN 追加火力）。",

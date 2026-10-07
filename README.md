@@ -45,7 +45,7 @@ tuned and why, and how it plays.
 - Sold Slear — Legacy backup consistency (former champion): the REN attack gain design, with every
   search backup re-deriving the parent's value from its current best children so a demoted former
   best no longer leaves a stale value
-- CC2 S2 — 2,048 selections with tree reuse (current champion): Sold Slear searched at 2,048
+- Sold Slear — 2,048 selections with tree reuse (current champion): Sold Slear searched at 2,048
   selections, continuing the previous move's search tree below the move actually played (tree
   reuse, at least 256 new selections per move); development-only, not release-qualified
 

@@ -70,6 +70,11 @@ export const DEFAULT_TTRM_OPTIONS = Object.freeze({
  *   DEFAULT_TTRM_OPTIONS < end.data.options < replay.options
  * A key present in both recorded sources with different values is reported as a
  * warning rather than silently resolved.
+ *
+ * `garbagemultiplier` in the end event is the multiplier the round ended with:
+ * after `garbagemargin` frames it grows by `garbageincrease / 60` per frame.
+ * When replay.options does not record it, the round's starting base is that
+ * value minus the ramp up to the end event's frame, never the ramped value.
  */
 export function resolveTtrmOptions(playerReplay) {
   const endEvent = playerReplay.events.find((event) => event.type === "end");
@@ -87,6 +92,10 @@ export function resolveTtrmOptions(playerReplay) {
   }
 
   const options = { ...DEFAULT_TTRM_OPTIONS, ...endOptions, ...replayOptions };
+  if (!Object.hasOwn(replayOptions, "garbagemultiplier") && Object.hasOwn(endOptions, "garbagemultiplier")) {
+    options.garbagemultiplier = baseGarbageMultiplier(endOptions.garbagemultiplier, options,
+      endEvent.frame ?? playerReplay.frames);
+  }
   const unsupported = validateReplayOptions(options);
   if (unsupported.length > 0) {
     const details = unsupported
@@ -96,4 +105,11 @@ export function resolveTtrmOptions(playerReplay) {
     throw new TtrmError("validate", `unsupported replay option value: ${details}`);
   }
   return { warnings, options };
+}
+
+function baseGarbageMultiplier(endValue, options, endFrame) {
+  if (typeof endValue !== "number" || !Number.isFinite(endValue) || !Number.isSafeInteger(endFrame)) return endValue;
+  const ramp = options.garbageincrease / 60 * Math.max(0, endFrame - options.garbagemargin);
+  // The Engine accumulates the ramp one frame at a time; drop that float drift.
+  return Math.round((endValue - ramp) * 1e9) / 1e9;
 }

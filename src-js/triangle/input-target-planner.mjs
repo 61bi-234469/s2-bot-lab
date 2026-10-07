@@ -2,7 +2,7 @@ import { Engine, Tetromino, kickData, legal } from '@haelp/teto/engine';
 import { buildEngineConfig, inputExecutionOptions, INPUT_EXECUTION_PROFILE } from '../replay/engine-config.mjs';
 import { assertInputDecisionRequest } from '../input-decision-request.mjs';
 import { validateInputPublicMovement, projectInputPublicMovement } from './input-public-movement.mjs';
-import { createInputRotationObserver } from './input-rotation-observer.mjs';
+import { clearStaleSpin, createInputRotationObserver } from './input-rotation-observer.mjs';
 import { dynamicValue } from '../dynamic-values.mjs';
 import { MAX_TTRM_FRAMES_PER_PLAYER } from '../replay/ttrm-parser.mjs';
 
@@ -80,6 +80,8 @@ export function planInputTarget(request, movement, candidate, {
     let lock = null;
     const stop = {};
     engine.board.add = () => {
+      // Predict the lock label the game engine will produce.
+      clearStaleSpin(engine);
       observer.beforeMerge();
       lock = { cells: cellKey(engine.falling.absoluteBlocks), piece: engine.falling.symbol.toUpperCase(),
         rotation: engine.falling.rotation, spin: engine.lastSpin ?? 'none',

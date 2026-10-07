@@ -49,14 +49,13 @@
     },
     {
       "id": "hold-i-tuck-after-floor",
-      "source": "recorded INPUT match position (player 1, lock 17) at a fresh spawn; the bot's first-choice placement; the target witness is non-rotation, and the Engine closes the tuck with a kicked CW whose lock projects identically (spin none), which the resolver accepts after re-projection",
+      "source": "recorded INPUT match position (player 1, lock 17) at a fresh spawn; the bot's first-choice placement; the target witness is non-rotation; the route closes the tuck with a kicked CW and then a one-cell left shift, which clears the rotation (TETR.IO parity: the lock evidence is non-rotation and the spin none)",
       "board": "_GGGGGGGGG_GGGGGGGGG_GGGGGGGGG_GGGGGGGGG_GGGGGGGGGGGGG_GGGGGSTTLIIII_JOOTL_____J_SSZZ___ZZ__SS___ZZJ_______JJJ",
       "pieces": { "current": "T", "hold": "I", "holdAvailable": true, "known": ["L", "O", "J", "T", "L", "I", "O", "S", "Z", "O", "J", "I", "T", "S"] },
       "expectedPlacement": {
         "piece": "I", "rotation": "spawn", "x": 4, "y": 5, "usedHold": true,
         "rotationEvidence": { "lastInputWasRotation": false, "kickIndex": null, "kickId": null, "kickOffset": null }
       },
-      "expectedLockEvidence": { "lastInputWasRotation": true, "kickIndex": 2, "kickId": "30", "kickOffset": [1, -2] },
       "expectedSpin": "none",
       "expectedLines": 0
     },

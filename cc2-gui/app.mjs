@@ -16,6 +16,7 @@ import {
 } from "./match-clock.mjs";
 import { calculatePlayerMetrics, formatGameClock } from "./player-metrics.mjs";
 import {
+  BOT_DEFAULTS_REVISION,
   CONTROL_PREFERENCE_IDS,
   GUI_MODES,
   PREFERENCES_STORAGE_KEY,
@@ -378,6 +379,7 @@ function savePreferences() {
       toggles: Object.fromEntries(TOGGLE_PREFERENCE_IDS.map((id) => [id, elements[id].checked])),
       botParameters,
       humanControls,
+      botDefaultsRevision: BOT_DEFAULTS_REVISION,
     }));
   } catch {
     // Nothing to recover: the session keeps running with unsaved settings.
@@ -768,6 +770,15 @@ function humanSettingsFields() {
         input.append(option);
       }
       input.value = String(humanControls.handling[field.key]);
+    } else if (field.type === "select") {
+      input = document.createElement("select");
+      for (const choice of field.choices) {
+        const option = document.createElement("option");
+        option.value = choice.value;
+        option.textContent = choice.label;
+        input.append(option);
+      }
+      input.value = humanControls.handling[field.key];
     } else if (field.type === "boolean") {
       input = document.createElement("input");
       input.type = "checkbox";
@@ -859,6 +870,7 @@ function saveHumanSettings() {
   const handling = Object.fromEntries(HUMAN_HANDLING_FIELDS.map((field) => {
     const input = form.elements.namedItem(`human-handling-${field.key}`);
     if (field.type === "boolean") return [field.key, input.checked];
+    if (field.type === "select") return [field.key, input.value];
     if (field.type === "sdf") {
       return [field.key, input.value === SDF_INFINITE ? SDF_INFINITE : Number(input.value)];
     }
@@ -1187,7 +1199,9 @@ function renderAnalysisEngineIdentity() {
   elements["comparison-engine-label"].textContent = `${label.toUpperCase()} · S2 VERIFIED`;
   const fixed = capability?.fixedDecision === true;
   elements["think-ms"].disabled = fixed;
-  elements["think-ms"].title = fixed ? "championの単体解析は既定設定（512 selections）で判断します。対戦時の設定は SETTINGS で変更できます" : "";
+  elements["think-ms"].title = fixed
+    ? `championの単体解析は既定設定（${defaultBotParameters(botType).selectionLimit.toLocaleString("en-US")} selections）で判断します。対戦時の設定は SETTINGS で変更できます`
+    : "";
   const count = elements["candidate-count"];
   if (fixed && count.value !== "1") {
     count.dataset.previousCount = count.value;

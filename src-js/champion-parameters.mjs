@@ -62,7 +62,8 @@ export function f14CoreEngineId(role, type) {
 
 /**
  * The champion's gated leaf-conversion F14 execution for GUI parameters. Its defaults
- * (512 selections, THINK TIME off, queue 14) are exactly the champion.
+ * (2,048 selections with tree reuse, THINK TIME off, queue 14) are exactly the champion;
+ * the former-champion bots default to 512.
  * THINK TIME becomes a host-clocked time budget with SELECTION as its cap;
  * only the WASM core runs it. `type` picks another gated-core bot's profile.
  */
