@@ -1,4 +1,4 @@
-//! ADR-063 state/value contract for the opt-in s2-native-integrated/1 route.
+//! Native S2 state/value contract for the opt-in s2-native-integrated/1 route.
 //! The finite DAG and transport use this contract; legacy data/Eval stay intact.
 use crate::data::{Board, Piece, PieceLocation, Rotation};
 use ordered_float::OrderedFloat;

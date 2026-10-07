@@ -13,7 +13,7 @@ struct CliOptions {
     #[structopt(long)]
     profile: bool,
 
-    /// Explicit ADR-063 process profile JSON; never enables the GUI/default route
+    /// Explicit native S2 process profile JSON; never enables the GUI/default route
     #[structopt(long)]
     native_profile: Option<String>,
 
@@ -21,7 +21,7 @@ struct CliOptions {
     #[structopt(long)]
     integrated_profile: Option<String>,
 
-    /// Development-only F14 amount-only compat profile JSON; never enables ADR-063
+    /// Development-only F14 amount-only compat profile JSON; never enables the native S2 route
     #[structopt(long)]
     f14_compat_profile: Option<String>,
 

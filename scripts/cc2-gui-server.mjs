@@ -1417,7 +1417,7 @@ function parseArguments(args) {
   const f14ChampionBinary = null;
   const f14WasmLocator = f14WasmArgument?.slice("--f14-wasm=".length) ?? process.env.CC2_F14_WASM;
   // Like the native executables, the champion's WASM core defaults to the
-  // repository build output; it never replaces an explicit --f14-champion.
+  // repository build output unless --f14-wasm or CC2_F14_WASM names another.
   const f14WasmFallback = fileURLToPath(new URL(
     "../bot/cold-clear-2-s2/target/wasm32-unknown-unknown/release/cold_clear_2_s2.wasm", import.meta.url));
   const f14InputWasm = resolve(f14WasmLocator ?? f14WasmFallback);

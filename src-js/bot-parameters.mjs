@@ -37,8 +37,8 @@ const F14_CORE_PARAMETERS = Object.freeze(CC2_PARAMETERS.map((parameter) =>
   parameter.key === "selectionLimit" ? Object.freeze({ ...parameter, maximum: 1_000_000 })
     : parameter.key === "queueDepth" ? Object.freeze({ ...parameter, minimum: 2 }) : parameter));
 
-// The current champion searches 2,048 selections by default (tree reuse keeps the
-// per-move cost near half of that); the other F14-core bots keep 512.
+// The current champion searches 2,048 selections by default (with tree reuse);
+// the other F14-core bots keep 512.
 const CHAMPION_PARAMETERS = Object.freeze(F14_CORE_PARAMETERS.map((parameter) =>
   parameter.key === "selectionLimit" ? Object.freeze({ ...parameter, defaultValue: 2048 }) : parameter));
 
@@ -142,7 +142,7 @@ export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
     description: [
       "由来：2026年10月3日からの現チャンピオンです。Sold Slear（Legacy backup consistency）を土台にしています。",
       "調整・意図：評価はそのままで、探索数を 512 から 2,048 に増やしました。前の手で探索した木のうち、実際に指した手の先を次の手に引き継ぎます（tree reuse、新しい探索は最低 256）。引き継ぎの条件に合う局面では、新しく探索する量を減らせます。評価の重みは Sold Slear と同じです（REN attack gain 版の kappa=0.1164, H=8, 評価重み 16 個 + REN 追加火力）。",
-      "特徴：探索の予算を増やした構成です。1 手の探索に 512 の版より時間がかかるため、PPS 上限なしの対戦では置くのが遅くなることがあります（SELECTION や PPS で調整できます）。開発版で、正式な評価（release-qualified）は受けていません。",
+      "特徴：探索の予算を増やした構成です。探索量は SELECTION で、置く間隔は PPS で調整できます。開発版で、正式な評価（release-qualified）は受けていません。",
     ].join("\n"),
     parameters: CHAMPION_PARAMETERS,
   }),

@@ -1,4 +1,4 @@
-//! In-process F14 amount-only selector. Public input only; no ADR-063 rootAmounts.
+//! In-process F14 amount-only selector. Public input only; no native-route rootAmounts.
 
 use super::prefix::{
     build_f14_prefix, final_pose_key, spin_rank, AcceptedCandidate, CanonicalPlacement,

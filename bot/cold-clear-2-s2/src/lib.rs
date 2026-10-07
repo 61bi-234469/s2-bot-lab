@@ -28,9 +28,9 @@ pub(crate) mod time {
     pub use instant::Instant;
 }
 pub mod movegen;
-// ADR-063 native S2 state/value contract; no transport feature is advertised.
+// Native S2 state/value contract; no transport feature is advertised.
 pub mod native_s2;
-// F14 amount-only selector port on the legacy TBP path, separate from the ADR-063 native route.
+// F14 amount-only selector port on the legacy TBP path, separate from the native S2 route.
 pub mod f14_compat;
 pub mod s2_core;
 pub mod s2_eval;

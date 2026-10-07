@@ -1,4 +1,4 @@
-//! Known-only ADR-063 DAG. Legacy speculative layers cannot represent this state.
+//! Known-only DAG of the native S2 route. Legacy speculative layers cannot represent this state.
 //! Shares rank exploration, but closes finite frontiers instead of retrying them.
 use std::collections::BTreeSet;
 type HashMap<K, V> = std::collections::HashMap<K, V, crate::map::StateBuildHasher>;

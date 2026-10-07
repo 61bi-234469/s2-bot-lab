@@ -1,4 +1,4 @@
-//! Legacy-path F14 envelope. Not ADR-063 `s2-native-integrated/1` transport.
+//! Legacy-path F14 envelope. Not the native `s2-native-integrated/1` transport.
 #[cfg(test)]
 use super::select::{
     apply_residual_rescue, select_f14_amount_only_limited, select_f14_public_limited,
