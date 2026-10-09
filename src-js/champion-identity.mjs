@@ -82,16 +82,35 @@ export const BACKUP_CONSISTENCY_CHAMPION_PROFILE_ARGS = Object.freeze({
   weightOverrides: Object.freeze({ ...REN_GAIN_CHAMPION_PROFILE_ARGS.weightOverrides, legacy_backup_consistency: "1" }),
 });
 
-// The current champion (2026-10-03): Legacy backup consistency searched at
-// 2,048 selections with the search tree kept across requests
-// (tree_reuse_floor 256). Its decisions depend on the request sequence.
-export const CHAMPION_PROFILE_ARGS = Object.freeze({
+// The champion 2026-10-03..10-10: Legacy backup consistency searched at 2,048
+// selections with the search tree kept across requests (tree_reuse_floor 256).
+// Its decisions depend on the request sequence. Kept as a former-champion GUI bot.
+export const TREE_REUSE_CHAMPION_PROFILE_ARGS = Object.freeze({
   ...BACKUP_CONSISTENCY_CHAMPION_PROFILE_ARGS,
   selections: 2048,
   weightOverrides: Object.freeze({ ...BACKUP_CONSISTENCY_CHAMPION_PROFILE_ARGS.weightOverrides, tree_reuse_floor: "256" }),
 });
 
-/** The champion's gated profile at its default budget (2,048 selections, tree reuse). */
+// The current champion (2026-10-10): the tree-reuse champion with ten
+// clear-type and B2B weights retuned by SPSA for attack per piece.
+export const CHAMPION_PROFILE_ARGS = Object.freeze({
+  ...TREE_REUSE_CHAMPION_PROFILE_ARGS,
+  weightOverrides: Object.freeze({
+    ...TREE_REUSE_CHAMPION_PROFILE_ARGS.weightOverrides,
+    "normal_clears.1": "-0.1243",
+    "normal_clears.2": "1.1979",
+    "normal_clears.3": "2.5124",
+    "normal_clears.4": "2.5434",
+    tetris_well_depth: "0.2938",
+    has_back_to_back: "7.3547",
+    back_to_back_clear: "5.3267",
+    combo_attack: "2.3463",
+    "mini_spin_clears.1": "-0.1177",
+    wasted_t: "-3.4694",
+  }),
+});
+
+/** The champion's gated profile at its default budget (2,048 selections, tree reuse, v7 weights). */
 export function createChampionBaseProfile() {
   return createF14LeafConversionGatedProfile(CHAMPION_PROFILE_ARGS);
 }

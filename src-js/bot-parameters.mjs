@@ -37,8 +37,8 @@ const F14_CORE_PARAMETERS = Object.freeze(CC2_PARAMETERS.map((parameter) =>
   parameter.key === "selectionLimit" ? Object.freeze({ ...parameter, maximum: 1_000_000 })
     : parameter.key === "queueDepth" ? Object.freeze({ ...parameter, minimum: 2 }) : parameter));
 
-// The current champion searches 2,048 selections by default (with tree reuse);
-// the other F14-core bots keep 512.
+// The current champion and the tree-reuse former champion search 2,048
+// selections by default (with tree reuse); the other F14-core bots keep 512.
 const CHAMPION_PARAMETERS = Object.freeze(F14_CORE_PARAMETERS.map((parameter) =>
   parameter.key === "selectionLimit" ? Object.freeze({ ...parameter, defaultValue: 2048 }) : parameter));
 
@@ -137,12 +137,21 @@ export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
     ].join("\n"),
     parameters: F14_CORE_PARAMETERS,
   }),
-  "cc2-s2-champion": Object.freeze({
-    label: "Sold Slear — 2,048 selections with tree reuse (current champion)",
+  "cc2-s2-champion-tree-reuse": Object.freeze({
+    label: "Sold Slear — 2,048 selections with tree reuse (former champion)",
     description: [
-      "由来：2026年10月3日からの現チャンピオンです。Sold Slear（Legacy backup consistency）を土台にしています。",
+      "由来：2026年10月3日〜10日のチャンピオンです。Sold Slear（Legacy backup consistency）を土台にしています。",
       "調整・意図：評価はそのままで、探索数を 512 から 2,048 に増やしました。前の手で探索した木のうち、実際に指した手の先を次の手に引き継ぎます（tree reuse、新しい探索は最低 256）。引き継ぎの条件に合う局面では、新しく探索する量を減らせます。評価の重みは Sold Slear と同じです（REN attack gain 版の kappa=0.1164, H=8, 評価重み 16 個 + REN 追加火力）。",
       "特徴：探索の予算を増やした構成です。探索量は SELECTION で、置く間隔は PPS で調整できます。開発版で、正式な評価（release-qualified）は受けていません。",
+    ].join("\n"),
+    parameters: CHAMPION_PARAMETERS,
+  }),
+  "cc2-s2-champion": Object.freeze({
+    label: "Sold Slear — SPSA v7 APP-tuned weights (current champion)",
+    description: [
+      "由来：2026年10月10日からの現チャンピオンです。2,048 selections with tree reuse 版を土台にしています。",
+      "調整・意図：1 手あたりの火力（APP）を目的にした自己対戦による自動調整（SPSA v7）で、ライン消去の種類ごとの重み（1〜4 ライン）、テトリス用の縦穴の深さ、B2B の維持と継続、コンボ火力、ミニスピンの 1 ライン消去、T の無駄の 10 個を決め直しました。1 ラインだけの通常消去は加点から小さな減点に変わりました。探索の設定（2,048 selections、tree reuse）は土台と同じです。",
+      "特徴：判断の仕組みと探索は土台と同じで、評価の重み 10 個だけが違います。探索量は SELECTION で、置く間隔は PPS で調整できます。開発版で、正式な評価（release-qualified）は受けていません。",
     ].join("\n"),
     parameters: CHAMPION_PARAMETERS,
   }),

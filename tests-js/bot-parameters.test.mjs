@@ -111,7 +111,7 @@ test("capabilities are safe to serialize for the GUI", () => {
 // Names describe each bot's design; only the parenthesis marks the current
 // champion. Every introduction gives origin, tuning/intent and character.
 test("GUI bots have design names and a three-part introduction", () => {
-  const bots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion-backup", "cc2-s2-champion"];
+  const bots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion-backup", "cc2-s2-champion-tree-reuse", "cc2-s2-champion"];
   for (const id of bots) {
     const { label, description } = botParameterCapability(id);
     assert.doesNotMatch(label, /development champion/);
@@ -122,7 +122,8 @@ test("GUI bots have design names and a three-part introduction", () => {
   }
   assert.equal(bots.filter((id) => /\(current champion\)/.test(botParameterCapability(id).label)).length, 1);
   assert.match(botParameterCapability("cc2-s2-champion").label, /\(current champion\)/);
-  assert.match(botParameterCapability("cc2-s2-champion").description, /kappa=0\.1164/);
+  assert.match(botParameterCapability("cc2-s2-champion").description, /SPSA v7/);
+  assert.match(botParameterCapability("cc2-s2-champion-tree-reuse").description, /kappa=0\.1164/);
   assert.match(botParameterCapability("cc2-s2-champion").description, /release-qualified/);
   assert.match(botParameterCapability("cc2-s2-champion-previous").description, /κ=0\.25/);
 });
