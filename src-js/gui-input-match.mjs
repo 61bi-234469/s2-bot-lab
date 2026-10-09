@@ -52,6 +52,10 @@ const nativeInputStateWithoutIncoming = state => {
   const { incoming: _incoming, ...native } = state;
   return native;
 };
+// Incoming row amounts change neither a piece's movement nor its lock cells,
+// so a finished decision or plan stays executable when only they change. The
+// next piece decides on the new amounts.
+const withoutIncoming = state => ({ ...state, decision: { ...state.decision, incoming: null } });
 const RERANK_FALLBACK_REASONS = new Set(['rerank-mismatch', 'rerank-unavailable', 'f14-rerank-unsupported']);
 function isRerankFallback(value) {
   if (RERANK_FALLBACK_REASONS.has(value?.reason)) return true;
@@ -163,7 +167,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
                 publicStateMismatches: 0, lateResponses: 0, replans: 0, noInputResponses: 0, championReranks: 0, championSpeculations: 0, championSpeculationHits: 0,
                 pathBudgetWaits: 0, lastPathBudgetWait: null,
                 inputPlanReuses: 0, decisionMs: 0, planningMs: 0,
-                incomingChanges: 0, incomingWaitSamples: 0, incomingWaitFrames: 0, incomingWaitMaxFrames: 0,
+                incomingChanges: 0, incomingWaitSamples: 0, incomingWaitFrames: 0, incomingWaitMaxFrames: 0, incomingStaleAdoptions: 0,
                 resolutionOutcomes: { preferred: 0, fallback: 0, notFound: 0, stale: 0 },
                 fallbackReasons: {}, pacedLocks: 0, deadlineExceededLocks: 0 }])),
             handicap: handicapTerrain === null
@@ -371,7 +375,13 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
     if (frame < ready.startFrame) return;
     delete session.ready[id];
     const late = frame !== ready.startFrame;
-    if (late || !equal(session.round.publicState(id), ready.boundary)) {
+    const current = session.round.publicState(id);
+    // A negative forecast keeps the exact boundary: it is replanned, never
+    // turned into a wait or a stop, after any public change.
+    const matches = ready.status === 'planned'
+      ? equal(withoutIncoming(current), withoutIncoming(ready.boundary))
+      : equal(current, ready.boundary);
+    if (late || !matches) {
       session.diagnostics[id][late ? 'lateResponses' : 'publicStateMismatches']++;
       session.misses[id] = (session.misses[id] ?? 0) + 1;
       return;
@@ -394,6 +404,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
       void runtime.closeSessions({ sessionKeys: session.keys });
       throw new Error(session.failure);
     }
+    if (!equal(current.decision.incoming, ready.boundary.decision.incoming)) session.diagnostics[id].incomingStaleAdoptions++;
     session.plans[id] = ready.plan;
     session.selections[id] = ready.selection;
     session.misses[id] = 0;
@@ -546,15 +557,10 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
       const latest = session.round.publicState(id);
       if (!equal(identity, pieceIdentity(latest))) return;
       const latestState = nativeInputState(latest.decision, parameters, type);
-      if (!equal(proposed.state, latestState)) {
-        if (F14_CORE_TYPES.has(type) && proposed.coreDecision === true &&
-            equal(nativeInputStateWithoutIncoming(proposed.state), nativeInputStateWithoutIncoming(latestState))) {
-          // Keep the finished search as a rerank basis. Its incoming rows are
-          // stale, so this result must not be sent to the planner.
-          session.proposals[id] = proposed;
-        }
-        return;
-      }
+      // A decision whose incoming rows changed while it ran is still planned:
+      // under consecutive garbage, waiting for one on current rows can stall
+      // the piece for as long as the rows keep changing.
+      if (!equal(nativeInputStateWithoutIncoming(proposed.state), nativeInputStateWithoutIncoming(latestState))) return;
       session.proposals[id] = proposed;
       if (proposed.status === 'no-input') {
         session.diagnostics[id].noInputResponses++;

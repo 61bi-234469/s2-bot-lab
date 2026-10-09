@@ -138,8 +138,10 @@ test(`champion INPUT ${rerankMismatch ? 'falls back on rerank mismatch' : 'reran
     },
     resolveInput: async payload => {
       resolutions.push(structuredClone(payload));
-      // The paced first plan crosses garbage maturity; it must be reranked
-      // before deciding whether its input route can be reused.
+      // A plan adopted across an incoming change keeps its decision, so the
+      // rerank is reached by missing every boundary until the garbage matures:
+      // the replan then finds only incoming rows changed since the search.
+      if (payload.request.decision.incoming.dueThisLockRows === 0) return { status: 'stale' };
       return resolveInputJob(payload);
     },
     closeSessions: async () => {},
@@ -172,7 +174,8 @@ test(`champion INPUT ${rerankMismatch ? 'falls back on rerank mismatch' : 'reran
   assert.equal(view.bots[1].inputExecution.championReranks, rerankMismatch ? 0 : 1);
   assert.equal(view.bots[1].inputExecution.championSpeculationHits, 0,
     'this incoming-only re-finalization is not a next-piece speculation hit');
-  assert.equal(view.bots[1].inputExecution.inputPlanReuses, !rerankMismatch && sameTarget ? 1 : 0);
+  // Every earlier boundary was missed, so no route was cached to reuse.
+  assert.equal(view.bots[1].inputExecution.inputPlanReuses, 0);
   await handlers.handle({ method: 'POST', path: '/api/input-match/close', body: { sessionId: started.sessionId } });
 });
 
@@ -631,7 +634,8 @@ test('GUI input diagnostics retain only the last consumed fallback summary', asy
 });
 
 for (const firstNotFound of [false, true])
-test(`incoming maturity discards a stale ${firstNotFound ? 'not-found' : 'plan'} and replans with cached native proposals`, async t => {
+test(firstNotFound ? 'incoming maturity discards a stale not-found and replans with cached native proposals'
+  : 'incoming maturity keeps a finished plan executable instead of replanning it', async t => {
   const tick = Engine.prototype.tick;
   let receiver;
   t.mock.method(Engine.prototype, 'tick', function(events) {
@@ -672,26 +676,32 @@ test(`incoming maturity discards a stale ${firstNotFound ? 'not-found' : 'plan'}
     await flush();
     if (result.body.bots[1].stats.turns > 0) break;
   }
-  assert.ok(resolutions.length >= 2);
+  // The next piece may already be resolving on its own fresh proposal.
+  assert.equal(resolutions.filter(resolution => resolution.proposalCount === 1).length, firstNotFound ? 2 : 1);
   assert.equal(resolutions[0].payload.request.decision.incoming.dueThisLockRows, 0);
-  assert.equal(resolutions[1].payload.request.decision.incoming.dueThisLockRows, 4);
-  assert.equal(resolutions[1].proposalCount, 1);
+  if (firstNotFound) {
+    assert.equal(resolutions[1].payload.request.decision.incoming.dueThisLockRows, 4);
+    assert.equal(resolutions[1].proposalCount, 1);
+    assert.deepEqual(resolutions[0].payload.request.moves, resolutions[1].payload.request.moves);
+  }
   assert.equal(rerankCalls, 0);
   assert.equal(proposals[0].thinkMs, 250);
-  assert.deepEqual(resolutions[0].payload.request.moves, resolutions[1].payload.request.moves);
   const stats = result.body.bots[1].inputExecution;
-  assert.equal(stats.publicStateMismatches, 1);
-  assert.equal(stats.replans, 1);
-  assert.equal(stats.inputPlanReuses, firstNotFound ? 0 : 1);
+  // Only the negative forecast is discarded; the plan locks at its own
+  // boundary although the 4-row packet matured on the way there.
+  assert.equal(stats.publicStateMismatches, firstNotFound ? 1 : 0);
+  assert.equal(stats.incomingStaleAdoptions, firstNotFound ? 0 : 1);
+  assert.equal(stats.replans, firstNotFound ? 1 : 0);
+  assert.equal(stats.inputPlanReuses, 0);
   assert.ok(stats.incomingChanges > 0);
   assert.equal(stats.incomingWaitSamples, 1);
   assert.ok(stats.incomingWaitFrames > 0);
   assert.equal(stats.plannedLocks, 1);
   assert.equal(stats.naturalLocks, 0);
-  assert.equal(stats.resolutionOutcomes.preferred, firstNotFound ? 1 : 2);
+  assert.equal(stats.resolutionOutcomes.preferred, 1);
   assert.equal(stats.resolutionOutcomes.notFound, firstNotFound ? 1 : 0);
   assert.equal(stats.pacedLocks, 1);
-  assert.equal(stats.deadlineExceededLocks, 1);
+  assert.equal(stats.deadlineExceededLocks, firstNotFound ? 1 : 0);
   // The next piece has a different native input and must obtain fresh proposals.
   assert.equal(proposals.length, 2);
   await handlers.handle({ method: 'POST', path: '/api/input-match/close', body: { sessionId: started.sessionId } });
