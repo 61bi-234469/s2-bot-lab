@@ -52,7 +52,7 @@ export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
     description: [
       "由来：MinusKelvin 氏の Cold Clear 2（upstream ed8b193）を、同じ局面・同じ設定なら同じ手を返すように移植したものです。",
       "調整・意図：S2 向けの変更は加えていません。ほかの Bot と比べるときの出発点です。",
-      "特徴：通常のテトリス向けの評価で探索し、S2 固有の火力・B2B チャージ・せり上がりの規則は考慮しません。",
+      "特徴：S2 以外の通常ルール向けの評価で探索し、S2 固有の火力・B2B チャージ・せり上がりの規則は考慮しません。",
     ].join("\n"),
     parameters: CC2_PARAMETERS,
   }),
@@ -114,7 +114,7 @@ export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
     label: "CC2 S2 — SPSA-tuned v2 (former champion)",
     description: [
       "由来：2026年9月26日〜27日のチャンピオンです（SPSA 2 回目）。SPSA 1 回目のチャンピオンを土台にしています。",
-      "調整・意図：1 回目の重み 8 個に、B2B の消去・ブロックの覆いかぶさり・上段 1/4 の高さ・スピン消去・テトリス・T の無駄などの重み 8 個を加えた 16 個を、自己対戦による自動調整（SPSA）で決め直しました（kappa=0.1164, H=8）。",
+      "調整・意図：1 回目の重み 8 個に、B2B の消去・ブロックの覆いかぶさり・上段 1/4 の高さ・スピン消去・Quad・T の無駄などの重み 8 個を加えた 16 個を、自己対戦による自動調整（SPSA）で決め直しました（kappa=0.1164, H=8）。",
       "特徴：判断の仕組み（F14 コア、CC2 の順位どおり、root rescue）は SPSA 1 回目と同じです。探索の中の REN 追加火力はいつも 0 のままで、REN attack gain 版との比較用です。",
     ].join("\n"),
     parameters: F14_CORE_PARAMETERS,
@@ -150,7 +150,7 @@ export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
     label: "Sold Slear — SPSA v7 APP-tuned weights (current champion)",
     description: [
       "由来：2026年10月10日からの現チャンピオンです。2,048 selections with tree reuse 版を土台にしています。",
-      "調整・意図：1 手あたりの火力（APP）を目的にした自己対戦による自動調整（SPSA v7）で、ライン消去の種類ごとの重み（1〜4 ライン）、テトリス用の縦穴の深さ、B2B の維持と継続、コンボ火力、ミニスピンの 1 ライン消去、T の無駄の 10 個を決め直しました。1 ラインだけの通常消去は加点から小さな減点に変わりました。探索の設定（2,048 selections、tree reuse）は土台と同じです。",
+      "調整・意図：1 手あたりの火力（APP）を目的にした自己対戦による自動調整（SPSA v7）で、ライン消去の種類ごとの重み（1〜4 ライン）、Quad 用の縦穴の深さ、B2B の維持と継続、コンボ火力、ミニスピンの 1 ライン消去、T の無駄の 10 個を決め直しました。1 ラインだけの通常消去は加点から小さな減点に変わりました。探索の設定（2,048 selections、tree reuse）は土台と同じです。",
       "特徴：判断の仕組みと探索は土台と同じで、評価の重み 10 個だけが違います。探索量は SELECTION で、置く間隔は PPS で調整できます。開発版で、正式な評価（release-qualified）は受けていません。",
     ].join("\n"),
     parameters: CHAMPION_PARAMETERS,

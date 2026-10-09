@@ -49,7 +49,7 @@ tuned and why, and how it plays.
   selections, continuing the previous move's search tree below the move actually played (tree
   reuse, at least 256 new selections per move)
 - Sold Slear — SPSA v7 APP-tuned weights (current champion): the tree-reuse design with ten
-  evaluation weights (line clear types, the Tetris well depth, B2B, combo attack, mini spin
+  evaluation weights (line clear types, the Quad well depth, B2B, combo attack, mini spin
   singles and wasted T) retuned by SPSA for attack per piece; development-only, not
   release-qualified
 

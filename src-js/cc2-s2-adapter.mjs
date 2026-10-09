@@ -68,7 +68,7 @@ const CC2_S2_SPIN_WITNESS_INDEX_ID = "s2-positive-spin-witness-index/1";
 const CC2_S2_ENGINE_FRAME_WITNESS_INDEX_ID = "s2-engine-frame-witness-index/1";
 export const S2_REACHABLE_PLACEMENT_FRONTIER_ID = "s2-reachable-placement-frontier/1";
 
-// CC2 remains a standard-Tetris proposer. Its spin label is not authoritative:
+// CC2 remains a standard-rules proposer. Its spin label is not authoritative:
 // the accepted final pose is independently matched to a reachable S2 rotation
 // and kick witness. This deliberately allows an S2 All Spin even when CC2 calls
 // the move non-spin. Frame-exact reachability remains outside this lightweight
