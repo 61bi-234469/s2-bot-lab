@@ -50,7 +50,7 @@ import { lockedPieceCells, toS2GuiState, createGame, extendSeededQueue,
 const HUMAN_BOT = Object.freeze({ id: "human", available: true, ...botParameterCapability("human") });
 // The GUI offers exactly the bots TTRM INPUT admits; the local server offers the same set.
 const CC2_LABELS = Object.freeze(Object.fromEntries(["cc2-raw", "cc2-chouhy", "cc2-s2-f14",
-  "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion-backup", "cc2-s2-champion"]
+  "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion-backup", "cc2-s2-champion-tree-reuse", "cc2-s2-champion"]
   .map((id) => [id, BOT_PARAMETER_DEFINITIONS[id].label])));
 /**
  * Transport-neutral browser API. Native CC2 engines are deliberately absent;
@@ -640,7 +640,8 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
   function cc2MatchSearchBudget(activeSession, botId, dueCount) {
     const parameters = activeSession.botParameters[botId];
     const budget = cc2SearchBudget(parameters);
-    if (activeSession.humanSide !== null || parameters.ppsEnabled === false || !parameters.thinkTimeEnabled) return budget;
+    // PPS-on caps THINK TIME to the bot's own lock cadence, also against a human (as TTRM INPUT does).
+    if (parameters.ppsEnabled === false || !parameters.thinkTimeEnabled) return budget;
     return {
       ...budget,
       thinkMs: realtimeCc2ThinkMs({

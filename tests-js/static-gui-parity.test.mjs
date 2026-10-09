@@ -114,18 +114,27 @@ async function exerciseStaleOnePlayerProposal(makeSecondError) {
 
 test("static handler lists exactly the INPUT bots and You, unavailable without WASM", async () => {
   const capabilities = await request(createGuiRequestHandlers(), "GET", "/api/bots");
-  assert.deepEqual(capabilities.bots.map((bot) => bot.id), ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion-backup", "cc2-s2-champion", "human"]);
+  assert.deepEqual(capabilities.bots.map((bot) => bot.id), ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion-backup", "cc2-s2-champion-tree-reuse", "cc2-s2-champion", "human"]);
   assert.ok(capabilities.bots.filter((bot) => bot.id.startsWith("cc2-")).every((bot) => !bot.available));
   const available = await request(createGuiRequestHandlers({ cc2: { decideF14: async () => { throw new Error("must not run"); } } }), "GET", "/api/bots");
   const champion = available.bots.find((bot) => bot.id === "cc2-s2-champion");
   assert.equal(champion.parameters.some((parameter) => parameter.key === "engineProfile"), false);
   assert.equal(champion.execution.profileId, "f14-leaf-conversion-gated-b/1");
-  assert.match(champion.description, /REN attack gain/);
-  assert.equal(Object.keys(champion.execution.weightOverrides).length, 19);
+  assert.match(champion.description, /SPSA v7/);
+  // The tree-reuse champion's nineteen overrides plus five new SPSA v7 keys (five more are retuned).
+  assert.equal(Object.keys(champion.execution.weightOverrides).length, 24);
   assert.equal(champion.execution.weightOverrides.leaf_ren_attack_gain, "1");
   assert.equal(champion.execution.weightOverrides.legacy_backup_consistency, "1");
   assert.equal(champion.execution.weightOverrides.tree_reuse_floor, "256");
+  assert.equal(champion.execution.weightOverrides["normal_clears.1"], "-0.1243");
   assert.equal(champion.execution.budget.selections, 2048);
+  // The tree-reuse champion keeps its nineteen overrides at 2,048 with tree reuse.
+  const treeReuse = available.bots.find((bot) => bot.id === "cc2-s2-champion-tree-reuse");
+  assert.match(treeReuse.description, /REN attack gain/);
+  assert.equal(Object.keys(treeReuse.execution.weightOverrides).length, 19);
+  assert.equal(treeReuse.execution.weightOverrides.tree_reuse_floor, "256");
+  assert.equal(treeReuse.execution.weightOverrides["normal_clears.1"], undefined);
+  assert.equal(treeReuse.execution.budget.selections, 2048);
   // The Legacy backup consistency champion (Sold Slear) keeps its eighteen overrides at 512, without tree reuse.
   const backup = available.bots.find((bot) => bot.id === "cc2-s2-champion-backup");
   assert.equal(backup.fixedDecision, true);
@@ -313,7 +322,7 @@ test("selectors offer the upstream bots, then the project bots oldest to newest"
   const html = await readFile(new URL("../cc2-gui/index.html", import.meta.url), "utf8");
   const optionsFor = (id) => [...(html.match(new RegExp(`<select id="${id}">([\\s\\S]*?)</select>`))?.[1] ?? "")
     .matchAll(/<option value="([^"]+)"/g)].map((match) => match[1]);
-  const orderedBots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion-backup", "cc2-s2-champion"];
+  const orderedBots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion-backup", "cc2-s2-champion-tree-reuse", "cc2-s2-champion"];
   assert.deepEqual(new Set(orderedBots), new Set(Object.keys(INPUT_BOT_PROFILES)));
   assert.deepEqual(optionsFor("analysis-bot"), orderedBots);
   assert.doesNotMatch(html, /analysis-engine-profile|analysis-engine-control/);
@@ -333,6 +342,7 @@ const CHAMPION_HISTORY = Object.freeze([
   { id: "cc2-s2-champion-spsa-v2", args: "SPSA_V2_CHAMPION_PROFILE_ARGS" },
   { id: "cc2-s2-champion-ren-gain", args: "REN_GAIN_CHAMPION_PROFILE_ARGS" },
   { id: "cc2-s2-champion-backup", args: "BACKUP_CONSISTENCY_CHAMPION_PROFILE_ARGS" },
+  { id: "cc2-s2-champion-tree-reuse", args: "TREE_REUSE_CHAMPION_PROFILE_ARGS" },
   { id: "cc2-s2-champion", args: "CHAMPION_PROFILE_ARGS" },
 ]);
 
@@ -1203,7 +1213,7 @@ test("static bot-only match starts same-frame proposals in parallel", async () =
   assert.equal(result.status, 200, JSON.stringify(result.body));
 });
 
-test("static bot-only caps PPS-on think time but 1P keeps the configured budget", async () => {
+test("static PPS-on think time is capped to the lock cadence in bot-only and 1P matches", async () => {
   const observed = [];
   const cc2 = {
     async propose({ state, thinkMs }) {
@@ -1228,7 +1238,8 @@ test("static bot-only caps PPS-on think time but 1P keeps the configured budget"
     rightParameters: { ppsEnabled: true, pps: 4, thinkTimeEnabled: true, thinkMs: 250 },
   });
   await request(onePlayer, "POST", "/api/match/step", { lockFrame: 0 });
-  assert.equal(observed.shift(), 250);
+  // The bot's own cadence (4 PPS = 250 ms, 70%), not the configured 250 ms: PPS wins.
+  assert.equal(observed.shift(), 175);
 });
 
 test("fixed-selection bot-only rounds remain byte-identical for the same seed and settings", async () => {

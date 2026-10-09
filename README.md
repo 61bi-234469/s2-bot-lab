@@ -18,7 +18,7 @@ development build is published under `preview/`. The development URL is marked `
 - deterministic browser-WASM Cold Clear 2: raw upstream, the chouhy fork, the S2 `F14` development
   snapshot, and the current S2 development champion (not release-qualified)
 
-The bot selectors (single analysis and bot-vs-bot) offer the same eleven bots as TTRM INPUT, plus You (1P)
+The bot selectors (single analysis and bot-vs-bot) offer the same twelve bots as TTRM INPUT, plus You (1P)
 on the left; the local Node server offers the same list. The two upstream ports come first, then the
 project's bots from oldest to newest, keeping past champions. Names describe each design; only the
 parenthesis marks the current champion. Each bot's SETTINGS panel opens with its origin, what was
@@ -45,9 +45,13 @@ tuned and why, and how it plays.
 - Sold Slear — Legacy backup consistency (former champion): the REN attack gain design, with every
   search backup re-deriving the parent's value from its current best children so a demoted former
   best no longer leaves a stale value
-- Sold Slear — 2,048 selections with tree reuse (current champion): Sold Slear searched at 2,048
+- Sold Slear — 2,048 selections with tree reuse (former champion): Sold Slear searched at 2,048
   selections, continuing the previous move's search tree below the move actually played (tree
-  reuse, at least 256 new selections per move); development-only, not release-qualified
+  reuse, at least 256 new selections per move)
+- Sold Slear — SPSA v7 APP-tuned weights (current champion): the tree-reuse design with ten
+  evaluation weights (line clear types, the Quad well depth, B2B, combo attack, mini spin
+  singles and wasted T) retuned by SPSA for attack per piece; development-only, not
+  release-qualified
 
 The champion's defaults (2,048 selections with tree reuse, THINK TIME off, queue 14) are the
 champion itself; SELECTION, THINK TIME, QUEUE DEPTH and PPS can be changed like the other bots.

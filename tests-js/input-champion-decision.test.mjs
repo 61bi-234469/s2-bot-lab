@@ -337,7 +337,9 @@ test("champion INPUT match locks the WASM F14 core selection, also under incomin
     }
     // The champion's decisions depend on the request sequence (tree reuse), so a
     // fresh core session replaying every core call in order answers identically.
-    assert.ok(decisions.some(({ response }) => response.search?.reuse?.reused), "the match continued the search tree");
+    // A speculative search continues the tree too; when every piece is served by
+    // a speculation rerank, no fresh decision is left to show the reuse.
+    assert.ok(coreCalls.some(({ response }) => response?.search?.reuse?.reused), "the match continued the search tree");
     const withoutWallTime = (response) => { const copy = structuredClone(response); if (copy?.search?.reuse) delete copy.search.reuse.micros; return copy; };
     const fresh = await createCc2WasmSession({ wasmBytes });
     try {
