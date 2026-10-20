@@ -110,7 +110,9 @@ export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTim
     },
 
     // A predicted next request searched on the live worker; its result stays
-    // retained there for rerankF14. A failure only loses the head start.
+    // retained there for rerankF14. A failure only loses the head start. The
+    // INPUT queue prefix (`inputSpeculation`) uses the core's INPUT
+    // speculation start, the only start whose rerank accepts the longer queue.
     async speculateF14(payload) {
       const { sessionKey, type, engine } = payload ?? {};
       if (engine?.botType !== type || engine?.engineId !== type) {
@@ -121,7 +123,9 @@ export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTim
         throw new Error("CC2 F14 speculation is unavailable");
       }
       if (entry.workerSession === null) await entry.initializing;
-      return entry.workerSession.decideF14(payload);
+      return payload.inputSpeculation === true
+        ? entry.workerSession.speculateInputF14(payload)
+        : entry.workerSession.decideF14(payload);
     },
 
     async rerankF14(payload) {
@@ -153,8 +157,14 @@ export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTim
       if (!entry || entry.engine !== payload.request.type) throw new Error('input worker session mismatch');
       clearIdleClose(entry);
       try {
+        // The session's engine worker must be up (its failure fails the plan
+        // too); the plan itself runs on a resolution-only worker of its own,
+        // so a search on the engine worker (the next piece's speculation)
+        // never delays it.
         if (entry.workerSession === null) await entry.initializing;
-        const result = await entry.workerSession.resolveInput(payload);
+        entry.resolver ??= createWorkerSession({ WorkerType, engine: entry.engine, selectionLimit: null, resolverOnly: true });
+        const resolver = await entry.resolver;
+        const result = await resolver.resolveInput(payload);
         if (sessions.get(payload.request.sessionKey) !== entry) throw new Error('input worker session replaced');
         scheduleIdleClose(payload.request.sessionKey, entry);
         return result;
@@ -186,6 +196,7 @@ export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTim
       inputCandidates,
       selectionLimit,
       workerSession: null,
+      resolver: null,
       idleTimer: null,
     };
     sessions.set(sessionKey, entry);
@@ -207,10 +218,11 @@ export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTim
     sessions.delete(sessionKey);
     clearIdleClose(entry);
     await entry.workerSession?.close();
+    await (await entry.resolver?.catch(() => null))?.close();
   }
 }
 
-async function createWorkerSession({ WorkerType, engine, selectionLimit }) {
+async function createWorkerSession({ WorkerType, engine, selectionLimit, resolverOnly = false }) {
   const wasm = engine === "cc2-raw" ? "./cold_clear_2_upstream.wasm" : engine === "cc2-chouhy" ? "./cold_clear_2_chouhy.wasm" : "./cold_clear_2_s2.wasm";
   const workerUrl = new URL("./cc2-worker.bundle.js", import.meta.url);
   workerUrl.searchParams.set("v", globalThis.__CC2_WORKER_VERSION__ ?? "dev");
@@ -247,13 +259,14 @@ async function createWorkerSession({ WorkerType, engine, selectionLimit }) {
     pending.set(id, { resolve, reject });
     worker.postMessage({ id, type, payload });
   });
-  const configUrl = ["cc2-s2-champion", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion-backup", "cc2-s2-champion-tree-reuse", "cc2-s2-champion-previous", "cc2-s2-champion-profile-b", "cc2-s2-champion-legacy"].includes(engine)
+  const configUrl = ["cc2-s2-champion", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion-backup", "cc2-s2-champion-tree-reuse", "cc2-s2-champion-spsa-v7", "cc2-s2-champion-spsa-v10", "cc2-s2-champion-previous", "cc2-s2-champion-profile-b", "cc2-s2-champion-legacy"].includes(engine)
     ? "./cc2-s2-spawn-integrity-substrate-v2.json"
     : !engine.startsWith("cc2-s2")
       ? null
       : "./cc2-s2-spin-value-aligned.json";
   try {
-    await request("init", { engine, wasm, configUrl, selectionLimit, searchSeed: "5994928009864282113" });
+    await request("init", resolverOnly ? { engine, resolverOnly: true }
+      : { engine, wasm, configUrl, selectionLimit, searchSeed: "5994928009864282113" });
   } catch (error) {
     worker.terminate();
     throw error;
@@ -262,6 +275,7 @@ async function createWorkerSession({ WorkerType, engine, selectionLimit }) {
     suggest: ({ state, thinkMs }) => request("suggest", { state, thinkMs }),
     resolve: (payload) => request("resolve", payload),
     decideF14: (payload) => request("decideF14", payload),
+    speculateInputF14: (payload) => request("speculateInputF14", payload),
     rerankF14: (payload) => request("rerankF14", payload),
     resolveInput: (payload) => request('resolveInput', payload),
     async close() {

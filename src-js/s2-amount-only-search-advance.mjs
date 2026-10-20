@@ -45,8 +45,10 @@ export function amountOnlySearchAttack(lockPublic) {
     throw new Error("amount-only search-attack requires boolean perfectClear");
   }
   requireU8(lockPublic?.comboAfter, "comboAfter");
-  requireU8(lockPublic?.b2bAfter, "b2bAfter");
-  requireU8(lockPublic?.b2bBefore, "b2bBefore");
+  // B2B has no cap, as in the canonical Simulator (fixed 2026-10-19: a u8
+  // B2B rejected every B2B-continuing clear at B2B 255).
+  requireU32(lockPublic?.b2bAfter, "b2bAfter");
+  requireU32(lockPublic?.b2bBefore, "b2bBefore");
   if (lines === 0) return 0;
 
   let base = searchAttackBase(lines, spin);
@@ -60,12 +62,14 @@ export function amountOnlySearchAttack(lockPublic) {
   const pcBonus = lockPublic.perfectClear ? 5 : 0;
   const broke = spin === "none" && lines < 4 && !lockPublic.perfectClear;
   const surge = broke && lockPublic.b2bBefore >= 4 ? lockPublic.b2bBefore - 1 : 0;
-  return raw + pcBonus + surge;
+  // Saturates at u32 like the Rust search attack (only the >255 overflow arm
+  // ever reads such a value).
+  return Math.min(raw + pcBonus + surge, 0xffffffff);
 }
 
 export function advanceS2AmountOnlySearchState(incoming, lockPublic) {
-  const pending = requireU8(incoming?.pendingRows, "pendingRows");
-  const due = requireU8(incoming?.dueThisLockRows, "dueThisLockRows");
+  const pending = requireU16(incoming?.pendingRows, "pendingRows");
+  const due = requireU16(incoming?.dueThisLockRows, "dueThisLockRows");
   if (due > pending) {
     throw new Error("amount-only search-advance requires dueThisLockRows <= pendingRows");
   }
@@ -85,7 +89,8 @@ export function advanceS2AmountOnlySearchState(incoming, lockPublic) {
   }
 
   const outgoingBeforeCancel = amountOnlySearchAttack(lockPublic);
-  if (outgoingBeforeCancel > 255) {
+  // Rows are u16 (2026-10-20): the overflow arm starts past 65,535 rows.
+  if (outgoingBeforeCancel > 0xffff) {
     return freezeAdvance({
       cancelledRows: 0,
       tankRows: 0,
@@ -162,6 +167,13 @@ function freezeAdvance(fields) {
 function requireU32(value, label) {
   if (!Number.isSafeInteger(value) || value < 0 || value > 0xffffffff) {
     throw new Error(`amount-only search-advance requires a u32 ${label}`);
+  }
+  return value;
+}
+
+function requireU16(value, label) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 0xffff) {
+    throw new Error(`amount-only search-advance requires a u16 ${label}`);
   }
   return value;
 }

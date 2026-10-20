@@ -412,9 +412,30 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
     return add.apply(this, args);
   };
 
+  // A piece that spawns overlapping the stack (after a lock or a HOLD, once
+  // Clutch has had its chance) is a block out, as in TETR.IO: the player has
+  // topped out, and no later input of that tick runs. Otherwise a later input
+  // could move the piece free before the round's end-of-tick top-out check,
+  // and Engine 4.2.7, which arms its IHS flag on that spawn, would then hold
+  // the next piece by itself.
+  let blockedOut = false;
+  // The current tick's input as Engine runs it, and the index it has reached.
+  let tickInput = null;
+  let tickIndex = -1;
   // HOLD and the post-lock spawn take effect on this raw frame rather than at
   // the end of the tick. Several spawns inside one frame collapse to the last.
   engine.events.on("falling.new", ({ isHold }) => {
+    if (engine.toppedOut) {
+      blockedOut = true;
+      if (tickInput !== null) {
+        // Engine runs a tick's events in order and re-reads their count.
+        tickInput.length = tickIndex + 1;
+        // A key event advances the subframe (where a natural lock can happen)
+        // before it reads its key: the key then does nothing.
+        const current = tickInput[tickIndex];
+        if (current !== undefined && (current.type === "keydown" || current.type === "keyup")) current.data.key = "blockedOut";
+      }
+    }
     recordActive(engine.frame);
     recordQueue(engine.frame);
     observe('spawn', { isHold });
@@ -586,7 +607,7 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
     get failure() { return failure; },
     get lockCount() { return locks.length; },
     get processingMs() { return processingMs; },
-    get toppedOut() { return engine.toppedOut; },
+    get toppedOut() { return blockedOut || engine.toppedOut; },
     get stallPenaltyRows() { return stallPenaltyRows; },
     get initialGarbageCellCount() { return initialGarbageCellCount; },
     refereeLastLock() { return structuredClone(locks.at(-1) ?? null); },
@@ -597,7 +618,7 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
         current: engine.falling.symbol.toUpperCase(), hold: engine.held?.toUpperCase() ?? null,
         next: Array.from(engine.queue).map(value => value.toUpperCase()),
         activeCells: engine.falling.absoluteBlocks.map(cell => [...cell]),
-        holdAvailable: !engine.holdLocked, toppedOut: engine.toppedOut,
+        holdAvailable: !engine.holdLocked, toppedOut: blockedOut || engine.toppedOut,
         stats: structuredClone(engine.stats), lastLock: structuredClone(locks.at(-1) ?? null),
         // Display-only amounts/readiness. No packet identity, hole or RNG is exposed.
         // Readiness means arrival for a hard drop now; cap/FIFO/clear blocking
@@ -671,7 +692,10 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
           confirmSenderFrames.set(key, pendingFrames);
         }
         if (!externallyMutated) conformance?.beforeTick(consumed);
-        engine.tick(consumed);
+        tickInput = consumed.map((event, index) => ({ ...event,
+          data: event.data !== null && typeof event.data === "object" ? { ...event.data } : event.data,
+          get type() { tickIndex = index; return event.type; } }));
+        try { engine.tick(tickInput); } finally { tickInput = null; tickIndex = -1; }
         // Published movement (planner start states, observations) shows the
         // same spin the next merge will use.
         clearStaleSpin(engine);

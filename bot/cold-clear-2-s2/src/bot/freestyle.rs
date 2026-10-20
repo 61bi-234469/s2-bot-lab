@@ -8,9 +8,10 @@ use rand::{rngs::StdRng, SeedableRng};
 use serde::{Deserialize, Serialize};
 
 use super::evaluation_features::{
-    cell_coveredness, row_transitions, tetris_well_depth, well_known_tslot_left,
-    well_known_tslot_right,
+    cell_coveredness_from, row_transitions, tetris_well_depth_from, well_known_tslot,
 };
+#[cfg(test)]
+use super::evaluation_features::{well_known_tslot_left, well_known_tslot_right};
 use super::{BotOptions, Mode, ModeSwitch, Statistics};
 use crate::dag::{ChildData, Dag, Evaluation, LegacyRootSnapshot};
 use crate::data::*;
@@ -224,6 +225,9 @@ impl Freestyle {
             {
                 puffin::profile_scope!("eval");
                 for next in next_possibilities {
+                    // Capacity only: at most one child per listed move.
+                    children[next].reserve(moves[next].len()
+                        + if next == state.reserve { 0 } else { moves[state.reserve].len() });
                     let moves = moves[next].iter().chain(if next == state.reserve {
                         [].iter()
                     } else {
@@ -457,7 +461,7 @@ fn evaluate_with_surge(
     enable_s2_tank_risk_shaping: bool,
     enable_s2_b2b_surge: bool,
     is_root_edge: bool,
-    pending_rows_before_lock: u8,
+    pending_rows_before_lock: u16,
 ) -> (Eval, Reward) {
     let real_board = state.board;
     let mut eval = 0.0;
@@ -539,7 +543,7 @@ fn evaluate_with_surge(
         + (state.bag.len() <= 3) as usize;
     for _ in 0..cutout_count {
         let location =
-            well_known_tslot_left(&state.board).or_else(|| well_known_tslot_right(&state.board));
+            well_known_tslot(&state.board);
         let location = match location {
             Some(v) => v,
             None => break,
@@ -562,40 +566,28 @@ fn evaluate_with_surge(
         state.board = real_board;
     }
 
+    // Column heights and hole masks of the scoring board, read by the
+    // structural terms below; computed once (integers only, so every float
+    // term keeps its value and order).
+    let columns = ColumnFeatures::of(&state.board);
+
     // holes
-    eval += weights.holes
-        * state
-            .board
-            .cols
-            .iter()
-            .map(|&c| {
-                let height = 64 - c.leading_zeros();
-                let underneath = (1 << height) - 1;
-                let holes = !c & underneath;
-                holes.count_ones()
-            })
-            .sum::<u32>() as f32;
+    eval += weights.holes * columns.holes.iter().map(|holes| holes.count_ones()).sum::<u32>() as f32;
 
     // columns with holes
     if weights.hole_columns != 0.0 {
-        eval += weights.hole_columns * hole_columns(&state.board) as f32;
+        eval += weights.hole_columns * columns.hole_columns() as f32;
     }
 
     // cell coveredness
-    let coveredness = cell_coveredness(&state.board, weights.max_cell_covered_height);
+    let coveredness = cell_coveredness_from(&columns.heights, &columns.holes, weights.max_cell_covered_height);
     eval += weights.cell_coveredness * coveredness as f32;
 
     // tetris well depth
-    eval += tetris_well_depth(&state.board) as f32 * weights.tetris_well_depth;
+    eval += tetris_well_depth_from(&state.board, &columns.heights) as f32 * weights.tetris_well_depth;
 
     // height
-    let highest_point = state
-        .board
-        .cols
-        .iter()
-        .map(|&c| 64 - c.leading_zeros())
-        .max()
-        .unwrap();
+    let highest_point = *columns.heights.iter().max().unwrap();
     eval += weights.height * highest_point as f32;
     if highest_point > 10 {
         eval += weights.height_upper_half * (highest_point - 10) as f32;
@@ -615,16 +607,25 @@ fn evaluate_with_surge(
     )
 }
 
-fn hole_columns(board: &Board) -> u32 {
-    board
-        .cols
-        .iter()
-        .filter(|&&c| {
-            let height = 64 - c.leading_zeros();
-            let underneath = (1 << height) - 1;
-            !c & underneath != 0
-        })
-        .count() as u32
+/// Per-column height (`64 - leading_zeros`) and hole mask (empty cells below
+/// that height) of one board, as each structural term computed them.
+struct ColumnFeatures {
+    heights: [u32; 10],
+    holes: [u64; 10],
+}
+
+impl ColumnFeatures {
+    #[inline]
+    fn of(board: &Board) -> Self {
+        let heights: [u32; 10] = std::array::from_fn(|x| 64 - board.cols[x].leading_zeros());
+        let holes: [u64; 10] = std::array::from_fn(|x| !board.cols[x] & ((1 << heights[x]) - 1));
+        ColumnFeatures { heights, holes }
+    }
+
+    #[inline]
+    fn hole_columns(&self) -> u32 {
+        self.holes.iter().filter(|&&holes| holes != 0).count() as u32
+    }
 }
 
 fn potential_surge_rows(b2b: u32) -> u32 {
@@ -640,7 +641,7 @@ fn occupied_height(board: &Board) -> u32 {
         .unwrap()
 }
 
-fn tank_height_cost(weights: &Weights, board: &Board, tank_rows: u8) -> f32 {
+fn tank_height_cost(weights: &Weights, board: &Board, tank_rows: u16) -> f32 {
     let h = occupied_height(board);
     let height_cost = |x: u32| {
         weights.height * x as f32
@@ -663,7 +664,7 @@ fn amount_exchange_rows(board: &Board, info: &PlacementInfo) -> f32 {
 
 fn amount_solvency_rescue_reward(
     weights: &Weights,
-    pending_rows_before_lock: u8,
+    pending_rows_before_lock: u16,
     post_lock_board: &Board,
     info: &PlacementInfo,
 ) -> f32 {
@@ -671,11 +672,11 @@ fn amount_solvency_rescue_reward(
     if coefficient == 0.0 || pending_rows_before_lock == 0 {
         return 0.0;
     }
-    let projected_pending = u16::from(info.cancelled_rows)
-        + u16::from(info.tank_rows)
-        + u16::from(info.remaining_rows);
-    if projected_pending != u16::from(pending_rows_before_lock) {
-        debug_assert_eq!(projected_pending, u16::from(pending_rows_before_lock));
+    let projected_pending = u32::from(info.cancelled_rows)
+        + u32::from(info.tank_rows)
+        + u32::from(info.remaining_rows);
+    if projected_pending != u32::from(pending_rows_before_lock) {
+        debug_assert_eq!(projected_pending, u32::from(pending_rows_before_lock));
         return 0.0;
     }
     let occupied = occupied_height(post_lock_board);
@@ -733,8 +734,8 @@ fn legacy_conversion_facts(
     combo_after: u32,
     b2b_before: u32,
     b2b_after: u32,
-    pending_rows: u8,
-    due_rows: u8,
+    pending_rows: u16,
+    due_rows: u16,
     info: &PlacementInfo,
     ren_attack_gain: bool,
 ) -> Result<LegacyConversionFacts, CompatError> {
@@ -832,8 +833,8 @@ fn legacy_conversion_facts(
                     info.placement.spin,
                     info.perfect_clear,
                     combo_after.min(u32::from(u8::MAX)) as u8,
-                    b2b_after.min(u32::from(u8::MAX)) as u8,
-                    b2b_before.min(u32::from(u8::MAX)) as u8,
+                    b2b_after,
+                    b2b_before,
                 )
                 .map(f64::from)
                 .ok_or(CompatError::InconsistentSearchAttack)
@@ -950,6 +951,17 @@ impl Evaluation for Eval {
     fn value(self) -> f32 {
         self.value.0
     }
+
+    /// The order of `OrderedFloat<f32>`: -0.0 equals 0.0 and every NaN is
+    /// equal and above all numbers.
+    fn order_key(self) -> Option<u32> {
+        let v = self.value.0;
+        if v.is_nan() {
+            return Some(u32::MAX);
+        }
+        let bits = if v == 0.0 { 0 } else { v.to_bits() };
+        Some(if bits >> 31 == 1 { !bits } else { bits | 0x8000_0000 })
+    }
 }
 
 impl Add<Reward> for Eval {
@@ -1030,7 +1042,7 @@ mod real_board_tests {
         board.cols[0] = 0b101; // one hole
         board.cols[1] = 0b1001; // two holes, same column
         board.cols[2] = 0b111; // no hole
-        assert_eq!(hole_columns(&board), 2);
+        assert_eq!(ColumnFeatures::of(&board).hole_columns(), 2);
         let mut w = weights();
         let base = score(board, &w, true).0.value.0;
         w.hole_columns = -1.5;
@@ -1257,7 +1269,7 @@ mod amount_exchange_tests {
         board
     }
 
-    fn info(cancelled: u8, tank: u8, remaining: u8, outgoing: u8) -> PlacementInfo {
+    fn info(cancelled: u16, tank: u16, remaining: u16, outgoing: u16) -> PlacementInfo {
         PlacementInfo {
             placement: Placement {
                 location: PieceLocation {
@@ -2041,9 +2053,18 @@ mod amount_exchange_tests {
     }
 
     #[test]
-    fn b2b_255_counterfactual_projection_error_skips_term_and_keeps_search_path_open() {
-        let info = projected_conversion_info(4, Spin::None, 10, 255, 255, 1);
-        let projection = || legacy_conversion_facts(9, 10, 255, 255, 1, 0, &info, false);
+    fn b2b_255_counterfactual_projection_is_defined_past_255() {
+        // A Quad at B2B 255 continues the chain to 256 and its counterfactual
+        // too; neither is out of range any more (canonical B2B has no cap).
+        let info = projected_conversion_info(4, Spin::None, 10, 255, 256, 1);
+        let facts = legacy_conversion_facts(9, 10, 255, 256, 1, 0, &info, false).unwrap();
+        assert_eq!((facts.b2b_before, facts.b2b_after), (255, 256));
+    }
+
+    #[test]
+    fn combo_256_counterfactual_projection_error_skips_term_and_keeps_search_path_open() {
+        let info = projected_conversion_info(4, Spin::None, 255, 0, 1, 1);
+        let projection = || legacy_conversion_facts(255, 256, 0, 1, 1, 0, &info, false);
         assert_eq!(projection().unwrap_err(), CompatError::ChainOutOfU8);
 
         let mut reward = Reward {
@@ -2051,5 +2072,30 @@ mod amount_exchange_tests {
         };
         add_leaf_conversion_reward(&mut reward, Some(0.25), projection).unwrap();
         assert_eq!(reward.value.0, -5.5);
+    }
+}
+
+#[cfg(test)]
+mod order_key_tests {
+    use super::*;
+
+    #[test]
+    fn eval_order_key_orders_exactly_like_ordered_float() {
+        let mut values = vec![
+            0.0f32, -0.0, 1.0, -1.0, f32::MIN_POSITIVE, -f32::MIN_POSITIVE, f32::MAX, f32::MIN,
+            f32::INFINITY, f32::NEG_INFINITY, f32::NAN, -f32::NAN, 1e-45, -1e-45, -1000.0,
+        ];
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        for _ in 0..2_000 {
+            state ^= state << 13; state ^= state >> 7; state ^= state << 17;
+            values.push(f32::from_bits(state as u32));
+            values.push((state >> 40) as f32 / 1024.0 - 8000.0);
+        }
+        let evals: Vec<Eval> = values.iter().map(|&v| Eval { value: v.into() }).collect();
+        for a in &evals {
+            for b in &evals {
+                assert_eq!(a.order_key().unwrap().cmp(&b.order_key().unwrap()), a.cmp(b), "{:?} {:?}", a, b);
+            }
+        }
     }
 }

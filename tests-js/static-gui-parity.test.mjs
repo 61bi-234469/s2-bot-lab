@@ -114,20 +114,36 @@ async function exerciseStaleOnePlayerProposal(makeSecondError) {
 
 test("static handler lists exactly the INPUT bots and You, unavailable without WASM", async () => {
   const capabilities = await request(createGuiRequestHandlers(), "GET", "/api/bots");
-  assert.deepEqual(capabilities.bots.map((bot) => bot.id), ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion-backup", "cc2-s2-champion-tree-reuse", "cc2-s2-champion", "human"]);
+  assert.deepEqual(capabilities.bots.map((bot) => bot.id), ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion-backup", "cc2-s2-champion-tree-reuse", "cc2-s2-champion-spsa-v7", "cc2-s2-champion-spsa-v10", "cc2-s2-champion", "human"]);
   assert.ok(capabilities.bots.filter((bot) => bot.id.startsWith("cc2-")).every((bot) => !bot.available));
   const available = await request(createGuiRequestHandlers({ cc2: { decideF14: async () => { throw new Error("must not run"); } } }), "GET", "/api/bots");
   const champion = available.bots.find((bot) => bot.id === "cc2-s2-champion");
   assert.equal(champion.parameters.some((parameter) => parameter.key === "engineProfile"), false);
   assert.equal(champion.execution.profileId, "f14-leaf-conversion-gated-b/1");
-  assert.match(champion.description, /SPSA v7/);
-  // The tree-reuse champion's nineteen overrides plus five new SPSA v7 keys (five more are retuned).
-  assert.equal(Object.keys(champion.execution.weightOverrides).length, 24);
+  assert.match(champion.description, /SPSA v11/);
+  // The SPSA v7 champion's twenty-four overrides plus rescue_topout_fallback (SPSA v10 and v11 only retune).
+  assert.equal(Object.keys(champion.execution.weightOverrides).length, 25);
   assert.equal(champion.execution.weightOverrides.leaf_ren_attack_gain, "1");
   assert.equal(champion.execution.weightOverrides.legacy_backup_consistency, "1");
   assert.equal(champion.execution.weightOverrides.tree_reuse_floor, "256");
-  assert.equal(champion.execution.weightOverrides["normal_clears.1"], "-0.1243");
+  assert.equal(champion.execution.weightOverrides.rescue_topout_fallback, "1");
+  assert.equal(champion.execution.weightOverrides["normal_clears.1"], "0.0451");
+  assert.equal(champion.execution.weightOverrides.holes, "-0.7294");
   assert.equal(champion.execution.budget.selections, 2048);
+  // The SPSA v10 champion: the same keys with the v7 clear weights.
+  const spsaV10 = available.bots.find((bot) => bot.id === "cc2-s2-champion-spsa-v10");
+  assert.match(spsaV10.description, /SPSA v10/);
+  assert.equal(Object.keys(spsaV10.execution.weightOverrides).length, 25);
+  assert.equal(spsaV10.execution.weightOverrides["normal_clears.1"], "-0.1243");
+  assert.equal(spsaV10.execution.weightOverrides.holes, "-0.7294");
+  assert.equal(spsaV10.execution.budget.selections, 2048);
+  // The SPSA v7 champion keeps its twenty-four overrides, without the rescue fallback.
+  const spsaV7 = available.bots.find((bot) => bot.id === "cc2-s2-champion-spsa-v7");
+  assert.match(spsaV7.description, /SPSA v7/);
+  assert.equal(Object.keys(spsaV7.execution.weightOverrides).length, 24);
+  assert.equal(spsaV7.execution.weightOverrides.rescue_topout_fallback, undefined);
+  assert.equal(spsaV7.execution.weightOverrides["normal_clears.1"], "-0.1243");
+  assert.equal(spsaV7.execution.budget.selections, 2048);
   // The tree-reuse champion keeps its nineteen overrides at 2,048 with tree reuse.
   const treeReuse = available.bots.find((bot) => bot.id === "cc2-s2-champion-tree-reuse");
   assert.match(treeReuse.description, /REN attack gain/);
@@ -322,7 +338,7 @@ test("selectors offer the upstream bots, then the project bots oldest to newest"
   const html = await readFile(new URL("../cc2-gui/index.html", import.meta.url), "utf8");
   const optionsFor = (id) => [...(html.match(new RegExp(`<select id="${id}">([\\s\\S]*?)</select>`))?.[1] ?? "")
     .matchAll(/<option value="([^"]+)"/g)].map((match) => match[1]);
-  const orderedBots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion-backup", "cc2-s2-champion-tree-reuse", "cc2-s2-champion"];
+  const orderedBots = ["cc2-raw", "cc2-chouhy", "cc2-s2-f14", "cc2-s2-champion-legacy", "cc2-s2-champion-profile-b", "cc2-s2-champion-previous", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion-backup", "cc2-s2-champion-tree-reuse", "cc2-s2-champion-spsa-v7", "cc2-s2-champion-spsa-v10", "cc2-s2-champion"];
   assert.deepEqual(new Set(orderedBots), new Set(Object.keys(INPUT_BOT_PROFILES)));
   assert.deepEqual(optionsFor("analysis-bot"), orderedBots);
   assert.doesNotMatch(html, /analysis-engine-profile|analysis-engine-control/);
@@ -343,6 +359,8 @@ const CHAMPION_HISTORY = Object.freeze([
   { id: "cc2-s2-champion-ren-gain", args: "REN_GAIN_CHAMPION_PROFILE_ARGS" },
   { id: "cc2-s2-champion-backup", args: "BACKUP_CONSISTENCY_CHAMPION_PROFILE_ARGS" },
   { id: "cc2-s2-champion-tree-reuse", args: "TREE_REUSE_CHAMPION_PROFILE_ARGS" },
+  { id: "cc2-s2-champion-spsa-v7", args: "SPSA_V7_CHAMPION_PROFILE_ARGS" },
+  { id: "cc2-s2-champion-spsa-v10", args: "SPSA_V10_CHAMPION_PROFILE_ARGS" },
   { id: "cc2-s2-champion", args: "CHAMPION_PROFILE_ARGS" },
 ]);
 

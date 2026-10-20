@@ -18,7 +18,7 @@ development build is published under `preview/`. The development URL is marked `
 - deterministic browser-WASM Cold Clear 2: raw upstream, the chouhy fork, the S2 `F14` development
   snapshot, and the current S2 development champion (not release-qualified)
 
-The bot selectors (single analysis and bot-vs-bot) offer the same twelve bots as TTRM INPUT, plus You (1P)
+The bot selectors (single analysis and bot-vs-bot) offer the same fourteen bots as TTRM INPUT, plus You (1P)
 on the left; the local Node server offers the same list. The two upstream ports come first, then the
 project's bots from oldest to newest, keeping past champions. Names describe each design; only the
 parenthesis marks the current champion. Each bot's SETTINGS panel opens with its origin, what was
@@ -48,10 +48,16 @@ tuned and why, and how it plays.
 - Sold Slear — 2,048 selections with tree reuse (former champion): Sold Slear searched at 2,048
   selections, continuing the previous move's search tree below the move actually played (tree
   reuse, at least 256 new selections per move)
-- Sold Slear — SPSA v7 APP-tuned weights (current champion): the tree-reuse design with ten
+- Sold Slear — SPSA v7 APP-tuned weights (former champion): the tree-reuse design with ten
   evaluation weights (line clear types, the Quad well depth, B2B, combo attack, mini spin
-  singles and wasted T) retuned by SPSA for attack per piece; development-only, not
-  release-qualified
+  singles and wasted T) retuned by SPSA for attack per piece
+- Sold Slear — SPSA v10 guarded shape and height weights (former champion): the SPSA v7 design
+  plus a top-out fallback (when the best move tops out and no move is safe, the first move that
+  does not top out is played), with ten shape and height weights (holes, covered cells, row
+  transitions, height, spin clears, freedom) retuned by SPSA for attack per piece and wins
+- Sold Slear — SPSA v11 guarded clear and B2B weights (current champion): the SPSA v10 design
+  with the ten SPSA v7 weights retuned again for attack per piece and wins; development-only,
+  not release-qualified
 
 The champion's defaults (2,048 selections with tree reuse, THINK TIME off, queue 14) are the
 champion itself; SELECTION, THINK TIME, QUEUE DEPTH and PPS can be changed like the other bots.

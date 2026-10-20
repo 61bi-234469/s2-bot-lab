@@ -2,6 +2,93 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 type AHashMap<K, V> = std::collections::HashMap<K, V, crate::map::StateBuildHasher>;
+
+/// Dense per-call map from a placement to a soft-drop count, replacing the
+/// AHashMap that `find_moves_core` used for its frontier values and its
+/// underground locks (decision-compatible speed work, 2026-10-18). One call
+/// touches one piece; origins pass the collision map (x in 0..10, y below the
+/// ceiling) and canonical forms shift them by at most one cell, so the dense
+/// range below holds every key in practice. Any key outside it, or a value
+/// that does not fit a byte, goes to an overflow map, so lookups and inserts
+/// behave exactly like the map they replace. `keys` lists every inserted key
+/// once, in insertion order, for the caller's own ordering.
+const TABLE_X_MIN: i8 = -2;
+const TABLE_X_LEN: usize = 14;
+const TABLE_Y_MIN: i8 = -2;
+const TABLE_Y_LEN: usize = 26;
+const TABLE_LEN: usize = 4 * TABLE_X_LEN * TABLE_Y_LEN * 3;
+const TABLE_EMPTY: u8 = u8::MAX;
+
+struct PlacementTable {
+    slots: [u8; TABLE_LEN],
+    keys: Vec<Placement>,
+    overflow: AHashMap<Placement, u32>,
+}
+
+impl PlacementTable {
+    fn new() -> Self {
+        PlacementTable { slots: [TABLE_EMPTY; TABLE_LEN], keys: Vec::with_capacity(64), overflow: AHashMap::default() }
+    }
+
+    #[inline]
+    fn index(p: &Placement) -> Option<usize> {
+        let x = (p.location.x - TABLE_X_MIN) as isize;
+        let y = (p.location.y - TABLE_Y_MIN) as isize;
+        if x < 0 || x >= TABLE_X_LEN as isize || y < 0 || y >= TABLE_Y_LEN as isize {
+            return None;
+        }
+        Some((((p.location.rotation as usize) * TABLE_X_LEN + x as usize) * TABLE_Y_LEN + y as usize) * 3 + p.spin as usize)
+    }
+
+    #[inline]
+    fn get(&self, p: &Placement) -> Option<u32> {
+        if let Some(i) = Self::index(p) {
+            let v = self.slots[i];
+            if v != TABLE_EMPTY {
+                return Some(u32::from(v));
+            }
+        }
+        self.overflow.get(p).copied()
+    }
+
+    /// Empties the table for the next call: only the slots of listed keys
+    /// were written, so only those are reset.
+    fn clear(&mut self) {
+        for key in &self.keys {
+            if let Some(i) = Self::index(key) {
+                self.slots[i] = TABLE_EMPTY;
+            }
+        }
+        self.keys.clear();
+        self.overflow.clear();
+    }
+
+    /// Stores `value` for `p`; a key that is new is appended to `keys`.
+    #[inline]
+    fn set(&mut self, p: Placement, value: u32) {
+        match Self::index(&p) {
+            Some(i) if value < u32::from(TABLE_EMPTY) && !self.overflow.contains_key(&p) => {
+                if self.slots[i] == TABLE_EMPTY {
+                    self.keys.push(p);
+                }
+                self.slots[i] = value as u8;
+            }
+            _ => {
+                if let Some(i) = Self::index(&p) {
+                    if self.slots[i] != TABLE_EMPTY {
+                        // Move an in-table key to the overflow map; it is already listed in `keys`.
+                        self.slots[i] = TABLE_EMPTY;
+                        self.overflow.insert(p, value);
+                        return;
+                    }
+                }
+                if self.overflow.insert(p, value).is_none() {
+                    self.keys.push(p);
+                }
+            }
+        }
+    }
+}
 use serde::Serialize;
 
 use crate::data::*;
@@ -518,14 +605,43 @@ fn record_s2_drop(
     }
 }
 
+/// The frontier and the two placement tables of `find_moves_core`, kept per
+/// thread and emptied after each call instead of being built, filled and freed
+/// for every call (decision-compatible speed work, 2026-10-19). A call
+/// starts from the same empty state either way.
+struct MovegenWorkspace {
+    queue: Frontier,
+    values: PlacementTable,
+    underground_locks: PlacementTable,
+}
+
+thread_local! {
+    static MOVEGEN_WORKSPACE: std::cell::RefCell<Option<Box<MovegenWorkspace>>> = const { std::cell::RefCell::new(None) };
+}
+
 fn find_moves_core(
+    board: &Board, piece: Piece, enable_direct_180: bool, entry: RootEntry,
+    witnesses: Option<&mut NativeWitnessSink>,
+) -> CompleteRootMoves {
+    let mut workspace = MOVEGEN_WORKSPACE.with(|slot| slot.borrow_mut().take()).unwrap_or_else(|| {
+        Box::new(MovegenWorkspace { queue: Frontier::new(), values: PlacementTable::new(), underground_locks: PlacementTable::new() })
+    });
+    let result = find_moves_in(&mut workspace, board, piece, enable_direct_180, entry, witnesses);
+    workspace.queue.clear();
+    workspace.values.clear();
+    workspace.underground_locks.clear();
+    MOVEGEN_WORKSPACE.with(|slot| *slot.borrow_mut() = Some(workspace));
+    result
+}
+
+fn find_moves_in(
+    workspace: &mut MovegenWorkspace,
     board: &Board, piece: Piece, enable_direct_180: bool, entry: RootEntry,
     mut witnesses: Option<&mut NativeWitnessSink>,
 ) -> CompleteRootMoves {
     puffin::profile_function!();
-    let mut queue = BinaryHeap::new();
-    let mut values = AHashMap::default();
-    let mut underground_locks = AHashMap::default();
+    let MovegenWorkspace { queue, values, underground_locks } = workspace;
+    let heights = column_heights(board);
     let mut locks = Vec::with_capacity(64);
     let mut collision_map = CollisionMaps::new(board, piece).with_ceiling(
         if entry == RootEntry::SpawnBufferFallback { 21 } else { 20 },
@@ -562,7 +678,7 @@ fn find_moves_core(
                 };
 
                 let mut update_position =
-                    update_position(&mut queue, &mut values, fast_mode, board);
+                    update_position(queue, values, fast_mode, &heights);
 
                 if let Some(mv) = shift(location, &collision_map, -1) {
                     if witnesses.is_some() && mv.location.drop_distance(board)==0 { record_s2_drop(&mut witnesses,board,mv,distance as u32); }
@@ -614,15 +730,12 @@ fn find_moves_core(
             spin: Spin::None,
         };
         if witnesses.is_some() && spawned.location.drop_distance(board)==0 { record_s2_drop(&mut witnesses,board,spawned,0); }
-        queue.push(Intermediate {
-            soft_drops: 0,
-            mv: spawned,
-        });
-        values.insert(spawned, 0);
+        queue.push(0, spawned);
+        values.set(spawned, 0);
     }
 
     while let Some(expand) = queue.pop() {
-        if expand.soft_drops != values.get(&expand.mv).copied().unwrap_or(40) {
+        if expand.soft_drops != values.get(&expand.mv).unwrap_or(40) {
             continue;
         }
 
@@ -640,15 +753,14 @@ fn find_moves_core(
         };
 
         if drop_dist>0 { record_s2_drop(&mut witnesses, board, dropped, expand.soft_drops); }
-        let sds = underground_locks
-            .entry(Placement {
-                location: dropped.location.canonical_form(),
-                ..dropped
-            })
-            .or_insert(expand.soft_drops);
-        *sds = expand.soft_drops.min(*sds);
+        let key = Placement {
+            location: dropped.location.canonical_form(),
+            ..dropped
+        };
+        let sds = underground_locks.get(&key).unwrap_or(expand.soft_drops);
+        underground_locks.set(key, expand.soft_drops.min(sds));
 
-        let mut update_position = update_position(&mut queue, &mut values, fast_mode, board);
+        let mut update_position = update_position(queue, values, fast_mode, &heights);
 
         update_position(dropped, expand.soft_drops + drop_dist as u32);
 
@@ -681,7 +793,11 @@ fn find_moves_core(
     // the same binary. The search picks children by index, so that alone makes a
     // fixed selection budget non-reproducible once underground locks exist.
     // Sorting only this tail leaves the order of every other lock untouched.
-    let mut underground: Vec<_> = underground_locks.into_iter().collect();
+    let mut underground: Vec<_> = underground_locks
+        .keys
+        .iter()
+        .map(|p| (*p, underground_locks.get(p).expect("listed underground key has a value")))
+        .collect();
     underground.sort_unstable_by_key(|(placement, value)| {
         (
             placement.location.piece as u8,
@@ -703,24 +819,38 @@ fn find_moves_core(
 }
 
 fn update_position<'a>(
-    queue: &'a mut BinaryHeap<Intermediate>,
-    values: &'a mut AHashMap<Placement, u32>,
+    queue: &'a mut Frontier,
+    values: &'a mut PlacementTable,
     fast_mode: bool,
-    board: &'a Board,
+    heights: &'a [i8; 10],
 ) -> impl FnMut(Placement, u32) + 'a {
     move |target: Placement, soft_drops: u32| {
-        if fast_mode && target.location.above_stack(board) {
+        if fast_mode && above_heights(&target.location, heights) {
             return;
         }
-        let prev_sds = values.entry(target).or_insert(40);
-        if soft_drops < *prev_sds {
-            *prev_sds = soft_drops;
-            queue.push(Intermediate {
-                soft_drops,
-                mv: target,
-            });
+        // The replaced map inserted 40 for an absent key; every read treats an
+        // absent key as 40 and nothing iterates the map, so it is not stored.
+        let prev_sds = values.get(&target).unwrap_or(40);
+        if soft_drops < prev_sds {
+            values.set(target, soft_drops);
+            queue.push(soft_drops, target);
         }
     }
+}
+
+/// Column heights as `PieceLocation::above_stack` computes them, once per call.
+fn column_heights(board: &Board) -> [i8; 10] {
+    let mut heights = [0i8; 10];
+    for (h, &c) in heights.iter_mut().zip(board.cols.iter()) {
+        *h = 64 - c.leading_zeros() as i8;
+    }
+    heights
+}
+
+/// `PieceLocation::above_stack` over precomputed column heights.
+#[inline]
+fn above_heights(location: &PieceLocation, heights: &[i8; 10]) -> bool {
+    location.cells().iter().all(|&(x, y)| y >= heights[x as usize])
 }
 
 fn shift(mut location: PieceLocation, collision_map: &CollisionMaps, dx: i8) -> Option<Placement> {
@@ -896,15 +1026,14 @@ fn rotate(
             // canonical S2 Simulator remains authoritative when reranking.
             let stuck = [(1, 0), (-1, 0), (0, 1), (0, -1)]
                 .iter()
-                .filter(|&&(cx, cy)| {
+                .all(|&(cx, cy)| {
                     collision_map.obstructed(PieceLocation {
                         x: target.x + cx,
                         y: target.y + cy,
                         ..target
                     })
-                })
-                .count();
-            spin = if stuck == 4 { Spin::Mini } else { Spin::None };
+                });
+            spin = if stuck { Spin::Mini } else { Spin::None };
         } else {
             let corners = [(-1, -1), (1, -1), (-1, 1), (1, 1)]
                 .iter()
@@ -1112,27 +1241,54 @@ fn diagnostic_rotate_180(
     unreachable!("successful native 180 rotation must have an accepted row")
 }
 
-#[derive(Clone, Copy, Debug, Eq)]
+#[derive(Clone, Copy, Debug)]
 struct Intermediate {
     mv: Placement,
     soft_drops: u32,
 }
 
-impl PartialEq for Intermediate {
-    fn eq(&self, other: &Intermediate) -> bool {
-        self.soft_drops == other.soft_drops
-    }
+/// Soft-drop buckets popped cheapest first (Dial's algorithm). It replaces a
+/// max-heap that expanded the costliest state first and expanded a state
+/// again whenever a cheaper path to it appeared (decision-compatible speed
+/// work, 2026-10-19). Shifts and rotations cost 0 and a drop costs its
+/// distance, so no pushed value is below the bucket being popped, and every
+/// stored value is below the absent-key value 40. The generator keeps the
+/// minimum soft-drop count per state and fixes or sorts every output order,
+/// so its results do not depend on the expansion order.
+const FRONTIER_BUCKETS: usize = 40;
+
+struct Frontier {
+    buckets: [Vec<Placement>; FRONTIER_BUCKETS],
+    current: usize,
 }
 
-impl Ord for Intermediate {
-    fn cmp(&self, other: &Intermediate) -> Ordering {
-        self.soft_drops.cmp(&other.soft_drops)
+impl Frontier {
+    fn new() -> Self {
+        Frontier { buckets: std::array::from_fn(|_| Vec::new()), current: 0 }
     }
-}
 
-impl PartialOrd for Intermediate {
-    fn partial_cmp(&self, other: &Intermediate) -> Option<Ordering> {
-        Some(self.cmp(other))
+    #[inline]
+    fn push(&mut self, soft_drops: u32, mv: Placement) {
+        debug_assert!(soft_drops as usize >= self.current && (soft_drops as usize) < FRONTIER_BUCKETS);
+        self.buckets[soft_drops as usize].push(mv);
+    }
+
+    fn clear(&mut self) {
+        for bucket in &mut self.buckets {
+            bucket.clear();
+        }
+        self.current = 0;
+    }
+
+    #[inline]
+    fn pop(&mut self) -> Option<Intermediate> {
+        while self.current < FRONTIER_BUCKETS {
+            if let Some(mv) = self.buckets[self.current].pop() {
+                return Some(Intermediate { mv, soft_drops: self.current as u32 });
+            }
+            self.current += 1;
+        }
+        None
     }
 }
 
@@ -1192,6 +1348,33 @@ mod tests {
     use crate::data::{Board, Piece, PieceLocation, Placement, Rotation, Spin};
     use crate::generated_direct_180_kicks::DIRECT_180_MAX_ROWS;
 
+
+    #[test]
+    fn placement_table_matches_a_hash_map_including_overflow_keys_and_values() {
+        use std::collections::HashMap;
+        let mut table = super::PlacementTable::new();
+        let mut map: HashMap<Placement, u32> = HashMap::new();
+        let mut order: Vec<Placement> = Vec::new();
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = |m: u64| { state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); (state >> 33) % m };
+        let rotations = [Rotation::North, Rotation::West, Rotation::South, Rotation::East];
+        let spins = [Spin::None, Spin::Mini, Spin::Full];
+        for _ in 0..20_000 {
+            let p = Placement {
+                location: PieceLocation { piece: Piece::T, rotation: rotations[next(4) as usize], x: next(22) as i8 - 6, y: next(40) as i8 - 6 },
+                spin: spins[next(3) as usize],
+            };
+            assert_eq!(table.get(&p), map.get(&p).copied());
+            if next(2) == 0 {
+                let value = if next(10) == 0 { 200 + next(300) as u32 } else { next(41) as u32 };
+                if map.insert(p, value).is_none() { order.push(p); }
+                table.set(p, value);
+                assert_eq!(table.get(&p), Some(value));
+            }
+        }
+        assert_eq!(table.keys, order);
+        for p in &order { assert_eq!(table.get(p), map.get(p).copied()); }
+    }
 
     fn a3_board() -> Board { Board { cols: [524287, 1048448, 1048191, 1048575, 1048575, 1048575, 262143, 196607, 511, 65535] } }
     #[test]

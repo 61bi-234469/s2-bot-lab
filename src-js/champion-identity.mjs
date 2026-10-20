@@ -91,9 +91,9 @@ export const TREE_REUSE_CHAMPION_PROFILE_ARGS = Object.freeze({
   weightOverrides: Object.freeze({ ...BACKUP_CONSISTENCY_CHAMPION_PROFILE_ARGS.weightOverrides, tree_reuse_floor: "256" }),
 });
 
-// The current champion (2026-10-10): the tree-reuse champion with ten
-// clear-type and B2B weights retuned by SPSA for attack per piece.
-export const CHAMPION_PROFILE_ARGS = Object.freeze({
+// The champion 2026-10-10..20: the tree-reuse champion with ten clear-type and
+// B2B weights retuned by SPSA for attack per piece. Kept as a former-champion GUI bot.
+export const SPSA_V7_CHAMPION_PROFILE_ARGS = Object.freeze({
   ...TREE_REUSE_CHAMPION_PROFILE_ARGS,
   weightOverrides: Object.freeze({
     ...TREE_REUSE_CHAMPION_PROFILE_ARGS.weightOverrides,
@@ -110,7 +110,48 @@ export const CHAMPION_PROFILE_ARGS = Object.freeze({
   }),
 });
 
-/** The champion's gated profile at its default budget (2,048 selections, tree reuse, v7 weights). */
+// The SPSA v10 champion: the SPSA v7 champion plus the rescue top-out fallback
+// (when CC2 rank 0 tops out on its lock and the rescue does not fire, the first
+// rank that does not top out is played), with ten shape and height weights
+// retuned by SPSA for attack per piece and wins. Kept as a former-champion GUI bot.
+export const SPSA_V10_CHAMPION_PROFILE_ARGS = Object.freeze({
+  ...SPSA_V7_CHAMPION_PROFILE_ARGS,
+  weightOverrides: Object.freeze({
+    ...SPSA_V7_CHAMPION_PROFILE_ARGS.weightOverrides,
+    rescue_topout_fallback: "1",
+    cell_coveredness: "-0.355",
+    holes: "-0.7294",
+    row_transitions: "-1.0473",
+    height: "-1.9339",
+    height_upper_half: "-9.2752",
+    height_upper_quarter: "-70.3881",
+    "spin_clears.1": "3.6697",
+    "spin_clears.2": "2.4043",
+    "spin_clears.3": "8.7453",
+    freestyle_exploitation: "0.4689",
+  }),
+});
+
+// The current champion (2026-10-20): the SPSA v10 champion with the ten SPSA v7
+// keys retuned again by SPSA for attack per piece and wins.
+export const CHAMPION_PROFILE_ARGS = Object.freeze({
+  ...SPSA_V10_CHAMPION_PROFILE_ARGS,
+  weightOverrides: Object.freeze({
+    ...SPSA_V10_CHAMPION_PROFILE_ARGS.weightOverrides,
+    "normal_clears.1": "0.0451",
+    "normal_clears.2": "0.8246",
+    "normal_clears.3": "2.3987",
+    "normal_clears.4": "2.4037",
+    tetris_well_depth: "0.3687",
+    has_back_to_back: "6.3455",
+    back_to_back_clear: "5.1363",
+    combo_attack: "2.2408",
+    "mini_spin_clears.1": "0.0005",
+    wasted_t: "-4.0602",
+  }),
+});
+
+/** The champion's gated profile at its default budget (2,048 selections, tree reuse, SPSA v11 weights). */
 export function createChampionBaseProfile() {
   return createF14LeafConversionGatedProfile(CHAMPION_PROFILE_ARGS);
 }

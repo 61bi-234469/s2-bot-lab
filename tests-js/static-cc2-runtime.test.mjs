@@ -50,7 +50,8 @@ test("input resolution waits for an initializing worker and propagates init fail
         messages.push(message.type);
         const reply = () => this.onmessage({ data: { id: message.id, ok: !(fail && message.type === 'init'),
           error: 'initialization failed', value: message.type === 'resolveInput' ? { status: 'planned' } : {} } });
-        if (message.type === 'init') finish = reply;
+        // The engine worker's init is held; the resolution-only worker answers at once.
+        if (message.type === 'init' && message.payload?.resolverOnly !== true) finish = reply;
         else queueMicrotask(reply);
       }
       terminate() {}
@@ -365,4 +366,29 @@ test("closing a static CC2 session rejects its pending resolution", async () => 
   await rejection;
   assert.equal(workers[0].terminated, true);
   assert.deepEqual(workers[0].messages.map(({ type }) => type), ["init", "suggest", "resolve", "close"]);
+});
+
+test("INPUT plans resolve on a resolution-only worker, so the engine worker's search never delays them", async () => {
+  const workers = [];
+  class FakeWorker {
+    constructor() { this.messages = []; workers.push(this); }
+    postMessage(message) {
+      this.messages.push(message);
+      queueMicrotask(() => this.onmessage({ data: { id: message.id, ok: true,
+        value: message.type === "resolveInput" ? { status: "planned" } : message.type === "decideF14" ? { status: "move" } : {} } }));
+    }
+    terminate() { this.terminated = true; }
+  }
+  const runtime = createStaticCc2Runtime({ WorkerType: FakeWorker });
+  const type = "cc2-s2-champion";
+  await runtime.decideF14({ sessionKey: "right", type, engine: { botType: type, engineId: type }, request: {}, profile: {} });
+  assert.equal((await runtime.resolveInput({ request: { sessionKey: "right", type } })).status, "planned");
+  assert.equal((await runtime.resolveInput({ request: { sessionKey: "right", type } })).status, "planned");
+  assert.equal(workers.length, 2);
+  const [engineWorker, resolver] = workers;
+  assert.deepEqual(engineWorker.messages.map(({ type: kind }) => kind), ["init", "decideF14"]);
+  assert.deepEqual(resolver.messages.map(({ type: kind }) => kind), ["init", "resolveInput", "resolveInput"]);
+  assert.deepEqual(resolver.messages[0].payload, { engine: type, resolverOnly: true });
+  await runtime.closeSessions();
+  assert.ok(workers.every((worker) => worker.terminated));
 });

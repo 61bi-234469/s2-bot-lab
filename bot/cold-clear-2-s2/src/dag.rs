@@ -37,6 +37,45 @@ pub trait Evaluation:
     fn value(self) -> f32;
     fn is_error(self) -> bool {false}
     fn is_loss(self) -> bool {false}
+    /// A `u32` whose order equals this type's `Ord`, when one exists; it lets
+    /// child lists sort by plain integer keys (`sort_legacy_children_descending`).
+    fn order_key(self) -> Option<u32> {None}
+}
+
+/// Equals `list.sort_by(|a, b| compare_children(a, b).reverse())` (stable,
+/// best first) for Legacy children without a root order adjustment, when the
+/// evaluation has an `order_key`: there compare_children orders by
+/// root_priority, then cached_eval. The keys carry the original index as the
+/// tie-break and are sorted as integers, then the list is permuted
+/// (decision-compatible speed work, 2026-10-19). Anything else takes the
+/// comparator sort.
+fn sort_legacy_children_descending<E: Evaluation>(list: &mut [Child<E>]) {
+    const STACK: usize = 128;
+    if list.len() < 2 {
+        return;
+    }
+    if list.len() <= STACK {
+        let mut keys = [0u64; STACK];
+        let mut keyed = true;
+        for (i, child) in list.iter().enumerate() {
+            match child.cached_eval.order_key() {
+                Some(key) if !E::Domain::S2 && child.root_bonus.kind == RootOrderAdjustmentKind::None => {
+                    keys[i] = (u64::from(!child.root_priority) << 63) | (u64::from(!key) << 31) | i as u64;
+                }
+                _ => { keyed = false; break; }
+            }
+        }
+        if keyed {
+            let keys = &mut keys[..list.len()];
+            keys.sort_unstable();
+            let original: Vec<Child<E>> = list.to_vec();
+            for (slot, key) in list.iter_mut().zip(keys.iter()) {
+                *slot = original[(key & 0x7fff_ffff) as usize];
+            }
+            return;
+        }
+    }
+    list.sort_by(|a, b| compare_children(a, b).reverse());
 }
 
 pub struct Dag<E: Evaluation> {
@@ -697,7 +736,9 @@ impl<E: Evaluation> Dag<E> {
         let mut game_state = self.root;
         let mut root_action = None;
         let mut root_draw_index = None;
-        let mut path_states = vec![game_state];
+        // Only the S2 search reads the visited states (its root trace); the
+        // Legacy/F14 route does not keep them (speed work 2026-10-19).
+        let mut path_states = if E::Domain::S2 { vec![game_state] } else { Vec::new() };
         loop {
             let &layer = layers.last().unwrap();
 
@@ -726,7 +767,7 @@ impl<E: Evaluation> Dag<E> {
                         game_state = layer.next().kind.key(id).expect("layer-local S2 node missing");
                     } else { E::Domain::advance(&mut game_state, next, placement, enable_s2_b2b_surge); }
                     layers.push(layer.next());
-                    path_states.push(game_state);
+                    if E::Domain::S2 { path_states.push(game_state); }
                 }
             }
         }

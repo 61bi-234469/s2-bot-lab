@@ -1,7 +1,7 @@
 import { F14_COMPAT_QUEUE_LIMIT, createF14DecideRequest,
   ROOT_LEAF_CONVERSION_GATED_PROFILE } from "./s2-f14-compat-browser.mjs";
 import { PROFILE_B_PROFILE_ID, assertF14CoreResponse, championVisibleState, createChampionBaseProfile,
-  extendChampionQueue } from "./champion-parameters.mjs";
+  extendChampionQueue, queuePrefixPieces } from "./champion-parameters.mjs";
 import { createS2AmountOnlyDecisionState, decisionStateToSyntheticGui } from "./s2-amount-only-decision-state.mjs";
 import { guiStateToCanonical } from "./gui-state.mjs";
 import { applyTransition } from "./transition.mjs";
@@ -78,16 +78,19 @@ export function publicSevenBagStateAfterQueue(sequence, queueLength) {
  * insolvent and by selection score, as it ran as champion. Only reachability
  * can move the planner past the first entry.
  */
-export function championInputMoves(response, { current = null, holdAvailable = true, allowQueuePrefix = false } = {}) {
+export function championInputMoves(response, { current = null, holdAvailable = true, allowQueuePrefix = 0 } = {}) {
   if (response?.status !== "move") throw new Error(`champion INPUT decision ${response?.status}: ${response?.reason}`);
   const profileB = response.profileId === PROFILE_B_PROFILE_ID;
-  const request = { execution: { profileId: profileB ? PROFILE_B_PROFILE_ID : ROOT_LEAF_CONVERSION_GATED_PROFILE } };
+  // The caller has checked the response against its request; its echoed
+  // weightOverrides carry the profile's rescue_topout_fallback key.
+  const request = { execution: profileB ? { profileId: PROFILE_B_PROFILE_ID }
+    : { profileId: ROOT_LEAF_CONVERSION_GATED_PROFILE, weightOverrides: response.execution?.weightOverrides } };
   if (allowQueuePrefix) {
     const searchedQueueLength = response.search?.searchedQueueLength;
     if (!Number.isSafeInteger(searchedQueueLength) || searchedQueueLength < 1) {
       throw new Error("champion INPUT prefix rerank has invalid searched queue length");
     }
-    request.start = { queue: { length: searchedQueueLength + 1 } };
+    request.start = { queue: { length: searchedQueueLength + queuePrefixPieces(allowQueuePrefix) } };
   }
   assertF14CoreResponse(request, response, { allowQueuePrefix });
   // `returnedIdentities` is CC2 order, the one a `cc2Rank` indexes.
@@ -134,12 +137,14 @@ export function predictChampionNextRequest(decision, request, response, { profil
   const publicQueue = [next.pieces.current, ...next.pieces.known].filter((piece) => piece != null);
   if (predicted.start.queue.some((piece, index) => piece !== publicQueue[index])) return null;
   if (publicQueue.length >= INPUT_QUEUE_REFILL_BELOW) return { request: predicted, queuePrefix: 0 };
-  // A refill appends a whole bag: the next search queue at QUEUE 14 is this
-  // public queue plus one unknown piece of a new bag (opt-in).
-  if (queuePrefixSpeculation !== true || queueDepth !== predicted.start.queue.length + 1 ||
+  // A refill appends a whole bag: the next search queue is this public queue
+  // plus the first k unknown pieces of a new bag, k = 1 at QUEUE 14 and up to
+  // 7 deeper (opt-in). The search runs on the public queue alone.
+  const unseen = Math.min(queueDepth, publicQueue.length + 7) - publicQueue.length;
+  if (queuePrefixSpeculation !== true || !(unseen >= 1 && unseen <= 7) ||
       predicted.start.queue.length !== publicQueue.length ||
       publicSevenBagStateAfterQueue(publicQueue, publicQueue.length)?.length !== 0) return null;
   const prefixRequest = { ...predicted,
     start: { ...predicted.start, randomizer: { type: "seven_bag", bag_state: [] } } };
-  return { request: prefixRequest, queuePrefix: 1 };
+  return { request: prefixRequest, queuePrefix: unseen };
 }

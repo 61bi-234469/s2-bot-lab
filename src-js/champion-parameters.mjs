@@ -7,7 +7,7 @@ import { guiStateToCanonical } from "./gui-state.mjs";
 import { fullStateKey } from "./state-keys.mjs";
 import { applyTransition } from "./transition.mjs";
 import { createF14LeafConversionGatedProfile } from "./s2-f14-compat-browser.mjs";
-import { BACKUP_CONSISTENCY_CHAMPION_PROFILE_ARGS, CHAMPION_PROFILE_ARGS, TREE_REUSE_CHAMPION_PROFILE_ARGS, PREVIOUS_CHAMPION_PROFILE_ARGS, REN_GAIN_CHAMPION_PROFILE_ARGS, SPSA_V1_CHAMPION_PROFILE_ARGS, SPSA_V2_CHAMPION_PROFILE_ARGS } from "./champion-identity.mjs";
+import { BACKUP_CONSISTENCY_CHAMPION_PROFILE_ARGS, CHAMPION_PROFILE_ARGS, SPSA_V7_CHAMPION_PROFILE_ARGS, SPSA_V10_CHAMPION_PROFILE_ARGS, TREE_REUSE_CHAMPION_PROFILE_ARGS, PREVIOUS_CHAMPION_PROFILE_ARGS, REN_GAIN_CHAMPION_PROFILE_ARGS, SPSA_V1_CHAMPION_PROFILE_ARGS, SPSA_V2_CHAMPION_PROFILE_ARGS } from "./champion-identity.mjs";
 import { EVALUATION_SCORE_SEMANTICS, evaluatorModelIdentity, extractEvaluationFeatures, scoreEvaluationFeatures } from "./evaluation.mjs";
 
 export { CHAMPION_PROFILE_ARGS, createChampionBaseProfile } from "./champion-identity.mjs";
@@ -24,8 +24,9 @@ export const CHAMPION_QUEUE_MAXIMUM = 28;
  * (2026-09-16..25), the gated profile at kappa 0.25 (2026-09-25..26) and the
  * SPSA v1 tuned profile (2026-09-26), the SPSA v2 tuned profile (2026-09-26..27)
  * the REN attack gain profile (2026-09-27..30), Legacy backup consistency
- * (2026-09-30..10-03, Sold Slear) and 2,048 selections with tree reuse
- * (2026-10-03..10). */
+ * (2026-09-30..10-03, Sold Slear), 2,048 selections with tree reuse
+ * (2026-10-03..10), the SPSA v7 weights (2026-10-10..20) and the SPSA v10
+ * weights (native development champion 2026-10-19..20). */
 const F14_CORE_BASE_PROFILES = Object.freeze({
   "cc2-s2-champion-profile-b": () => createPublicCompatProfile(),
   "cc2-s2-champion-previous": () => createF14LeafConversionGatedProfile(PREVIOUS_CHAMPION_PROFILE_ARGS),
@@ -34,6 +35,8 @@ const F14_CORE_BASE_PROFILES = Object.freeze({
   "cc2-s2-champion-ren-gain": () => createF14LeafConversionGatedProfile(REN_GAIN_CHAMPION_PROFILE_ARGS),
   "cc2-s2-champion-backup": () => createF14LeafConversionGatedProfile(BACKUP_CONSISTENCY_CHAMPION_PROFILE_ARGS),
   "cc2-s2-champion-tree-reuse": () => createF14LeafConversionGatedProfile(TREE_REUSE_CHAMPION_PROFILE_ARGS),
+  "cc2-s2-champion-spsa-v7": () => createF14LeafConversionGatedProfile(SPSA_V7_CHAMPION_PROFILE_ARGS),
+  "cc2-s2-champion-spsa-v10": () => createF14LeafConversionGatedProfile(SPSA_V10_CHAMPION_PROFILE_ARGS),
   "cc2-s2-champion": () => createF14LeafConversionGatedProfile(CHAMPION_PROFILE_ARGS),
 });
 export const F14_CORE_BOT_TYPES = Object.freeze(Object.keys(F14_CORE_BASE_PROFILES));
@@ -65,7 +68,7 @@ export function f14CoreEngineId(role, type) {
 /**
  * The champion's gated leaf-conversion F14 execution for GUI parameters. Its defaults
  * (2,048 selections with tree reuse, THINK TIME off, queue 14) are exactly the champion;
- * the former-champion bots default to 512, except the tree-reuse champion (2,048).
+ * the former-champion bots default to 512, except those from the tree-reuse champion on (2,048).
  * THINK TIME becomes a host-clocked time budget with SELECTION as its cap;
  * only the WASM core runs it. `type` picks another gated-core bot's profile.
  */
@@ -153,6 +156,15 @@ export function resolveChampionDecision({ state, gui, request, response, paramet
     verification: { status: "degraded", reasons: comparison.reasons, transition, comparison } };
 }
 
+/** An INPUT queue-prefix allowance as the number of unseen new-bag pieces the
+ * search ran without: 0 (none), 1..7, or `true` for the one piece of QUEUE 14. */
+export function queuePrefixPieces(allowQueuePrefix) {
+  if (allowQueuePrefix === false || allowQueuePrefix === 0 || allowQueuePrefix == null) return 0;
+  if (allowQueuePrefix === true) return 1;
+  if (Number.isSafeInteger(allowQueuePrefix) && allowQueuePrefix >= 1 && allowQueuePrefix <= 7) return allowQueuePrefix;
+  throw new Error("champion INPUT queue prefix must be 0..7 unseen pieces");
+}
+
 /** Checks an F14-core decision by the profile it was asked with: the gated
  * profiles keep CC2 rank order with the root rescue veto; profile-B returns
  * the core's own F14 ranking, and its queue-prefix rerank is not offered. */
@@ -200,10 +212,11 @@ export function assertGatedChampionResponse(request, response, { allowQueuePrefi
       response?.profileId !== ROOT_LEAF_CONVERSION_GATED_PROFILE) {
     throw new Error("champion decision must use the gated leaf-conversion profile");
   }
-  if (allowQueuePrefix && response.status === "move") {
+  const unseen = queuePrefixPieces(allowQueuePrefix);
+  if (unseen > 0 && response.status === "move") {
     const requestedLength = request.start?.queue?.length;
-    const searchedLength = requestedLength - 1;
-    if (!Number.isSafeInteger(requestedLength) || requestedLength < 2 ||
+    const searchedLength = requestedLength - unseen;
+    if (!Number.isSafeInteger(requestedLength) || searchedLength < 1 ||
         response.search?.queueLength !== searchedLength ||
         response.search?.searchedQueueLength !== searchedLength) {
       throw new Error("champion INPUT prefix rerank has invalid searched queue length");
@@ -244,6 +257,13 @@ export function assertGatedChampionResponse(request, response, { allowQueuePrefi
   // negative solvency and some candidate is solvent; then the first solvent rank.
   const firstSolvent = identities.findIndex((_, rank) => candidatesByRank.get(rank).solvent);
   const rescued = candidatesByRank.get(0).solvency < 0 && firstSolvent >= 0;
+  // rescue_topout_fallback (the SPSA v10 and v11 champions), as Rust
+  // topout_fallback_index: when the rescue does not fire and CC2 rank 0 tops out
+  // on its lock, the first rank that does not is played as a rescue. The
+  // response does not report top-out, so only what it implies is checked: rank 0
+  // is insolvent and a later rank is selected.
+  if (!rescued && request.execution?.weightOverrides?.rescue_topout_fallback === "1" && ranking.rescueApplied === true
+      && !candidatesByRank.get(0).solvent && ranking.selectedCc2Rank > 0) return;
   if (ranking.rescueApplied !== rescued || ranking.selectedCc2Rank !== (rescued ? firstSolvent : 0)) {
     throw new Error(rescued ? "champion rescue must select the first solvent CC2 rank"
       : "champion decision without rescue must select CC2 rank 0");
