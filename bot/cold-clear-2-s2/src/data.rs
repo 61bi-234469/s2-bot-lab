@@ -24,9 +24,11 @@ pub struct GameState {
     pub b2b: u32,
     pub combo: u8,
     /// Unmaterialized incoming total (amount-only). Zero when the flag is off.
-    pub pending_incoming_rows: u8,
+    /// u16 like the rows below: a long B2B released at once can send more
+    /// than 255 rows (2026-10-20); hashing is width-independent (StateHasher).
+    pub pending_incoming_rows: u16,
     /// Amount that tanks on the next no-clear lock (amount-only).
-    pub due_this_lock_rows: u8,
+    pub due_this_lock_rows: u16,
 }
 
 impl Hash for GameState {
@@ -156,10 +158,10 @@ pub struct PlacementInfo {
     pub combo: u32,
     pub back_to_back: bool,
     pub perfect_clear: bool,
-    pub cancelled_rows: u8,
-    pub tank_rows: u8,
-    pub remaining_rows: u8,
-    pub outgoing_after_cancel: u8,
+    pub cancelled_rows: u16,
+    pub tank_rows: u16,
+    pub remaining_rows: u16,
+    pub outgoing_after_cancel: u16,
     /// Canonical Surge rows owned by the new S2 candidate path.
     pub surge_rows: u32,
     pub search_attack_overflow: bool,
@@ -211,29 +213,33 @@ pub const SEARCH_ATTACK_COMBO_LOG1P_FLOOR: [u32; 256] = [
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AmountDelta {
-    pub cancelled_rows: u8,
-    pub tank_rows: u8,
-    pub remaining_rows: u8,
-    pub outgoing_before_cancel: u8,
-    pub outgoing_after_cancel: u8,
-    pub pending_after: u8,
-    pub due_after: u8,
+    pub cancelled_rows: u16,
+    pub tank_rows: u16,
+    pub remaining_rows: u16,
+    pub outgoing_before_cancel: u16,
+    pub outgoing_after_cancel: u16,
+    pub pending_after: u16,
+    pub due_after: u16,
     pub search_attack_overflow: bool,
 }
 
+/// B2B is unsaturated like the canonical Simulator's (no 255 cap): a chain
+/// only adds +1 once past its first link, and breaking it at B2B >= 4 surges
+/// B2B - 1, for any length (fixed 2026-10-19: a u8 B2B dropped every
+/// B2B-continuing clear at B2B 255 from the F14 selector).
 pub fn amount_only_search_attack(
     lines: u32,
     spin: Spin,
     perfect_clear: bool,
     combo_after: u8,
-    b2b_after: u8,
-    b2b_before: u8,
+    b2b_after: u32,
+    b2b_before: u32,
 ) -> Option<u32> {
     if lines == 0 {
         return Some(0);
     }
     let mut base = search_attack_base(lines, spin);
-    let b2b_index = b2b_after.saturating_sub(1) as u32;
+    let b2b_index = b2b_after.saturating_sub(1);
     if b2b_index > 0 {
         base += 1;
     }
@@ -245,11 +251,11 @@ pub fn amount_only_search_attack(
     let pc_bonus = if perfect_clear { 5 } else { 0 };
     let broke = matches!(spin, Spin::None) && lines < 4 && !perfect_clear;
     let surge = if broke && b2b_before >= 4 {
-        u32::from(b2b_before) - 1
+        b2b_before - 1
     } else {
         0
     };
-    Some(raw + pc_bonus + surge)
+    Some(raw.saturating_add(pc_bonus).saturating_add(surge))
 }
 
 fn search_attack_base(lines: u32, spin: Spin) -> u32 {
@@ -276,14 +282,14 @@ fn search_attack_base(lines: u32, spin: Spin) -> u32 {
 }
 
 pub fn advance_amount_only(
-    pending: u8,
-    due: u8,
+    pending: u16,
+    due: u16,
     lines: u32,
     spin: Spin,
     perfect_clear: bool,
     combo_after: u8,
-    b2b_after: u8,
-    b2b_before: u8,
+    b2b_after: u32,
+    b2b_before: u32,
 ) -> Result<AmountDelta, AdvanceError> {
     if due > pending {
         return Err(AdvanceError::InvalidIncoming);
@@ -309,7 +315,9 @@ pub fn advance_amount_only(
         b2b_before,
     )
     .unwrap_or(0);
-    if outgoing > 255 {
+    // Rows are u16: an attack past 65,535 rows keeps the overflow arm (it was
+    // 255 while rows were u8, 2026-10-20).
+    if outgoing > u32::from(u16::MAX) {
         return Ok(AmountDelta {
             cancelled_rows: 0,
             tank_rows: 0,
@@ -322,7 +330,7 @@ pub fn advance_amount_only(
         });
     }
     debug_assert!(lines > 0 || outgoing == 0);
-    let outgoing = outgoing as u8;
+    let outgoing = outgoing as u16;
     let cancelled_rows = outgoing.min(pending);
     let outgoing_after_cancel = outgoing - cancelled_rows;
     let (tank_rows, remaining_rows) = if lines > 0 {
@@ -652,8 +660,8 @@ impl GameState {
             placement.spin,
             perfect_clear,
             delta.combo_after,
-            delta.b2b_after.min(u32::from(u8::MAX)) as u8,
-            b2b_before.min(u32::from(u8::MAX)) as u8,
+            delta.b2b_after,
+            b2b_before,
         )?;
         if !amount.search_attack_overflow {
             self.pending_incoming_rows = amount.pending_after;
@@ -801,7 +809,7 @@ mod amount_tests {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
-    fn empty_state(pending: u8, due: u8) -> GameState {
+    fn empty_state(pending: u16, due: u16) -> GameState {
         GameState {
             board: Board { cols: [0; 10] },
             bag: EnumSet::all(),
@@ -859,6 +867,21 @@ mod amount_tests {
     }
 
     #[test]
+    fn search_attack_b2b_is_uncapped_like_the_simulator() {
+        // A B2B-continuing Quad past 255 is worth what it is below 255, and a
+        // break surges B2B - 1 (tests-js/s2-amount-only-b2b-uncapped-parity
+        // checks both against the canonical Simulator).
+        let quad_below = amount_only_search_attack(4, Spin::None, false, 1, 5, 4);
+        for b2b in [254u32, 255, 256, 300] {
+            assert_eq!(amount_only_search_attack(4, Spin::None, false, 1, b2b + 1, b2b), quad_below);
+            assert_eq!(amount_only_search_attack(1, Spin::None, false, 1, 0, b2b), Some(b2b - 1));
+        }
+        let advanced = advance_amount_only(3, 1, 4, Spin::None, false, 1, 256, 255).unwrap();
+        assert_eq!((advanced.cancelled_rows, advanced.pending_after, advanced.search_attack_overflow), (3, 0, false));
+        assert_eq!(amount_only_search_attack(1, Spin::None, false, 1, 0, u32::MAX), Some(u32::MAX - 1));
+    }
+
+    #[test]
     fn canonical_surge_does_not_mix_with_legacy_amount_attack() {
         assert_eq!(amount_only_search_attack(1, Spin::None, false, 1, 0, 4), Some(3));
         assert_eq!(s2_b2b_surge_rows(1, Spin::None, false, 4), 0);
@@ -885,10 +908,20 @@ mod amount_tests {
         assert_eq!(tank.remaining_rows, 4);
         assert_eq!(tank.due_after, 4);
 
-        let overflow = advance_amount_only(1, 1, 40, Spin::Full, true, 255, 4, 4).unwrap();
+        // Rows are u16: a 5,358-row attack (overflow while rows were u8) now
+        // cancels; the overflow arm starts past 65,535 rows.
+        let big = advance_amount_only(1, 1, 40, Spin::Full, true, 255, 4, 4).unwrap();
+        assert!(!big.search_attack_overflow);
+        assert_eq!((big.cancelled_rows, big.outgoing_after_cancel, big.pending_after), (1, 5357, 0));
+        let overflow = advance_amount_only(1, 1, 1, Spin::None, false, 1, 0, 70_000).unwrap();
         assert!(overflow.search_attack_overflow);
         assert_eq!(overflow.pending_after, 1);
         assert_eq!(overflow.due_after, 1);
+        // 299 pending rows against a 255-row break: 44 remain (Simulator parity).
+        let partial = advance_amount_only(299, 8, 1, Spin::None, false, 1, 0, 256).unwrap();
+        assert_eq!((partial.cancelled_rows, partial.remaining_rows, partial.outgoing_after_cancel), (255, 44, 0));
+        let tank = advance_amount_only(299, 8, 0, Spin::None, false, 0, 0, 0).unwrap();
+        assert_eq!((tank.tank_rows, tank.remaining_rows), (8, 291));
 
         assert_eq!(
             advance_amount_only(1, 2, 0, Spin::None, false, 0, 0, 0),
@@ -898,8 +931,8 @@ mod amount_tests {
 
     #[test]
     fn amount_transition_matches_canonical_amount_projection() {
-        for pending in [0_u8, 1, 6, 20, 255] {
-            for due in [0_u8, pending] {
+        for pending in [0_u16, 1, 6, 20, 255, 256, 299] {
+            for due in [0_u16, pending] {
                 for lines in 0..=4 {
                     let old = advance_amount_only(
                         pending,

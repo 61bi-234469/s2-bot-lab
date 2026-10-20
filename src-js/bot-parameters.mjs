@@ -37,8 +37,9 @@ const F14_CORE_PARAMETERS = Object.freeze(CC2_PARAMETERS.map((parameter) =>
   parameter.key === "selectionLimit" ? Object.freeze({ ...parameter, maximum: 1_000_000 })
     : parameter.key === "queueDepth" ? Object.freeze({ ...parameter, minimum: 2 }) : parameter));
 
-// The current champion and the tree-reuse former champion search 2,048
-// selections by default (with tree reuse); the other F14-core bots keep 512.
+// The current champion and the former champions from the tree-reuse one on
+// search 2,048 selections by default (with tree reuse); the older F14-core
+// bots keep 512.
 const CHAMPION_PARAMETERS = Object.freeze(F14_CORE_PARAMETERS.map((parameter) =>
   parameter.key === "selectionLimit" ? Object.freeze({ ...parameter, defaultValue: 2048 }) : parameter));
 
@@ -146,12 +147,30 @@ export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
     ].join("\n"),
     parameters: CHAMPION_PARAMETERS,
   }),
-  "cc2-s2-champion": Object.freeze({
-    label: "Sold Slear — SPSA v7 APP-tuned weights (current champion)",
+  "cc2-s2-champion-spsa-v7": Object.freeze({
+    label: "Sold Slear — SPSA v7 APP-tuned weights (former champion)",
     description: [
-      "由来：2026年10月10日からの現チャンピオンです。2,048 selections with tree reuse 版を土台にしています。",
+      "由来：2026年10月10日〜20日のチャンピオンです。2,048 selections with tree reuse 版を土台にしています。",
       "調整・意図：1 手あたりの火力（APP）を目的にした自己対戦による自動調整（SPSA v7）で、ライン消去の種類ごとの重み（1〜4 ライン）、Quad 用の縦穴の深さ、B2B の維持と継続、コンボ火力、ミニスピンの 1 ライン消去、T の無駄の 10 個を決め直しました。1 ラインだけの通常消去は加点から小さな減点に変わりました。探索の設定（2,048 selections、tree reuse）は土台と同じです。",
       "特徴：判断の仕組みと探索は土台と同じで、評価の重み 10 個だけが違います。探索量は SELECTION で、置く間隔は PPS で調整できます。開発版で、正式な評価（release-qualified）は受けていません。",
+    ].join("\n"),
+    parameters: CHAMPION_PARAMETERS,
+  }),
+  "cc2-s2-champion-spsa-v10": Object.freeze({
+    label: "Sold Slear — SPSA v10 guarded shape and height weights (former champion)",
+    description: [
+      "由来：開発用の評価で 2026年10月19日〜20日のチャンピオンです（GUI には 10月20日に追加）。SPSA v7 版に、詰む局面での救済（rescue top-out fallback）を加えたものを土台にしています。",
+      "調整・意図：救済は、いちばん良い手がその場で詰み、安全な候補も無いときだけ、その場で詰まない候補に切り替えます。そのうえで、v7 が触れなかった評価の重み 10 個（穴とその上のブロック、行の切れ目、高さ 3 段階、スピン消去 1〜3 ライン、自由度）を、APP に勝敗の項を加えた自動調整（SPSA v10）で決め直しました。",
+      "特徴：探索の設定（2,048 selections、tree reuse）は v7 版と同じで、盤面の形と高さの評価が違います。探索量は SELECTION で、置く間隔は PPS で調整できます。開発版で、正式な評価（release-qualified）は受けていません。",
+    ].join("\n"),
+    parameters: CHAMPION_PARAMETERS,
+  }),
+  "cc2-s2-champion": Object.freeze({
+    label: "Sold Slear — SPSA v11 guarded clear and B2B weights (current champion)",
+    description: [
+      "由来：2026年10月20日からの現チャンピオンです。SPSA v10 版を土台にしています。",
+      "調整・意図：v7 が APP だけを目的に決めた重み 10 個（ライン消去の種類ごとの重み 1〜4 ライン、Quad 用の縦穴の深さ、B2B の維持と継続、コンボ火力、ミニスピンの 1 ライン消去、T の無駄）を、APP に勝敗の項を加えた自動調整（SPSA v11）で決め直しました。1 ラインだけの通常消去は小さな減点からほぼ 0 に戻り、B2B の維持の加点はやや下がり、T の無駄の減点は強くなりました。",
+      "特徴：判断の仕組み・救済・探索の設定（2,048 selections、tree reuse）は v10 版と同じで、評価の重み 10 個だけが違います。探索量は SELECTION で、置く間隔は PPS で調整できます。開発版で、正式な評価（release-qualified）は受けていません。",
     ].join("\n"),
     parameters: CHAMPION_PARAMETERS,
   }),

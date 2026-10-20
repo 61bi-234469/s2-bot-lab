@@ -39,8 +39,11 @@ export function projectS2AmountOnlyIncomingSnapshot(state) {
     }
     pendingRows += packet.amount;
   }
-  if (pendingRows > 255) {
-    throw new Error("amount-only incoming snapshot pendingRows exceeds 255");
+  // Rows are u16 like the bot's amount state (2026-10-20; they were u8): a
+  // long B2B released at once sends hundreds of rows. Past 65,535 stays
+  // fail-closed (only a B2B past 65,536 could send that much).
+  if (pendingRows > 0xffff) {
+    throw new Error("amount-only incoming snapshot pendingRows exceeds 65535");
   }
 
   const garbageOptions = triangleGarbageOptions(rules, {

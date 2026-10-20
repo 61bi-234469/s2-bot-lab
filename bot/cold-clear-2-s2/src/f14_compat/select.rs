@@ -116,6 +116,9 @@ pub struct F14SelectOptions {
     /// Danger-mode root preference applied after the residual rescue. `None`
     /// keeps the selection byte-identical.
     pub danger_preference: Option<DangerPreference>,
+    /// Top-out fallback of the residual rescue (`rescue_topout_fallback`).
+    /// `false` keeps the selection byte-identical.
+    pub topout_fallback: bool,
 }
 
 /// When the best returned solvency is below `cap` and the rescue did not
@@ -137,6 +140,7 @@ impl Default for F14SelectOptions {
             post_spin_policy: PostSpinPolicy::LegacyF14,
             final_order_policy: FinalOrderPolicy::S2Rerank,
             danger_preference: None,
+            topout_fallback: false,
         }
     }
 }
@@ -496,7 +500,11 @@ impl RootDecisionStage {
     ) -> Result<(F14Selection, PostStageCountersSnapshot), CompatError> {
         let (selection_result, audit) = crate::s2_audit::run_native_f14_compat(|| {
             self.compose_returned_prefix(context, moves).and_then(|prefix| {
-                apply_residual_rescue_with_danger(prefix, self.options.danger_preference)
+                apply_residual_rescue_with_policy(
+                    prefix,
+                    self.options.danger_preference,
+                    self.options.topout_fallback,
+                )
             })
         });
         let selection = selection_result?;
@@ -2343,6 +2351,7 @@ fn evaluate_f14_candidate(
         conversion: facts.conversion,
         solvency: facts.solvency,
         solvent,
+        amount_topped_out: facts.actual.amount_topped_out,
         selection_score: 0.0,
     };
     Ok(CandidateEvaluation {
@@ -2556,16 +2565,41 @@ fn danger_preferred_index(
         .unwrap_or(selected_index)
 }
 
+/// When the residual rescue did not fire and CC2 rank 0 tops out at this lock
+/// (the same amount-only projection as the rescue's solvency), the first
+/// ranked candidate that does not top out. It acts only where every candidate
+/// is insolvent, so it never overrides a rescue or a non-topping rank 0.
+pub(crate) fn topout_fallback_index(ranked: &[RankedCandidate], rescued: bool) -> Option<usize> {
+    if rescued || !ranked.first()?.amount_topped_out {
+        return None;
+    }
+    ranked.iter().position(|candidate| !candidate.amount_topped_out)
+}
+
 pub fn apply_residual_rescue_with_danger(
     prefix: ComposedRankingPrefix,
     danger: Option<DangerPreference>,
+) -> Result<F14Selection, CompatError> {
+    apply_residual_rescue_with_policy(prefix, danger, false)
+}
+
+pub fn apply_residual_rescue_with_policy(
+    prefix: ComposedRankingPrefix,
+    danger: Option<DangerPreference>,
+    topout_fallback: bool,
 ) -> Result<F14Selection, CompatError> {
     let ComposedRankingPrefix {
         ranked,
         selected_meta,
         returned_candidate_count,
     } = prefix;
-    let (rescued, mut selected_index) = choose_rescue(&ranked)?;
+    let (mut rescued, mut selected_index) = choose_rescue(&ranked)?;
+    if topout_fallback {
+        if let Some(index) = topout_fallback_index(&ranked, rescued) {
+            rescued = true;
+            selected_index = index;
+        }
+    }
     if let (false, Some(danger)) = (rescued, danger) {
         selected_index = danger_preferred_index(&ranked, selected_index, danger);
     }
@@ -2698,6 +2732,67 @@ pub fn public_state_from_json(value: &Value) -> Result<F14PublicState, CompatErr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn public_rescue_prefix() -> ComposedRankingPrefix {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/diagnostics/f14-public-rescue.json"
+        ))
+        .unwrap();
+        let state = public_state_from_json(&fixture["selector"]).unwrap();
+        let moves = fixture["moves"].as_array().unwrap();
+        compose_f14_ranking(&state, moves, &F14SelectOptions::default(), None, true).unwrap()
+    }
+
+    #[test]
+    fn topout_fallback_leaves_a_firing_rescue_and_a_non_topping_rank_zero_unchanged() {
+        let prefix = public_rescue_prefix();
+        // Solvent implies not topped out on every projected row.
+        assert!(prefix.ranked.iter().all(|row| !row.solvent || !row.amount_topped_out));
+        let plain = apply_residual_rescue(prefix.clone()).unwrap();
+        let fallback = apply_residual_rescue_with_policy(prefix.clone(), None, true).unwrap();
+        assert!(plain.rescued);
+        assert_eq!((fallback.rescued, fallback.selected.cc2_rank), (plain.rescued, plain.selected.cc2_rank));
+        // No solvent row and a rank 0 that does not top out: rank 0 stands with or without the key.
+        let mut calm = prefix;
+        for row in &mut calm.ranked {
+            row.solvent = false;
+            row.solvency = -1.0;
+            row.amount_topped_out = false;
+        }
+        let selected = apply_residual_rescue_with_policy(calm, None, true).unwrap();
+        assert!(!selected.rescued);
+        assert_eq!(selected.selected.cc2_rank, 0);
+    }
+
+    #[test]
+    fn topout_fallback_selects_the_first_non_topping_rank_when_nothing_is_solvent() {
+        let mut prefix = public_rescue_prefix();
+        let last = prefix.ranked.len() - 1;
+        assert!(last >= 1);
+        for row in &mut prefix.ranked {
+            row.solvent = false;
+            row.solvency = -3.0;
+            row.amount_topped_out = true;
+        }
+        prefix.ranked[last].amount_topped_out = false;
+        prefix.ranked[last].solvency = -1.0;
+        let off = apply_residual_rescue_with_policy(prefix.clone(), None, false).unwrap();
+        assert!(!off.rescued);
+        assert_eq!(off.selected.cc2_rank, prefix.ranked[0].cc2_rank);
+        let on = apply_residual_rescue_with_policy(prefix.clone(), None, true).unwrap();
+        assert!(on.rescued);
+        assert_eq!(on.selected.cc2_rank, prefix.ranked[last].cc2_rank);
+        assert_eq!(on.selected.s2_score, prefix.ranked[last].s2_score);
+        // The danger preference does not act after the fallback fired.
+        let danger = DangerPreference { cap: 100.0, gain: 0.5 };
+        let with_danger = apply_residual_rescue_with_policy(prefix.clone(), Some(danger), true).unwrap();
+        assert_eq!(with_danger.selected.cc2_rank, prefix.ranked[last].cc2_rank);
+        // Every candidate tops out: nothing to fall back to, rank 0 stands.
+        prefix.ranked[last].amount_topped_out = true;
+        let none = apply_residual_rescue_with_policy(prefix.clone(), None, true).unwrap();
+        assert!(!none.rescued);
+        assert_eq!(none.selected.cc2_rank, prefix.ranked[0].cc2_rank);
+    }
     #[test]
     fn public_profile_rescues_insolvent_control_without_changing_a() {
         let fixture: Value = serde_json::from_str(include_str!(
@@ -3895,6 +3990,7 @@ mod danger_preference_tests {
                 conversion: Conversion { branch: ConversionBranch::Other, units: 0.0, qualifies: false },
                 solvency,
                 solvent: solvency >= 0.0,
+                amount_topped_out: false,
                 selection_score: 0.0,
             })
             .collect()

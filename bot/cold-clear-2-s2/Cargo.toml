@@ -55,3 +55,8 @@ criterion = "0.3.5"
 [[bench]]
 name = "movegen"
 harness = false
+
+# One codegen unit: the WASM F14 core decides ~7.6% faster with identical
+# decisions (2026-10-19, 406/406 requests); fat LTO and simd128 added nothing.
+[profile.release]
+codegen-units = 1

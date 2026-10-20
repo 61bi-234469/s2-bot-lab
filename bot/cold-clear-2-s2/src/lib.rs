@@ -165,7 +165,7 @@ fn admit_bot(start: tbp::Start, config: Arc<BotConfig>) -> Bot {
 fn incoming_amounts(
     start: &tbp::Start,
     enabled: bool,
-) -> Result<(u8, u8), StartAdmissionError> {
+) -> Result<(u16, u16), StartAdmissionError> {
     if !enabled {
         return Ok((0, 0));
     }
@@ -176,14 +176,14 @@ fn incoming_amounts(
     let amounts: tbp::S2IncomingAmounts =
         serde_json::from_value(value.clone()).map_err(|_| StartAdmissionError)?;
     if amounts.due_this_lock_rows > amounts.pending_rows
-        || amounts.pending_rows > 255
-        || amounts.due_this_lock_rows > 255
+        || amounts.pending_rows > u32::from(u16::MAX)
+        || amounts.due_this_lock_rows > u32::from(u16::MAX)
     {
         return Err(StartAdmissionError);
     }
     Ok((
-        amounts.pending_rows as u8,
-        amounts.due_this_lock_rows as u8,
+        amounts.pending_rows as u16,
+        amounts.due_this_lock_rows as u16,
     ))
 }
 
@@ -300,7 +300,7 @@ mod start_admission_tests {
             Some(json!({"pending_rows": 1})),
             Some(json!({"pending_rows": 1, "due_this_lock_rows": 2})),
             Some(json!({"pending_rows": 1, "due_this_lock_rows": 0, "packets": []})),
-            Some(json!({"pending_rows": 256, "due_this_lock_rows": 0})),
+            Some(json!({"pending_rows": 65_536, "due_this_lock_rows": 0})),
         ] {
             let error = match create_bot(start_json(incoming), config(true)) {
                 Ok(_) => panic!("illegal Start was admitted"),

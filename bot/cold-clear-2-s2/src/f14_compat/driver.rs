@@ -51,6 +51,13 @@ impl F14Driver {
         Self::start_with_input_speculation(profile, request, true, None)
     }
 
+    /// `start_input_speculation` that may continue `retained` like
+    /// `start_reusing`: the one-piece-short INPUT queue then searches the tree
+    /// the previous decision left, with the knowledge that tree already had.
+    pub(crate) fn start_input_speculation_reusing(profile: Profile, request: Json, retained: Option<Bot>) -> Result<Self, Json> {
+        Self::start_with_input_speculation(profile, request, true, retained)
+    }
+
     fn start_with_input_speculation(
         profile: Profile,
         request: Json,

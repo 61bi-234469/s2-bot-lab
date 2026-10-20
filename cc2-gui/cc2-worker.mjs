@@ -7,7 +7,11 @@ let engine = null;
 self.onmessage = async ({ data }) => {
   const { id, type, payload = {} } = data;
   try {
-    if (type === "init") {
+    if (type === "init" && payload.resolverOnly === true) {
+      // INPUT plan resolution only (no engine): resolveInput needs no WASM.
+      engine = payload.engine;
+      self.postMessage({ id, ok: true });
+    } else if (type === "init") {
       const response = await fetch(new URL(payload.wasm, import.meta.url));
       if (!response.ok) throw new Error(`WASM fetch failed: ${response.status}`);
       let config = payload.config ?? null;
@@ -34,6 +38,12 @@ self.onmessage = async ({ data }) => {
         throw new Error(`CC2 F14 engine identity mismatch for ${payload.type}`);
       }
       self.postMessage({ id, ok: true, value: await session.decideF14({ request: payload.request, profile: payload.profile }) });
+    } else if (type === "speculateInputF14") {
+      if (session === null) throw new Error("CC2 worker session is not initialized");
+      if (payload.type !== engine || payload.engine?.botType !== engine || payload.engine?.engineId !== engine) {
+        throw new Error(`CC2 F14 engine identity mismatch for ${payload.type}`);
+      }
+      self.postMessage({ id, ok: true, value: await session.speculateInputF14({ request: payload.request, profile: payload.profile }) });
     } else if (type === "rerankF14") {
       if (session === null) throw new Error("CC2 worker session is not initialized");
       if (payload.type !== engine || payload.engine?.botType !== engine || payload.engine?.engineId !== engine) {
@@ -41,7 +51,7 @@ self.onmessage = async ({ data }) => {
       }
       self.postMessage({ id, ok: true, value: await session.rerankF14({ request: payload.request, profile: payload.profile }) });
     } else if (type === 'resolveInput') {
-      if (!session || payload.request?.type !== engine || payload.request.engine?.engineId !== engine) throw new Error('input resolution identity mismatch');
+      if (engine === null || payload.request?.type !== engine || payload.request.engine?.engineId !== engine) throw new Error('input resolution identity mismatch');
       self.postMessage({ id, ok: true, value: resolveInputJob(payload) });
     } else if (type === "close") {
       await session?.close();

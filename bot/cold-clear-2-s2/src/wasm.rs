@@ -21,7 +21,8 @@ thread_local! {
     static F14_DRIVER: RefCell<Option<F14Driver>> = const { RefCell::new(None) };
     static RETAINED_F14: RefCell<Option<F14RerankState>> = const { RefCell::new(None) };
     /// Tree reuse (`tree_reuse_floor`): the last finished F14 bot, offered to
-    /// the next `f14_start`. Every other start clears it.
+    /// the next `f14_start` or `f14_input_speculate_start`. Every other start
+    /// clears it.
     static RETAINED_TREE: RefCell<Option<crate::bot::Bot>> = const { RefCell::new(None) };
 }
 
@@ -130,8 +131,8 @@ fn handle_request(request: Request) -> Result<Value, &'static str> {
         }
         Request::F14InputSpeculateStart { profile, request } => {
             RETAINED_F14.with(|slot| *slot.borrow_mut() = None);
-            RETAINED_TREE.with(|slot| *slot.borrow_mut() = None);
-            let driver = match F14Driver::start_input_speculation(profile, request) {
+            let tree = RETAINED_TREE.with(|slot| slot.borrow_mut().take());
+            let driver = match F14Driver::start_input_speculation_reusing(profile, request, tree) {
                 Ok(driver) => driver,
                 Err(response) => {
                     DRIVER.with(|slot| *slot.borrow_mut() = None);

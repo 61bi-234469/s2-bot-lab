@@ -193,6 +193,9 @@ pub struct RankedCandidate {
     pub conversion: Conversion,
     pub solvency: f64,
     pub solvent: bool,
+    /// The lock's own tank lifts the board above the visible height (the
+    /// amount-only projection behind `solvency`). Not serialized.
+    pub amount_topped_out: bool,
     pub selection_score: f64,
 }
 
@@ -705,8 +708,10 @@ pub fn score_feature_map(
     score_evaluation_features(&aligned, weights)
 }
 
-fn require_u8(value: u32) -> Result<u8, CompatError> {
-    u8::try_from(value).map_err(|_| CompatError::InvalidIncoming)
+/// Incoming rows are u16 (2026-10-20; they were u8): past 65,535 stays
+/// fail-closed, which only a B2B past 65,536 could reach.
+fn require_u16(value: u32) -> Result<u16, CompatError> {
+    u16::try_from(value).map_err(|_| CompatError::InvalidIncoming)
 }
 
 fn parse_f14_spin(spin: &str) -> Result<Spin, CompatError> {
@@ -724,8 +729,8 @@ pub fn advance_f14_amount_only(
     incoming: F14Incoming,
     lock: &F14LockPublic,
 ) -> Result<AmountDelta, CompatError> {
-    let pending = require_u8(incoming.pending_rows)?;
-    let due = require_u8(incoming.due_this_lock_rows)?;
+    let pending = require_u16(incoming.pending_rows)?;
+    let due = require_u16(incoming.due_this_lock_rows)?;
     if due > pending {
         return Err(CompatError::InvalidIncoming);
     }
@@ -766,8 +771,8 @@ pub(crate) fn advance_f14_amount_only_with_spin(
     b2b_after: u32,
     b2b_before: u32,
 ) -> Result<AmountDelta, CompatError> {
-    let pending = require_u8(incoming.pending_rows)?;
-    let due = require_u8(incoming.due_this_lock_rows)?;
+    let pending = require_u16(incoming.pending_rows)?;
+    let due = require_u16(incoming.due_this_lock_rows)?;
     if due > pending {
         return Err(CompatError::InvalidIncoming);
     }
@@ -788,8 +793,8 @@ pub(crate) fn advance_f14_amount_only_with_spin(
 }
 
 fn advance_f14_amount_only_nonempty(
-    pending: u8,
-    due: u8,
+    pending: u16,
+    due: u16,
     lines: u32,
     spin: Spin,
     perfect_clear: bool,
@@ -797,9 +802,8 @@ fn advance_f14_amount_only_nonempty(
     b2b_after: u32,
     b2b_before: u32,
 ) -> Result<AmountDelta, CompatError> {
+    // B2B is not capped (canonical); only a combo past 255 stays out of range.
     let combo_after = u8::try_from(combo_after).map_err(|_| CompatError::ChainOutOfU8)?;
-    let b2b_after = u8::try_from(b2b_after).map_err(|_| CompatError::ChainOutOfU8)?;
-    let b2b_before = u8::try_from(b2b_before).map_err(|_| CompatError::ChainOutOfU8)?;
     let outgoing = amount_only_search_attack(
         lines,
         spin,
@@ -1139,6 +1143,7 @@ mod tests {
                     conversion: classified,
                     solvency: candidate["solvency"].as_f64().unwrap(),
                     solvent: candidate["solvent"].as_bool().unwrap(),
+                    amount_topped_out: false,
                     selection_score: 0.0,
                 });
             }
@@ -1176,6 +1181,7 @@ mod tests {
                         },
                         solvency: 18.0,
                         solvent: true,
+                        amount_topped_out: false,
                         selection_score: 0.0,
                     })
                     .collect(),
@@ -1203,6 +1209,7 @@ mod tests {
                     },
                     solvency: 0.0,
                     solvent: true,
+                    amount_topped_out: false,
                     selection_score: 0.0,
                 },
                 RankedCandidate {
@@ -1216,6 +1223,7 @@ mod tests {
                     },
                     solvency: 0.0,
                     solvent: true,
+                    amount_topped_out: false,
                     selection_score: 0.0,
                 },
             ]),
@@ -1236,6 +1244,7 @@ mod tests {
             },
             solvency: 1.0,
             solvent: true,
+            amount_topped_out: false,
             selection_score: 0.0,
         };
         let reranked = rank_candidates(vec![candidate(0, 0.0), candidate(1, 100.0)]).unwrap();
@@ -1269,6 +1278,7 @@ mod tests {
                     },
                     solvency: candidate["solvency"].as_f64().unwrap(),
                     solvent: candidate["solvent"].as_bool().unwrap(),
+                    amount_topped_out: false,
                     selection_score: 0.0,
                 })
                 .collect();
@@ -1288,6 +1298,7 @@ mod tests {
             },
             solvency: f64::NAN,
             solvent: false,
+            amount_topped_out: false,
             selection_score: 0.0,
         };
         assert_eq!(choose_rescue(&[nan]), Err(CompatError::InvalidSolvency));
@@ -1629,6 +1640,13 @@ mod tests {
         let p3 = load_p3();
         for case in p3["syntheticAdvance"]["cases"].as_array().unwrap() {
             let delta = advance_f14_amount_only(incoming_of(&case["incoming"]), &lock_public(&case["lock"])).unwrap();
+            if case["id"] == "overflow" {
+                // Historical u8 expectation (overflow at 5,358 rows). Rows are
+                // u16 since 2026-10-20, so the attack now cancels the 1 row.
+                assert_eq!((delta.cancelled_rows, delta.outgoing_before_cancel, delta.outgoing_after_cancel), (1, 5358, 5357));
+                assert_eq!((delta.pending_after, delta.due_after, delta.search_attack_overflow), (0, 0, false));
+                continue;
+            }
             let expected = &case["expected"];
             assert_eq!(u32::from(delta.cancelled_rows), expected["cancelledRows"].as_u64().unwrap() as u32, "{}", case["id"]);
             assert_eq!(u32::from(delta.tank_rows), expected["tankRows"].as_u64().unwrap() as u32, "{}", case["id"]);
@@ -1644,18 +1662,25 @@ mod tests {
             advance_f14_amount_only(incoming_of(&rejects[0]["incoming"]), &lock_public(&rejects[0]["lock"])),
             Err(CompatError::InvalidIncoming)
         );
+        // rejects[1] (256 pending rows) is accepted since rows became u16
+        // (2026-10-20); the u16 bound itself stays fail-closed.
+        assert_eq!(rejects[1]["id"], "pending-256");
+        assert!(advance_f14_amount_only(incoming_of(&rejects[1]["incoming"]), &lock_public(&rejects[1]["lock"])).is_ok());
         assert_eq!(
-            advance_f14_amount_only(incoming_of(&rejects[1]["incoming"]), &lock_public(&rejects[1]["lock"])),
+            advance_f14_amount_only(F14Incoming { pending_rows: 65_536, due_this_lock_rows: 0 }, &lock_public(&rejects[1]["lock"])),
             Err(CompatError::InvalidIncoming)
         );
         assert_eq!(
             advance_f14_amount_only(incoming_of(&rejects[2]["incoming"]), &lock_public(&rejects[2]["lock"])),
             Err(CompatError::ChainOutOfU8)
         );
-        assert_eq!(
-            advance_f14_amount_only(incoming_of(&rejects[3]["incoming"]), &lock_public(&rejects[3]["lock"])),
-            Err(CompatError::ChainOutOfU8)
-        );
+        // rejects[3] (B2B after 256) is no longer rejected: B2B has no cap,
+        // as in the canonical Simulator (fixed 2026-10-19; the fixture keeps
+        // its historical expectation). Two rows, B2B +1, one cancelled.
+        assert_eq!(rejects[3]["id"], "incoming-gt0-b2b-256");
+        let b2b_256 = advance_f14_amount_only(incoming_of(&rejects[3]["incoming"]), &lock_public(&rejects[3]["lock"])).unwrap();
+        assert_eq!((b2b_256.outgoing_before_cancel, b2b_256.cancelled_rows, b2b_256.outgoing_after_cancel), (2, 1, 1));
+        assert_eq!((b2b_256.pending_after, b2b_256.due_after, b2b_256.search_attack_overflow), (0, 0, false));
         assert_eq!(
             advance_f14_amount_only(incoming_of(&rejects[4]["incoming"]), &lock_public(&rejects[4]["lock"])),
             Err(CompatError::InvalidSpin)

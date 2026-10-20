@@ -181,9 +181,12 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
         parent: u64,
         speculation_piece: Piece,
     ) -> (E, Link<E>, bool) {
+        // One index per child: for hash-addressed (Legacy) maps the index is the
+        // state hash, which this used to compute twice (insert, then link).
+        let id = self.states.index(&child.resulting_state);
         let mut node = self
             .states
-            .get_or_insert_with(&child.resulting_state, || Node {
+            .get_raw_or_insert_with(id, || Node {
                 parents: Parents::new(),
                 eval: child.eval,
                 children: None,
@@ -192,7 +195,7 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
             });
         let added_capacity = node.parents.append(bump, (parent, child.mv, speculation_piece));
         if added_capacity != 0 { self.parent_storage_slots.fetch_add(added_capacity, atomic::Ordering::Relaxed); }
-        (node.eval, E::Domain::link(self.states.index(&child.resulting_state)), node.closed)
+        (node.eval, E::Domain::link(id), node.closed)
     }
 
     pub fn expand(
@@ -230,7 +233,7 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
             }
         }
 
-        childs.sort_by(|a, b| super::compare_children(a, b).reverse());
+        super::sort_legacy_children_descending(&mut childs);
 
         parent.eval = E::average(std::iter::once(childs.first().map(|c| c.cached_eval)));
         parent.closed = E::Domain::S2 && childs.iter().all(|child| child.closed);

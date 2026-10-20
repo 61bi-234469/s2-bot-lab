@@ -84,6 +84,15 @@ pub struct StateMap<V, S = StateBuildHasher, K: StateKey = GameState> {
 const SHARD_INDEX_BITS: usize = 12;
 const SHARD_INDEX_SHIFT: usize = 32;
 const SHARDS: usize = 1 << SHARD_INDEX_BITS;
+/// Shards a hash-addressed (Legacy) map actually uses. The search is single
+/// worker on every current route (F14 profiles and WASM), so 4,096 small shard
+/// tables mostly cost cache misses; 16 larger ones measured about 14% faster
+/// natively (2026-10-18). The shard array keeps all `SHARDS` entries, so the
+/// type, `shard_storage_bytes`, and the S2 memory charge are unchanged, and S2
+/// (exact-key) maps still spread over every shard. A shard only groups
+/// entries: values are found by their full key, and nothing ordered reads the
+/// shards (`for_each` serves the backup audit only).
+const LEGACY_SHARDS: usize = 16;
 
 impl<V, S: Default, K: StateKey> Default for StateMap<V, S, K> {
     fn default() -> Self {
@@ -151,7 +160,8 @@ impl<V, S: BuildHasher, K: StateKey> StateMap<V, S, K> {
     }
 
     fn bucket(&self, k: u64) -> &RwLock<IntMap<u64, V>> {
-        &self.buckets[(k >> SHARD_INDEX_SHIFT) as usize % SHARDS]
+        let shards = if K::EXACT { SHARDS } else { LEGACY_SHARDS };
+        &self.buckets[(k >> SHARD_INDEX_SHIFT) as usize % shards]
     }
 
     pub fn get_raw(&self, k: u64) -> Option<MappedRwLockReadGuard<V>> {

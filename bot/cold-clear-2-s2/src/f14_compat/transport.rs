@@ -147,6 +147,7 @@ pub const TUNABLE_WEIGHT_KEYS: &[&str] = &[
     "leaf_ren_attack_gain",
     ROOT_DANGER_SOLVENCY_CAP_KEY,
     ROOT_DANGER_SOLVENCY_GAIN_KEY,
+    RESCUE_TOPOUT_FALLBACK_KEY,
     LEGACY_BACKUP_CONSISTENCY_KEY,
     TREE_REUSE_FLOOR_KEY,
 ];
@@ -155,6 +156,12 @@ pub const TUNABLE_WEIGHT_KEYS: &[&str] = &[
 /// `select::DangerPreference`.
 pub const ROOT_DANGER_SOLVENCY_CAP_KEY: &str = "root_danger_solvency_cap";
 pub const ROOT_DANGER_SOLVENCY_GAIN_KEY: &str = "root_danger_solvency_gain";
+
+/// Root-policy key (not a search weight): "1" is the only admitted value. When
+/// the residual rescue does not fire and CC2 rank 0 tops out at this lock, the
+/// first ranked candidate that does not top out is selected. See
+/// `select::topout_fallback_index`.
+pub const RESCUE_TOPOUT_FALLBACK_KEY: &str = "rescue_topout_fallback";
 
 /// Search key (not a weight): "1" is the only admitted value. Legacy known and
 /// chance backups re-derive a parent's value from its current best children
@@ -387,6 +394,7 @@ impl Profile {
                 _ => false,
             };
             let backup_valid = overrides.get(LEGACY_BACKUP_CONSISTENCY_KEY).map_or(true, |value| value == "1");
+            let rescue_valid = overrides.get(RESCUE_TOPOUT_FALLBACK_KEY).map_or(true, |value| value == "1");
             let tree_reuse_valid = overrides.get(TREE_REUSE_FLOOR_KEY).map_or(true, |value| {
                 value.parse::<u64>().map_or(false, |floor| {
                     floor >= 1 && floor <= self.budget.selections && floor.to_string() == *value
@@ -394,6 +402,7 @@ impl Profile {
             });
             danger_valid
                 && backup_valid
+                && rescue_valid
                 && tree_reuse_valid
                 && !overrides.is_empty()
                 && overrides.iter().all(|(key, value)| {
@@ -406,7 +415,7 @@ impl Profile {
 
     pub(crate) fn apply_search_config_overrides(&self, config: &mut BotConfig) {
         for (key, value) in self.weight_overrides.iter().flatten() {
-            if key == ROOT_DANGER_SOLVENCY_CAP_KEY || key == ROOT_DANGER_SOLVENCY_GAIN_KEY {
+            if key == ROOT_DANGER_SOLVENCY_CAP_KEY || key == ROOT_DANGER_SOLVENCY_GAIN_KEY || key == RESCUE_TOPOUT_FALLBACK_KEY {
                 continue;
             }
             if key == LEGACY_BACKUP_CONSISTENCY_KEY {
@@ -511,7 +520,12 @@ impl Profile {
             post_spin_policy: self.post_spin_policy(),
             final_order_policy: self.final_order_policy(),
             danger_preference: self.danger_preference(),
+            topout_fallback: self.rescue_topout_fallback(),
         })
+    }
+
+    pub(crate) fn rescue_topout_fallback(&self) -> bool {
+        self.weight_overrides.as_ref().map_or(false, |overrides| overrides.contains_key(RESCUE_TOPOUT_FALLBACK_KEY))
     }
 
     pub(crate) fn danger_preference(&self) -> Option<super::select::DangerPreference> {
@@ -1348,12 +1362,20 @@ fn input_queue_prefix_start_matches(retained_request: &Json, real_request: &Json
     let Some(real_queue) = real_start.get("queue").and_then(Json::as_array) else {
         return false;
     };
-    if real_queue.len() != retained_queue.len() + 1
+    // The retained search ran on the public queue up to a 7-bag boundary; the
+    // real request adds the first 1..=7 pieces of the new bag (QUEUE DEPTH 14
+    // adds one, deeper queues more), which are therefore distinct.
+    let missing = real_queue.len().saturating_sub(retained_queue.len());
+    if !(1..=7).contains(&missing)
         || retained_queue
             .iter()
             .zip(real_queue)
             .any(|(left, right)| left != right)
     {
+        return false;
+    }
+    let revealed = &real_queue[retained_queue.len()..];
+    if revealed.iter().enumerate().any(|(i, piece)| revealed[..i].contains(piece)) {
         return false;
     }
     let mut comparable_real_start = real_start.clone();
@@ -1967,7 +1989,7 @@ mod tests {
     }
 
     #[test]
-    fn input_queue_prefix_admission_is_opt_in_and_exactly_one_piece() {
+    fn input_queue_prefix_admission_is_opt_in_and_one_to_seven_new_bag_pieces() {
         let (retained, real) = prefix_compatibility_requests();
         assert!(super::input_queue_prefix_allowed(
             true,
@@ -1990,6 +2012,7 @@ mod tests {
             None
         );
 
+        // QUEUE DEPTH 15+: two (or up to seven) distinct pieces of the new bag.
         let mut two_missing = real.clone();
         two_missing["start"]["queue"]
             .as_array_mut()
@@ -1997,8 +2020,16 @@ mod tests {
             .push(json!("T"));
         assert_eq!(
             super::rerank_request_compatible(&retained, &two_missing, true),
-            None
+            Some(super::RerankRequestMatch::InputQueuePrefix)
         );
+        let mut repeated = real.clone();
+        repeated["start"]["queue"].as_array_mut().unwrap().push(json!("O"));
+        assert_eq!(super::rerank_request_compatible(&retained, &repeated, true), None);
+        let mut eight_missing = real.clone();
+        for piece in ["T", "S", "Z", "J", "L", "I", "O"] {
+            eight_missing["start"]["queue"].as_array_mut().unwrap().push(json!(piece));
+        }
+        assert_eq!(super::rerank_request_compatible(&retained, &eight_missing, true), None);
 
         let mut different_prefix_piece = real.clone();
         different_prefix_piece["start"]["queue"][2] = json!("I");
@@ -3184,6 +3215,28 @@ mod tests {
         expected["enable_legacy_backup_consistency"] = json!(true);
         assert_eq!(serde_json::to_value(&on.search_bot_config().unwrap()).unwrap(), expected);
     }
+
+    #[test]
+    fn rescue_topout_fallback_key_admits_only_one_and_changes_only_the_decision_stage() {
+        let with = |value: &str| {
+            let mut profile = leaf_conversion_gated_profile(CONFIG_HASH);
+            profile.weight_overrides = Some([(RESCUE_TOPOUT_FALLBACK_KEY.to_string(), value.to_string())].into_iter().collect());
+            profile
+        };
+        for bad in ["0", "2", "1.0", "true"] {
+            assert!(!with(bad).valid(), "{bad}");
+        }
+        let on = with("1");
+        assert!(on.valid());
+        let off = leaf_conversion_gated_profile(CONFIG_HASH);
+        assert_eq!(
+            serde_json::to_value(&on.search_bot_config().unwrap()).unwrap(),
+            serde_json::to_value(&off.search_bot_config().unwrap()).unwrap()
+        );
+        assert!(on.decision_stage().legacy_selector_options().topout_fallback);
+        assert!(!off.decision_stage().legacy_selector_options().topout_fallback);
+    }
+
 
     #[test]
     fn gated_weight_overrides_patch_only_the_named_scalars() {

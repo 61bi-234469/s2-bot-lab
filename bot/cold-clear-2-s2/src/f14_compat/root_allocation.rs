@@ -446,6 +446,7 @@ mod tests {
                 conversion: Conversion { branch: ConversionBranch::Other, units: 0.0, qualifies: false },
                 solvency: 0.0,
                 solvent: true,
+                amount_topped_out: false,
                 selection_score: score,
             },
         }

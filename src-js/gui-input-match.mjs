@@ -23,14 +23,18 @@ const KEYS = new Set(['moveLeft', 'moveRight', 'softDrop', 'hardDrop', 'rotateCW
 const equal = (a, b) => canonicalize(a) === canonicalize(b);
 export function isChampionInputSpeculationHit(speculation, request) {
   if (!speculation?.start || !request?.start || !equal(speculation.execution, request.execution)) return false;
-  if (speculation.queuePrefix !== 1) {
-    return speculation.queuePrefix === 0 && equal(speculation.start, request.start);
+  const unseen = speculation.queuePrefix;
+  if (!(Number.isSafeInteger(unseen) && unseen >= 1 && unseen <= 7)) {
+    return unseen === 0 && equal(speculation.start, request.start);
   }
+  // A queue-prefix search ran on the public queue up to a bag boundary; the
+  // real queue adds exactly the first `unseen` pieces of the new bag.
   const retainedQueue = speculation.start?.queue;
   const requestedQueue = request.start?.queue;
   if (!Array.isArray(retainedQueue) || !Array.isArray(requestedQueue) ||
-      requestedQueue.length !== retainedQueue.length + 1 ||
+      requestedQueue.length !== retainedQueue.length + unseen ||
       retainedQueue.some((piece, index) => piece !== requestedQueue[index]) ||
+      new Set(requestedQueue.slice(retainedQueue.length)).size !== unseen ||
       speculation.start.randomizer?.type !== 'seven_bag' ||
       !Array.isArray(speculation.start.randomizer.bag_state) ||
       speculation.start.randomizer.bag_state.length !== 0) return false;
@@ -104,10 +108,24 @@ function lockCount(session, id) {
 /** Shared local/Pages input owner. Only the synchronous step path mutates a
  * round; asynchronous jobs receive public copies and can publish plans for a
  * future, checked boundary. */
-// `championQueuePrefixSpeculation` enables the one-piece queue-prefix
-// speculation at QUEUE 14: the search runs one piece short of the real queue,
-// so it can rarely change a decision. It stays off by default.
-export function createGuiInputMatchHandlers({ runtime, now = () => performance.now(), championQueuePrefixSpeculation = false }) {
+// `championQueuePrefixSpeculation` enables the queue-prefix speculation: when
+// the public queue ends on a 7-bag boundary before a refill, the next piece is
+// searched on the public queue alone, short of its real queue by the first
+// 1..7 pieces of a new bag (one at QUEUE 14, more at deeper queues), so it can
+// rarely change a decision. On by default. A function of the side id
+// returning false turns it off for that side only (for a comparison of the
+// two settings).
+//
+// `championEarlySpeculation` (default on) starts the next piece's search right
+// after the decision. Off, or a function of the side id returning false, keeps
+// the earlier order: search after the plan, only when the planner took the
+// core's selection.
+export function createGuiInputMatchHandlers({ runtime, now = () => performance.now(), championQueuePrefixSpeculation = true,
+  championEarlySpeculation = true }) {
+  const queuePrefixSpeculation = (id) => typeof championQueuePrefixSpeculation === 'function'
+    ? championQueuePrefixSpeculation(id) === true : championQueuePrefixSpeculation === true;
+  const earlySpeculation = (id) => typeof championEarlySpeculation === 'function'
+    ? championEarlySpeculation(id) === true : championEarlySpeculation !== false;
   let current = null;
   let generation = 0;
   const ok = body => ({ status: 200, body });
@@ -411,7 +429,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
   }
   // Selection budgets only: a THINK TIME search started early would get more
   // time than the budget. Null when the next `start` cannot be known yet.
-  function speculationRequest(decision, payload, decided, parameters) {
+  function speculationRequest(id, decision, payload, decided, parameters) {
     if (typeof runtime.speculateF14 !== 'function' || payload.profile.budget.mode !== 'selection') return null;
     try {
       return predictChampionNextRequest(decision, payload.request, decided, {
@@ -419,7 +437,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
         queueDepth: parameters.queueDepth,
         queueRefillsByBag: INPUT_EXECUTION_PROFILE.id === 's2-input-execution/2',
         // The queue-prefix rerank came after profile-B and is not offered to it.
-        queuePrefixSpeculation: championQueuePrefixSpeculation && payload.profile.profileId !== PROFILE_B_PROFILE_ID,
+        queuePrefixSpeculation: queuePrefixSpeculation(id) && payload.profile.profileId !== PROFILE_B_PROFILE_ID,
       });
     } catch {
       return null;
@@ -434,7 +452,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
     session.speculations[id] = speculation;
     session.diagnostics[id].championSpeculations++;
     runtime.speculateF14({ sessionKey, type, engine: { botType: type, engineId: type }, request,
-      profile: request.execution, inputSpeculation: queuePrefix === 1 })
+      profile: request.execution, inputSpeculation: queuePrefix >= 1 })
       .then(response => { if (response?.status !== 'move' && session.speculations[id] === speculation) delete session.speculations[id]; },
         () => { if (session.speculations[id] === speculation) delete session.speculations[id]; });
   }
@@ -501,7 +519,10 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           // that and reranks from this request, exactly as a fresh decision.
           const speculated = session.speculations[id];
           const speculationHit = isChampionInputSpeculationHit(speculated, payload.request);
-          const inputQueuePrefixHit = speculationHit && speculated.queuePrefix === 1;
+          // An incoming-only rerank of a piece served by a queue-prefix search
+          // still finds that search in the core when nothing ran since (the next
+          // piece's speculation may already have replaced `speculations`).
+          const retainedPrefix = speculationHit ? speculated.queuePrefix : canRerank ? proposed.queuePrefix ?? 0 : 0;
           if ((canRerank || speculationHit) && typeof runtime.rerankF14 === 'function') {
             try {
               const reranked = await runtime.rerankF14(payload);
@@ -519,7 +540,11 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
             delete session.speculations[id];
             decided = await runtime.decideF14(payload);
           }
-          assertF14CoreResponse(payload.request, decided, { allowQueuePrefix: usedRerank && inputQueuePrefixHit });
+          // A prefix answer is accepted only from a rerank of a search known to
+          // be a prefix search, and only when the core reports it as one.
+          const inputQueuePrefixHit = usedRerank && retainedPrefix >= 1 &&
+            Object.hasOwn(decided?.search ?? {}, 'searchedQueueLength');
+          assertF14CoreResponse(payload.request, decided, { allowQueuePrefix: inputQueuePrefixHit ? retainedPrefix : 0 });
           // No legal placement is no controller input, as for CC2. The core
           // reports it as root-no-move before search or empty-candidates after
           // it; the champion screen runner counts both as terminal.
@@ -528,12 +553,13 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
               evidence: { status: decided.status, reason: decided.reason } }
             : { identity, state: savedState, coreDecision: true, moves: championInputMoves(decided, {
                 ...initial.decision.pieces,
-                allowQueuePrefix: usedRerank && inputQueuePrefixHit,
+                allowQueuePrefix: inputQueuePrefixHit ? retainedPrefix : 0,
               }),
+              queuePrefix: inputQueuePrefixHit ? retainedPrefix : 0,
               // The core's spin witness for its selected move; the planner
               // reuses it instead of repeating the public reach search.
               preferredWitness: structuredClone(decided.selectedPlacement ?? null),
-              next: speculationRequest(initial.decision, payload, decided, parameters) };
+              next: speculationRequest(id, initial.decision, payload, decided, parameters) };
         } else try { response = await runtime.propose({ sessionKey, engine: type, state,
           selectionLimit: parameters.selectionEnabled ? parameters.selectionLimit : null,
           thinkMs: !parameters.thinkTimeEnabled ? null : session.turnMatch.enabled || parameters.ppsEnabled === false ? parameters.thinkMs :
@@ -576,6 +602,12 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
       // Clamp after adding retry headroom, against the forecast's own boundary.
       const startFrame = Math.min(latest.movement.frame + 120,
         Math.max(session.round.frame + leadFrames, dueFrame));
+      // The next piece's search starts with this piece's plan: the planner
+      // resolves on a worker of its own (local and Pages), so neither waits.
+      // Only when the planner then adopts a lower-ranked move (rare) is this
+      // search for a position that does not come; the next piece then decides
+      // afresh.
+      if (proposed.next && earlySpeculation(id)) speculate(session, id, sessionKey, type, proposed);
       const resolveStarted = now();
       const cached = session.cachedPlans[id];
       const resolved = await runtime.resolveInput({ request, movement: latest.movement, startFrame,
@@ -609,9 +641,9 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
       // `misses` at the next resolve.
       session.leadFrames[id] = Math.min(120, Math.max(1, Math.ceil(planningMs * 60 / 1000),
         session.round.frame - latest.movement.frame));
-      // After the plan, so the search never delays it (Pages resolves in the
-      // same worker), and only when the planner took the core's selection.
-      if (proposed.next && outcome === 'preferred') speculate(session, id, sessionKey, type, proposed);
+      // Late order: after the plan, so the search never delays it (Pages
+      // resolved in the same worker), and only on the core's selection.
+      if (!earlySpeculation(id) && proposed.next && outcome === 'preferred') speculate(session, id, sessionKey, type, proposed);
       if (resolved.status === 'stale' && resolved.reason === 'natural-lock') {
         // This is expected idle play, not a missed deadline. Bind the wait to
         // the position forecast, never to a new piece reached during the job.

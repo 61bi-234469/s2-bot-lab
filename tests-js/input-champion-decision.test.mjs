@@ -80,6 +80,19 @@ test("champion INPUT order keeps the core selection first, then CC2 rank order",
   assert.throws(() => championInputMoves(gated({ ...rescue, selectedCc2Rank: 2 }, identities[2])), /first solvent/);
   const zeroSolvency = candidates.map((candidate) => candidate.cc2Rank === 0 ? { ...candidate, solvency: 0 } : candidate);
   assert.throws(() => championInputMoves(gated({ ...rescue, candidates: zeroSolvency }, identities[1])), /rank 0/);
+  // rescue_topout_fallback (SPSA v10 / v11): no solvent candidate, rank 0 tops out, a later rank is played as a rescue.
+  // Admitted only for a profile with the key, only when the rescue does not fire and rank 0 is insolvent.
+  const insolvent = candidates.map((candidate) => ({ ...candidate, solvent: false, solvency: -1 - candidate.cc2Rank }));
+  const fallback = { ...rescue, selectedCc2Rank: 2, candidates: insolvent };
+  const withKey = (response, value = "1") => ({ ...response, execution: { weightOverrides: { rescue_topout_fallback: value } } });
+  assert.deepEqual(championInputMoves(withKey(gated(fallback, identities[2]))).map(canonicalize),
+    [identities[2], identities[0], identities[1], identities[3]]);
+  assert.throws(() => championInputMoves(gated(fallback, identities[2])), /rank 0/);
+  assert.throws(() => championInputMoves(withKey(gated(fallback, identities[2]), "0")), /rank 0/);
+  assert.throws(() => championInputMoves(withKey(gated({ ...fallback, selectedCc2Rank: 0 }, identities[0]))), /rank 0/);
+  assert.throws(() => championInputMoves(withKey(gated({ ...rescue, selectedCc2Rank: 2 }, identities[2]))), /first solvent/);
+  const solventTop = insolvent.map((candidate) => candidate.cc2Rank === 0 ? { ...candidate, solvent: true, solvency: 1 } : candidate);
+  assert.throws(() => championInputMoves(withKey(gated({ ...fallback, candidates: solventTop }, identities[2]))), /rank 0/);
   assert.throws(() => championInputMoves({ status: "incomplete", reason: "deadline" }), /incomplete/);
   const held = canonicalize({ location: { orientation: "north", type: "T", x: 4, y: 1 }, spin: "none" });
   const withHold = gated({ rescueApplied: false, selectedCc2Rank: 0, identities: [held, identities[1], identities[0]],
@@ -328,11 +341,13 @@ test("champion INPUT match locks the WASM F14 core selection, also under incomin
     assert.ok(champion.championSpeculationHits > champion.championSpeculations / 2, JSON.stringify(champion));
     assert.ok(champion.championSpeculationHits > 0,
       "a gated retained-search speculation was reused instead of triggering a fresh-search fallback");
-    // A one-piece queue-prefix speculation searched one piece
-    // fewer than the real request and must say so; it is not a fresh answer.
+    // A queue-prefix speculation searched the public queue up to the bag
+    // boundary, 1..7 pieces fewer than the real request (one at QUEUE 14,
+    // two after a first HOLD), and must say so; it is not a fresh answer.
     const prefixReranks = decisions.filter(({ response }) => response.search?.searchedQueueLength !== undefined);
     for (const { payload, response } of prefixReranks) {
-      assert.equal(response.search.searchedQueueLength, payload.request.start.queue.length - 1);
+      const unseen = payload.request.start.queue.length - response.search.searchedQueueLength;
+      assert.ok(unseen >= 1 && unseen <= 7, `${unseen} unseen pieces`);
       assert.equal(response.search.queueLength, response.search.searchedQueueLength);
     }
     // The champion's decisions depend on the request sequence (tree reuse), so a
