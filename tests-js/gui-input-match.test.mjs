@@ -103,6 +103,31 @@ test('champion INPUT always builds a gated F14 request from default parameters',
   assert.equal(resolved.status, 'planned', JSON.stringify(resolved));
 });
 
+for (const [label, option, publicBag] of [['by default', undefined, true], ['when off for that side', id => id !== 'right', false],
+  ['when on for that side', id => id === 'right', true]])
+test(`champion INPUT below QUEUE 14 sends ${publicBag ? 'the public 7-bag rest' : 'an empty bag state'} ${label}`, async () => {
+  let decided;
+  const handlers = createGuiInputMatchHandlers({ ...(option === undefined ? {} : { championPublicBagState: option }), runtime: {
+    propose: () => assert.fail('the champion never asks a CC2 proposal process'),
+    decideF14: async payload => { decided ??= payload; return fakeCoreDecision(payload.request, 0); },
+    resolveInput: async payload => resolveInputJob(payload),
+    closeSessions: async () => {},
+  } });
+  const start = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
+    ...config, right: 'cc2-s2-champion', rightParameters: { ...defaultBotParameters('cc2-s2-champion'), queueDepth: 6 },
+  } });
+  assert.equal(start.status, 200, JSON.stringify(start.body));
+  for (let frame = 1; frame <= 4 && decided === undefined; frame++) {
+    await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: { sessionId: start.body.sessionId, frame } });
+    for (let i = 0; i < 5; i++) await flush();
+  }
+  const { queue, randomizer } = decided.request.start;
+  assert.equal(queue.length, 6);
+  // The first spawn opens a bag, so its rest is the bag minus the six searched pieces.
+  const rest = publicBag ? ['I', 'O', 'T', 'S', 'Z', 'J', 'L'].filter(piece => !queue.includes(piece)) : [];
+  assert.deepEqual(randomizer, { type: 'seven_bag', bag_state: rest });
+});
+
 for (const rerankMismatch of [false, true])
 for (const sameTarget of [false, true])
 test(`champion INPUT ${rerankMismatch ? 'falls back on rerank mismatch' : 'reranks incoming-only changes'}; same target ${sameTarget}`, async t => {
