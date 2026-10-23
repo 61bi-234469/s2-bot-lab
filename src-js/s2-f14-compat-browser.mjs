@@ -49,7 +49,7 @@ export const F14_TUNABLE_WEIGHT_KEYS = Object.freeze([
   "spin_clears.1", "spin_clears.2", "spin_clears.3",
   "hole_columns", "leaf_ren_attack_gain",
   "root_danger_solvency_cap", "root_danger_solvency_gain", "legacy_backup_consistency",
-  "rescue_topout_fallback", "tree_reuse_floor",
+  "rescue_topout_fallback", "tree_reuse_floor", "search_batch_size", "search_threads",
 ]);
 const CANONICAL_SIGNED_DECIMAL = /^-?(?:0|[1-9]\d*)(?:\.\d*[1-9])?$/u;
 
@@ -74,7 +74,16 @@ function canonicalWeightOverrides(overrides) {
     if (key === "tree_reuse_floor" && !(/^[1-9]\d*$/u.test(value) && Number(value) <= 1_000_000)) {
       throw new Error("F14 weightOverrides tree_reuse_floor must be a positive integer");
     }
+    if (key === "search_batch_size" && !(/^[1-9]\d*$/u.test(value) && Number(value) >= 2 && Number(value) <= 16)) {
+      throw new Error("F14 weightOverrides search_batch_size must be an integer in [2, 16]");
+    }
+    if (key === "search_threads" && !(/^[1-9]\d*$/u.test(value) && Number(value) >= 2 && Number(value) <= 16)) {
+      throw new Error("F14 weightOverrides search_threads must be an integer in [2, 16]");
+    }
     canonical[key] = value;
+  }
+  if (canonical.search_threads !== undefined && canonical.search_batch_size === undefined) {
+    throw new Error("F14 weightOverrides search_threads needs search_batch_size");
   }
   return Object.freeze(canonical);
 }

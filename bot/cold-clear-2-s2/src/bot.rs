@@ -303,6 +303,15 @@ pub struct BotConfig {
     /// 0 (absent) builds a fresh tree for every request.
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub tree_reuse_floor: u64,
+    /// Batched expansion: each work unit draws up to this many selections
+    /// back to back before expanding any of them (then expands them in draw
+    /// order). 0 or 1 (absent) expands each selection before the next draw.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub search_batch_size: u32,
+    /// Threads that compute a batch's leaf expansions (native only). The
+    /// search and its result do not depend on it. 0 or 1 (absent) = one.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub search_threads: u32,
     /// Charge the real-board projected-height cost once on each amount-only tank edge.
     #[serde(default, skip_serializing_if = "is_false")]
     pub enable_s2_tank_risk_shaping: bool,
@@ -325,6 +334,7 @@ pub struct BotConfig {
 
 fn is_false(value: &bool) -> bool { !*value }
 fn is_zero_u64(value: &u64) -> bool { *value == 0 }
+fn is_zero_u32(value: &u32) -> bool { *value == 0 }
 
 impl BotConfig {
     /// Reject combinations that would enable a reward without retaining the
@@ -384,6 +394,7 @@ trait Mode {
         &self,
         options: &BotOptions,
         session: Option<&RootObjectiveSession>,
+        max_selections: u64,
     ) -> Result<Statistics, CompatError>;
 }
 
@@ -539,8 +550,17 @@ impl Bot {
     }
 
     pub fn do_work(&self) -> Result<Statistics, CompatError> {
+        self.do_work_up_to(1)
+    }
+
+    /// One work unit of at most `max_selections` selections (more than one
+    /// only under `search_batch_size`); budget loops pass what is left.
+    pub fn do_work_up_to(&self, max_selections: u64) -> Result<Statistics, CompatError> {
         puffin::profile_function!();
-        let result = self.mode.do_work(&self.options, self.root_session.as_deref());
+        if max_selections == 0 {
+            return Ok(Statistics::default());
+        }
+        let result = self.mode.do_work(&self.options, self.root_session.as_deref(), max_selections);
         if let Err(error) = result {
             if let Some(session) = self.root_session.as_ref() {
                 session.publish_root_failure(error);

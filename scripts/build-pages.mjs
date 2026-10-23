@@ -1,9 +1,11 @@
 import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { preparePagesIndex } from "../src-js/pages-index.mjs";
+import { THREADED_WASM_ARTIFACT, checkThreadedWasm } from "./build-wasm-threads.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const site = resolve(repo, "_site");
@@ -39,7 +41,17 @@ await build({
     return undefined;
   }); } }],
 });
-const workerVersion = createHash("sha256").update(await readFile(workerPath)).digest("hex").slice(0, 12);
+// Helper threads of the threaded WASM (used only when the page is cross-origin isolated).
+const threadWorkerPath = resolve(site, "cc2-wasm-thread.bundle.js");
+await build({
+  entryPoints: [resolve(repo, "cc2-gui/cc2-wasm-thread.mjs")],
+  bundle: true,
+  platform: "browser",
+  format: "esm",
+  outfile: threadWorkerPath,
+  minify: true,
+});
+const workerVersion = createHash("sha256").update(await readFile(workerPath)).update(await readFile(threadWorkerPath)).digest("hex").slice(0, 12);
 const appPath = resolve(site, "app.bundle.js");
 const result = await build({
   entryPoints: [resolve(repo, "cc2-gui/static-entry.mjs")],
@@ -86,6 +98,8 @@ const stylesVersion = createHash("sha256").update(styles).digest("hex").slice(0,
 await writeFile(resolve(site, "index.html"), preparePagesIndex(index, appVersion, stylesVersion));
 await cp(stylesPath, resolve(site, "styles.css"));
 await cp(resolve(repo, "cc2-gui/og-image.png"), resolve(site, "og-image.png"));
+// Registered only when a user turns MULTITHREAD on (cc2-gui/isolation.mjs); served from the site root for its scope.
+await cp(resolve(repo, "cc2-gui/coi-sw.js"), resolve(site, "coi-sw.js"));
 await cp(resolve(repo, "fixtures/tuning/cc2-s2-spin-value-aligned.json"), resolve(site, "cc2-s2-spin-value-aligned.json"));
 await cp(resolve(repo, "fixtures/tuning/cc2-s2-spawn-integrity-substrate-v2.json"), resolve(site, "cc2-s2-spawn-integrity-substrate-v2.json"));
 const wasmArtifacts = ["cold_clear_2_s2", "cold_clear_2_upstream", "cold_clear_2_chouhy"];
@@ -98,6 +112,14 @@ for (const name of wasmArtifacts) {
   if (imports.length !== 0) throw new Error(`${name}.wasm has ${imports.length} imports`);
   await writeFile(resolve(site, `${name}.wasm`), bytes);
   wasm.push({ name, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), imports: 0 });
+}
+// The threaded build (scripts/build-wasm-threads.mjs) is optional: without it, or without cross-origin isolation, the
+// worker uses the import-free cold_clear_2_s2.wasm. Its imports are checked against the expected WASI set.
+if (existsSync(THREADED_WASM_ARTIFACT)) {
+  const threaded = await checkThreadedWasm();
+  const bytes = await readFile(THREADED_WASM_ARTIFACT);
+  await writeFile(resolve(site, "cold_clear_2_s2_threads.wasm"), bytes);
+  wasm.push({ name: "cold_clear_2_s2_threads", bytes: bytes.length, sha256: threaded.sha256, imports: threaded.imports.length });
 }
 await writeFile(resolve(site, "THIRD_PARTY_LICENSES.txt"), `${licenses}\n\nBundled package inputs (generated):\n${[...nodeModulePackages].sort().map((name) => `- ${name}`).join("\n")}\n`);
 await writeFile(resolve(site, "wasm-manifest.json"), `${JSON.stringify(wasm, null, 2)}\n`);

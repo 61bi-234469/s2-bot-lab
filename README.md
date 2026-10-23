@@ -62,11 +62,21 @@ tuned and why, and how it plays.
 The champion's defaults (2,048 selections with tree reuse, THINK TIME off, queue 14) are the
 champion itself; SELECTION, THINK TIME, QUEUE DEPTH and PPS can be changed like the other bots.
 THINK TIME runs without tree reuse.
+MULTITHREAD (off by default, on the champion and the 2,048-selection former champions) expands the
+search in batches of eight leaves on four threads. Batching changes how the search draws, so with
+MULTITHREAD on the bot can choose a different move than with it off at the same SELECTION.
 The Pages build runs these Cold Clear 2 entries
 in browser module workers. It bundles three
 import-free WebAssembly engines and the matching S2 configurations, so the browser entries do not
 require a native executable or the local Node server. WebAssembly and module-worker support are
 required in the browser.
+
+Browser threads need a cross-origin isolated page, which GitHub Pages cannot provide through
+response headers. When MULTITHREAD is turned on in the browser, the page asks once to reload and
+registers a small service worker (`coi-sw.js`) that adds the isolation headers to the site's own
+responses; the threaded S2 engine is then used. If the reload is declined or isolation is not
+available, MULTITHREAD is turned back off. Nothing is registered and nothing reloads while
+MULTITHREAD stays off.
 
 The S2-labeled entries are development snapshots for inspection and comparison. Their presence in
 the demo is not release qualification or a strength claim. The public snapshot does not include
@@ -89,12 +99,20 @@ To build the Pages artifact locally:
 npm run build-pages
 ```
 
+The threaded S2 engine for MULTITHREAD is optional and built separately, before `build-pages`:
+
+```powershell
+rustup target add wasm32-wasip1-threads
+node scripts/build-wasm-threads.mjs
+```
+
 Search benchmark reports redact OS, CPU, memory, Node version, and architecture
 by default. Pass `--include-environment` only when those host details are
 intentionally part of a local report.
 
-The generated `_site/` directory contains the browser bundle, the three WebAssembly engines, their
-configuration, and a matching third-party notice file. The browser bundle has no Node built-in
+The generated `_site/` directory contains the browser bundle, the three WebAssembly engines (plus
+the threaded S2 engine when built), the MULTITHREAD service worker, their configuration, and a
+matching third-party notice file. The browser bundle has no Node built-in
 dependency.
 
 ## Naming and compatibility

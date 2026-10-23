@@ -72,6 +72,9 @@ export function f14CoreEngineId(role, type) {
  * THINK TIME becomes a host-clocked time budget with SELECTION as its cap;
  * only the WASM core runs it. `type` picks another gated-core bot's profile.
  */
+export const MULTITHREAD_BATCH_SIZE = "8";
+export const MULTITHREAD_THREADS = "4";
+
 export function createChampionProfile(parameters, type = "cc2-s2-champion") {
   assertChampionParameters(parameters);
   const base = f14CoreBaseProfile(type);
@@ -79,12 +82,16 @@ export function createChampionProfile(parameters, type = "cc2-s2-champion") {
   const budget = parameters.thinkTimeEnabled
     ? { mode: "time", selections, maxMillis: parameters.thinkMs }
     : { ...base.budget, selections };
+  // MULTITHREAD: batched expansion of 8 leaves on 4 threads (decisions do not depend on the thread count;
+  // where threads are unavailable the batches run on one thread).
+  const multithread = parameters.multithreadEnabled === true
+    ? { search_batch_size: MULTITHREAD_BATCH_SIZE, search_threads: MULTITHREAD_THREADS } : {};
   // Tree reuse runs only on a selection budget and needs a floor no larger than it:
   // THINK TIME drops the key, a SELECTION below the floor lowers the floor to it.
   const floor = base.weightOverrides?.tree_reuse_floor;
-  if (floor === undefined) return Object.freeze({ ...base, budget: Object.freeze(budget) });
-  const { tree_reuse_floor: _floor, ...rest } = base.weightOverrides;
-  const chosen = parameters.thinkTimeEnabled ? rest
+  if (floor === undefined && parameters.multithreadEnabled !== true) return Object.freeze({ ...base, budget: Object.freeze(budget) });
+  const { tree_reuse_floor: _floor, ...rest } = { ...(base.weightOverrides ?? {}), ...multithread };
+  const chosen = parameters.thinkTimeEnabled || floor === undefined ? rest
     : { ...rest, tree_reuse_floor: String(Math.min(Number(floor), selections)) };
   // Same sorted key order as the profile factory's canonical weightOverrides.
   const weightOverrides = Object.fromEntries(Object.keys(chosen).sort().map((key) => [key, chosen[key]]));

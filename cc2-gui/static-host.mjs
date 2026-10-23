@@ -7,6 +7,8 @@ let installed = false;
 export function installStaticTransport() {
   if (installed || typeof window === "undefined") return;
   installed = true;
+  // Read by cc2-gui/isolation.mjs: only the static host needs a service worker for MULTITHREAD.
+  globalThis.__CC2_STATIC_HOST__ = true;
   const nativeFetch = window.fetch.bind(window);
   const wasmAvailable = typeof Worker === "function" && typeof WebAssembly === "object";
   const cc2 = wasmAvailable ? createStaticCc2Runtime() : null;
@@ -28,7 +30,9 @@ export function installStaticTransport() {
   };
 }
 
-export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTimeoutMs = 60_000 } = {}) {
+/** `threads: "auto"` lets F14-core bots use the threaded WASM when the page is cross-origin isolated (decisions are
+ * the same; the profile's `search_threads` sets the helper count); `"off"` always uses the single-thread build. */
+export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTimeoutMs = 60_000, threads = "auto" } = {}) {
   if (typeof WorkerType !== "function" || typeof WebAssembly !== "object") throw new Error("CC2 WASM is unavailable in this browser");
   const sessions = new Map();
 
@@ -201,7 +205,7 @@ export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTim
     };
     sessions.set(sessionKey, entry);
     const initialized = entry;
-    entry.initializing = createWorkerSession({ WorkerType, engine, selectionLimit }).then(async workerSession => {
+    entry.initializing = createWorkerSession({ WorkerType, engine, selectionLimit, threads }).then(async workerSession => {
       initialized.workerSession = workerSession;
       if (sessions.get(sessionKey) !== initialized) {
         await workerSession.close();
@@ -222,7 +226,7 @@ export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTim
   }
 }
 
-async function createWorkerSession({ WorkerType, engine, selectionLimit, resolverOnly = false }) {
+async function createWorkerSession({ WorkerType, engine, selectionLimit, resolverOnly = false, threads = "auto" }) {
   const wasm = engine === "cc2-raw" ? "./cold_clear_2_upstream.wasm" : engine === "cc2-chouhy" ? "./cold_clear_2_chouhy.wasm" : "./cold_clear_2_s2.wasm";
   const workerUrl = new URL("./cc2-worker.bundle.js", import.meta.url);
   workerUrl.searchParams.set("v", globalThis.__CC2_WORKER_VERSION__ ?? "dev");
@@ -264,14 +268,20 @@ async function createWorkerSession({ WorkerType, engine, selectionLimit, resolve
     : !engine.startsWith("cc2-s2")
       ? null
       : "./cc2-s2-spin-value-aligned.json";
+  // The threaded build is offered only to the F14-core bots (the substrate-v2 config) and only used by the worker
+  // when the page is cross-origin isolated; otherwise the worker keeps the import-free build.
+  const threadedWasm = threads === "auto" && configUrl === "./cc2-s2-spawn-integrity-substrate-v2.json"
+    && globalThis.crossOriginIsolated === true ? "./cold_clear_2_s2_threads.wasm" : undefined;
+  let initialized;
   try {
-    await request("init", resolverOnly ? { engine, resolverOnly: true }
-      : { engine, wasm, configUrl, selectionLimit, searchSeed: "5994928009864282113" });
+    initialized = await request("init", resolverOnly ? { engine, resolverOnly: true }
+      : { engine, wasm, configUrl, selectionLimit, searchSeed: "5994928009864282113", ...(threadedWasm ? { threadedWasm } : {}) });
   } catch (error) {
     worker.terminate();
     throw error;
   }
   return Object.freeze({
+    threaded: initialized?.threaded === true,
     suggest: ({ state, thinkMs }) => request("suggest", { state, thinkMs }),
     resolve: (payload) => request("resolve", payload),
     decideF14: (payload) => request("decideF14", payload),

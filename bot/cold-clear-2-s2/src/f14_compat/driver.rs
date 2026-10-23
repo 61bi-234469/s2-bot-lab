@@ -119,7 +119,10 @@ impl F14Driver {
                     .bot
                     .as_ref()
                     .expect("F14 prepared bot")
-                    .do_work();
+                    // The whole remaining budget, not this call's chunk: batches
+                    // stay K consecutive draws from the request start on every
+                    // host (a call may end up to K - 1 draws past its chunk).
+                    .do_work_up_to(self.limit - self.stats.selections);
                 match result {
                     Ok(stats) => {
                         self.stats.accumulate(stats);

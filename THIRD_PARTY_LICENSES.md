@@ -87,3 +87,14 @@ the immutable source identity and deterministic-port patch inventory.
   host imports. Native behavior is unchanged.
 
 The source and license are retained in `bot/instant-wasm-safe/`.
+
+## `parking_lot_core` 0.8.5 WASI-threads patch
+
+- Source: https://github.com/Amanieu/parking_lot
+- License choice: MIT, Copyright (c) 2016 The Rust Project Developers
+- Use: thread parker of the threaded WASM build only (`wasm32-wasip1-threads`,
+  applied by `scripts/build-wasm-threads.mjs`). Native and import-free WASM
+  builds keep the registry crate.
+
+The source, both upstream license texts, and an `UPSTREAM.md` with the change
+are retained in `bot/parking-lot-core-wasi/`.

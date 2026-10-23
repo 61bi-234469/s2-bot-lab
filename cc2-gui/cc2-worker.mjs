@@ -1,9 +1,35 @@
-import { createCc2WasmSession } from "../src-js/cc2-wasm-engine.mjs";
+import { createCc2WasmSession, createCc2WasmThreadedSession } from "../src-js/cc2-wasm-engine.mjs";
+import { threadedWasmSupported } from "../src-js/cc2-wasm-threads.mjs";
 import { resolveGuiStaticSubmission as resolveQualifiedStaticCc2Submission } from "../src-js/gui-static-public-resolver.mjs";
 import { resolveInputJob } from '../src-js/input-public-job.mjs';
 
 let session = null;
 let engine = null;
+// Helper-thread workers of a threaded session (terminated with it).
+let threadWorkers = [];
+
+/** The threaded build when the page is cross-origin isolated and it loads; otherwise null (import-free build). */
+async function createThreadedSessionOrNull(payload, config) {
+  if (!payload.threadedWasm || !threadedWasmSupported(self)) return null;
+  try {
+    const response = await fetch(new URL(payload.threadedWasm, import.meta.url));
+    if (!response.ok) return null;
+    const version = new URL(import.meta.url).searchParams.get("v");
+    const threadUrl = new URL("./cc2-wasm-thread.bundle.js", import.meta.url);
+    if (version) threadUrl.searchParams.set("v", version);
+    return await createCc2WasmThreadedSession({ ...payload, config, wasmBytes: await response.arrayBuffer(),
+      startThread: (message) => {
+        const worker = new Worker(threadUrl, { type: "module" });
+        threadWorkers.push(worker);
+        worker.postMessage(message);
+      } });
+  } catch (error) {
+    for (const worker of threadWorkers) worker.terminate();
+    threadWorkers = [];
+    console.warn(`CC2 threaded WASM unavailable, using the single-thread build: ${error instanceof Error ? error.message : error}`);
+    return null;
+  }
+}
 self.onmessage = async ({ data }) => {
   const { id, type, payload = {} } = data;
   try {
@@ -20,9 +46,10 @@ self.onmessage = async ({ data }) => {
         if (!configResponse.ok) throw new Error(`config fetch failed: ${configResponse.status}`);
         config = await configResponse.text();
       }
-      session = await createCc2WasmSession({ ...payload, config, wasmBytes: await response.arrayBuffer() });
+      session = await createThreadedSessionOrNull(payload, config)
+        ?? await createCc2WasmSession({ ...payload, config, wasmBytes: await response.arrayBuffer() });
       engine = payload.engine;
-      self.postMessage({ id, ok: true });
+      self.postMessage({ id, ok: true, value: { threaded: session.threaded === true } });
     } else if (type === "suggest") {
       if (session === null) throw new Error("CC2 worker session is not initialized");
       self.postMessage({ id, ok: true, value: await session.suggest(payload) });
@@ -56,6 +83,8 @@ self.onmessage = async ({ data }) => {
     } else if (type === "close") {
       await session?.close();
       session = null;
+      for (const worker of threadWorkers) worker.terminate();
+      threadWorkers = [];
       engine = null;
       self.postMessage({ id, ok: true });
     } else throw new Error(`unknown worker request: ${type}`);

@@ -46,6 +46,12 @@ impl BuildHasher for StateBuildHasher {
 
 pub struct StateHasher(u64);
 
+/// The node index a Legacy `StateMap` gives `state` (its hash), computable on
+/// any thread ahead of node creation.
+pub(crate) fn legacy_state_index(state: &GameState) -> u64 {
+    StateBuildHasher.hash_one(state)
+}
+
 #[inline]
 fn mix64(mut z: u64) -> u64 {
     z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
@@ -125,6 +131,18 @@ impl<V, S: BuildHasher, K: StateKey> StateMap<V, S, K> {
         index.keys.push(*k);
         index.buckets.entry(hash).or_default().push(id);
         id
+    }
+
+    /// `index`, taking a caller-computed Legacy index (the state hash) when
+    /// given. Exact (S2) maps always assign their own index.
+    pub fn index_with_hint(&self, k: &K, hint: Option<u64>) -> u64 {
+        match (hint, &self.exact) {
+            (Some(hash), None) => {
+                debug_assert_eq!(hash, self.hash(k));
+                hash
+            }
+            _ => self.index(k),
+        }
     }
 
     pub fn key(&self, id: u64) -> Option<K> {

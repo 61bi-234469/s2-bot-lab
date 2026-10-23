@@ -104,6 +104,19 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
         self.states.get_raw(raw).unwrap().eval
     }
 
+    /// Inserts the child's node if absent, exactly as `create_node` would,
+    /// without linking a parent (see the known layer's `ensure_node`).
+    pub fn ensure_node(&self, child: &ChildData<E>) {
+        let id = self.states.index_with_hint(&child.resulting_state, child.state_index);
+        drop(self.states.get_raw_or_insert_with(id, || Node {
+            parents: &[],
+            eval: child.eval,
+            children: None,
+            expanding: AtomicBool::new(false),
+            bag: E::Domain::bag(&child.resulting_state),
+        }));
+    }
+
     pub fn create_node(
         &self,
         bump: &Member<'bump>,
@@ -111,9 +124,10 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
         parent: u64,
         speculation_piece: Piece,
     ) -> (E, Link<E>, bool) {
+        let id = self.states.index_with_hint(&child.resulting_state, child.state_index);
         let mut node = self
             .states
-            .get_or_insert_with(&child.resulting_state, || Node {
+            .get_raw_or_insert_with(id, || Node {
                 parents: &[],
                 eval: child.eval,
                 children: None,
@@ -126,7 +140,7 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
                 .copied()
                 .unwrap_or((parent, child.mv, speculation_piece))
         });
-        (node.eval, E::Domain::link(self.states.index(&child.resulting_state)), false)
+        (node.eval, E::Domain::link(id), false)
     }
 
     pub fn expand(

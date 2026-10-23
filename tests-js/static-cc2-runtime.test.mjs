@@ -392,3 +392,38 @@ test("INPUT plans resolve on a resolution-only worker, so the engine worker's se
   await runtime.closeSessions();
   assert.ok(workers.every((worker) => worker.terminated));
 });
+
+test("the threaded WASM is offered only to F14-core bots on a cross-origin isolated page, never with threads off", async () => {
+  // Safety boundary for the threaded build (src-js/cc2-wasm-threads.mjs): without isolation SharedArrayBuffer is
+  // unavailable, so the worker must get no threaded artifact and keep the import-free cold_clear_2_s2.wasm.
+  const initPayloads = async ({ isolated, threads, engine }) => {
+    const payloads = [];
+    class Worker {
+      postMessage(message) {
+        if (message.type === "init") payloads.push(message.payload);
+        queueMicrotask(() => this.onmessage({ data: { id: message.id, ok: true,
+          value: message.type === "suggest" ? { suggestion: { moves: [], move_info: {} } } : undefined } }));
+      }
+      terminate() {}
+    }
+    const previous = globalThis.crossOriginIsolated;
+    globalThis.crossOriginIsolated = isolated;
+    const runtime = createStaticCc2Runtime({ WorkerType: Worker, ...(threads ? { threads } : {}) });
+    try {
+      await runtime.propose({ sessionKey: "t/right", engine, state: {}, selectionLimit: 512, thinkMs: null });
+    } finally {
+      await runtime.closeSessions();
+      if (previous === undefined) delete globalThis.crossOriginIsolated; else globalThis.crossOriginIsolated = previous;
+    }
+    return payloads;
+  };
+  const [isolatedChampion] = await initPayloads({ isolated: true, engine: "cc2-s2-champion" });
+  assert.equal(isolatedChampion.threadedWasm, "./cold_clear_2_s2_threads.wasm");
+  assert.equal(isolatedChampion.wasm, "./cold_clear_2_s2.wasm");
+  for (const [label, options] of [["not isolated", { isolated: false, engine: "cc2-s2-champion" }],
+    ["threads off", { isolated: true, threads: "off", engine: "cc2-s2-champion" }],
+    ["not an F14-core bot", { isolated: true, engine: "cc2-raw" }]]) {
+    const [payload] = await initPayloads(options);
+    assert.equal(payload.threadedWasm, undefined, label);
+  }
+});
