@@ -333,7 +333,7 @@ impl Engine {
                 }
             }
             children[piece.ok_or(Error::InvalidInput)?].push(ChildData {resulting_state:transition.next,mv:action,eval,reward,
-                root_priority:self.policy.risk_enabled()&&transition.pressure.inside_margin()});
+                root_priority:self.policy.risk_enabled()&&transition.pressure.inside_margin(),state_index:None});
             if depth==0 {root_info.push(RootInfo {action,leaf,edge,post_state_eval:eval,pressure:transition.pressure});}
         }
         if stopped() {return Ok(false);}

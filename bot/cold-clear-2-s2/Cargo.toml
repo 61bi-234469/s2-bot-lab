@@ -39,6 +39,8 @@ rand = { version = "0.8.3", default-features = false, features = ["std_rng"] }
 puffin-noop = { package = "puffin", path = "../puffin-noop" }
 
 [features]
+# wasm32-wasip1-threads builds only: batched-expansion threads through WASI threads (src/search_pool.rs).
+wasm-threads = []
 native-pressure-height-recovery = []
 native-root-first-expansion = []
 native-root-attack-tiebreak = ["native-root-first-expansion"]

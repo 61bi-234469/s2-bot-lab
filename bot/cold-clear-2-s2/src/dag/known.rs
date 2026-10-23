@@ -174,6 +174,20 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
         self.states.get_raw(raw).unwrap().eval
     }
 
+    /// Inserts the child's node if absent, exactly as `create_node` would
+    /// (same initial value), without linking a parent. Order-independent, so
+    /// batched leaves may run it on their own threads before linking.
+    pub fn ensure_node(&self, child: &ChildData<E>) {
+        let id = self.states.index_with_hint(&child.resulting_state, child.state_index);
+        drop(self.states.get_raw_or_insert_with(id, || Node {
+            parents: Parents::new(),
+            eval: child.eval,
+            children: None,
+            expanding: AtomicBool::new(false),
+            closed: E::Domain::finite(&child.resulting_state),
+        }));
+    }
+
     pub fn create_node(
         &self,
         bump: &Member<'bump>,
@@ -183,7 +197,7 @@ impl<'bump, E: Evaluation> Layer<'bump, E> {
     ) -> (E, Link<E>, bool) {
         // One index per child: for hash-addressed (Legacy) maps the index is the
         // state hash, which this used to compute twice (insert, then link).
-        let id = self.states.index(&child.resulting_state);
+        let id = self.states.index_with_hint(&child.resulting_state, child.state_index);
         let mut node = self
             .states
             .get_raw_or_insert_with(id, || Node {

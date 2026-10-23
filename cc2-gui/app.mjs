@@ -31,6 +31,7 @@ import {
   normalizeBotParameters,
 } from "/shared/bot-parameters.mjs";
 import { canonicalPlacementToGuiMove } from "./analysis-proposal.mjs";
+import { clearIsolationReloadGuard, enableIsolationAndReload, multithreadIsolationState } from "./isolation.mjs";
 import {
   CANDIDATE_COUNT_LIMIT,
   markCandidateSelection,
@@ -319,6 +320,7 @@ for (const side of BOT_SIDES) {
     renderBotSettingsSummary(side);
     syncHumanMatchControls();
     syncFairComparisonControls();
+    void applyMultithreadIsolation(side);
   });
   elements[`${side}-bot-settings`].addEventListener("click", () => openBotSettings(side));
 }
@@ -502,6 +504,9 @@ async function loadBotCapabilities() {
   }
   renderAnalysisEngineIdentity();
   for (const side of BOT_SIDES) renderBotSettingsSummary(side);
+  // A saved MULTITHREAD bot on a page that is not isolated (e.g. a reload that bypassed coi-sw.js) asks again.
+  clearIsolationReloadGuard();
+  for (const side of BOT_SIDES) await applyMultithreadIsolation(side);
 }
 
 function openBotSettings(side) {
@@ -924,6 +929,31 @@ function saveBotSettings(event) {
   savePreferences();
   elements["bot-settings-dialog"].close("save");
   settingsSide = null;
+  void applyMultithreadIsolation(side);
+}
+
+/* MULTITHREAD on the static GUI needs a cross-origin isolated page (cc2-gui/isolation.mjs). When the side's bot has
+   it ON and the page is not isolated, tell the user and reload once; a user who declines, or a browser that cannot
+   be isolated, gets MULTITHREAD turned OFF, since its batched search on one thread is slower than OFF. */
+async function applyMultithreadIsolation(side) {
+  const botType = elements[`${side}-bot`].value;
+  if (botParameters[side]?.[botType]?.multithreadEnabled !== true) return;
+  const state = multithreadIsolationState();
+  if (state === "isolated" || state === "not-needed") return;
+  const turnOff = (message) => {
+    botParameters[side][botType] = { ...normalizeBotParameters(botType, { ...botParameters[side][botType], multithreadEnabled: false }) };
+    renderBotSettingsSummary(side);
+    savePreferences();
+    if (message) window.alert(message);
+  };
+  if (state === "unsupported") return turnOff("このブラウザではマルチスレッドを使えないため、MULTITHREAD を OFF にしました。");
+  if (state === "reload-failed") return turnOff("ページを読み直してもマルチスレッドを使える状態にならなかったため、MULTITHREAD を OFF にしました。");
+  if (!window.confirm("高速モード（MULTITHREAD）のためにページを読み直します。")) return turnOff(null);
+  try {
+    await enableIsolationAndReload();
+  } catch (error) {
+    turnOff(`マルチスレッドの準備に失敗したため、MULTITHREAD を OFF にしました（${error instanceof Error ? error.message : error}）。`);
+  }
 }
 
 function renderBotSettingsSummary(side) {

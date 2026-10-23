@@ -25,6 +25,16 @@ use crate::f14_compat::{
 use crate::f14_compat::{advance_f14_amount_only, F14LockPublic};
 use crate::movegen::{find_moves, find_moves_complete_with_entry, RootEntry};
 
+type ComputedChildren = Result<(EnumMap<Piece, Vec<ChildData<Eval>>>, Statistics), CompatError>;
+
+/// The inputs of one leaf expansion (see `Freestyle::compute_children`).
+#[derive(Clone, Copy)]
+struct ExpansionInput {
+    state: GameState,
+    next: Option<Piece>,
+    root_edge: bool,
+}
+
 pub struct Freestyle {
     dag: Dag<Eval>,
     rng: Mutex<StdRng>,
@@ -63,6 +73,7 @@ impl Mode for Freestyle {
         &self,
         options: &BotOptions,
         session: Option<&RootObjectiveSession>,
+        max_selections: u64,
     ) -> Result<Statistics, CompatError> {
         if let Some(root) = session.filter(|root| root.observes_legacy_root()) {
             // Observe the Legacy root before the next native draw. Sessions
@@ -88,7 +99,12 @@ impl Mode for Freestyle {
         }
         // Allocation OFF owns only the post-search ranking bundle. It must not
         // feed public-root priority back into native search ordering.
-        let stats = self.do_work_with_root_priority_observed(options, None, session)?;
+        let batch = u64::from(options.config.search_batch_size).min(max_selections);
+        let stats = if batch > 1 {
+            self.expand_batch(options, session, batch)?
+        } else {
+            self.do_work_with_root_priority_observed(options, None, session)?
+        };
         if let Some(root) = session {
             if root.uses_root_values() {
                 root.observe_legacy_root(self.dag.legacy_root_snapshot())?;
@@ -159,15 +175,98 @@ impl Freestyle {
         observation: Option<&RootObjectiveSession>,
     ) -> Result<Statistics, CompatError> {
         puffin::profile_function!();
-        let leaf_conversion_scale = observation.and_then(|root| root.leaf_conversion_scale());
-        let ren_attack_gain = options.config.freestyle_weights.leaf_ren_attack_gain != 0.0;
-        let leaf_conversion_max_height =
-            observation.and_then(|root| root.leaf_conversion_max_height());
-        let leaf_conversion_root_pressure_rows =
-            observation.and_then(|root| root.leaf_conversion_root_pressure_rows());
         let mut new_stats = Statistics::default();
         new_stats.selections += 1;
+        if let Some(node) = self.select_node(options, observation)? {
+            let input = Self::expansion_input(&node);
+            let children = self.compute_children(options, priority, observation, &input, &mut new_stats)?;
+            self.apply_expansion(node, children, &mut new_stats);
+        }
+        Ok(new_stats)
+    }
 
+    /// `search_batch_size`: draws `count` selections back to back, then
+    /// expands them in draw order. Values are not backed up between the
+    /// draws, and a draw that reaches a leaf an earlier draw holds fails as a
+    /// race (the upstream multi-worker behaviour); every draw counts as one
+    /// selection of the budget.
+    fn expand_batch(
+        &self,
+        options: &BotOptions,
+        observation: Option<&RootObjectiveSession>,
+        count: u64,
+    ) -> Result<Statistics, CompatError> {
+        let mut stats = Statistics::default();
+        let mut nodes = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            stats.selections += 1;
+            nodes.push(self.select_node(options, observation)?);
+        }
+        let nodes: Vec<_> = nodes.into_iter().flatten().collect();
+        let inputs: Vec<ExpansionInput> = nodes.iter().map(Self::expansion_input).collect();
+        // The children of each drawn leaf depend only on its input, so they may
+        // be computed on several threads (`search_threads`); linking them into
+        // the DAG stays on this thread, in draw order. With threads, linking
+        // leaf i overlaps the computation of later leaves: a job only inserts
+        // absent child nodes (the same node whoever inserts it) and never reads
+        // node values, so the result does not depend on the overlap.
+        let nodes: Vec<Mutex<Option<crate::dag::Selection<'_, Eval>>>> = nodes.into_iter().map(|n| Mutex::new(Some(n))).collect();
+        let slots: Vec<Mutex<Option<ComputedChildren>>> = inputs.iter().map(|_| Mutex::new(None)).collect();
+        let ready: Vec<std::sync::atomic::AtomicBool> = inputs.iter().map(|_| std::sync::atomic::AtomicBool::new(false)).collect();
+        let compute = |index: usize| {
+            let mut local = Statistics::default();
+            let result = self
+                .compute_children(options, None, observation, &inputs[index], &mut local)
+                .map(|children| {
+                    // Node creation, minus the parent links (draw order, below).
+                    nodes[index].lock().as_ref().expect("selection present until linked").prepare_children(&children);
+                    (children, local)
+                });
+            *slots[index].lock() = Some(result);
+            ready[index].store(true, std::sync::atomic::Ordering::Release);
+        };
+        let mut failure = None;
+        let mut link = |index: usize| {
+            if failure.is_some() {
+                return;
+            }
+            let node = nodes[index].lock().take().expect("each drawn leaf is linked once");
+            match slots[index].lock().take().expect("every drawn leaf was computed") {
+                Ok((children, local)) => {
+                    stats.accumulate(local);
+                    self.apply_expansion(node, children, &mut stats);
+                }
+                Err(error) => failure = Some(error),
+            }
+        };
+        let threads = options.config.search_threads.max(1) as usize;
+        #[cfg(any(not(target_arch = "wasm32"), all(target_os = "wasi", feature = "wasm-threads")))]
+        if threads > 1 {
+            crate::search_pool::SearchPool::run_streamed(threads, inputs.len(), &compute,
+                &|index| ready[index].load(std::sync::atomic::Ordering::Acquire), &mut link);
+        } else {
+            (0..inputs.len()).for_each(&compute);
+            (0..inputs.len()).for_each(&mut link);
+        }
+        #[cfg(all(target_arch = "wasm32", not(all(target_os = "wasi", feature = "wasm-threads"))))]
+        {
+            let _ = threads;
+            (0..inputs.len()).for_each(&compute);
+            (0..inputs.len()).for_each(&mut link);
+        }
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        Ok(stats)
+    }
+
+    /// Draws one selection (the native draw), recording root draws for the
+    /// observing session.
+    fn select_node(
+        &self,
+        options: &BotOptions,
+        observation: Option<&RootObjectiveSession>,
+    ) -> Result<Option<crate::dag::Selection<'_, Eval>>, CompatError> {
         let node = if let Some(root) = observation.filter(|root| {
             root.allocation_mode() == crate::f14_compat::select::AllocationMode::PermutationV1
         }) {
@@ -187,124 +286,136 @@ impl Freestyle {
                 options.config.enable_s2_b2b_surge,
             )
         };
-        if let Some(node) = node {
+        if let Some(node) = &node {
             if let (Some(root), Some(draw_index)) = (observation, node.root_draw_index()) {
                 root.record_native_draw(draw_index);
             }
-            let (state, next) = node.state();
-            let root_edge = node.is_root();
-            let next_possibilities = next.map(EnumSet::only).unwrap_or(state.bag);
+        }
+        Ok(node)
+    }
 
-            let mut moves = EnumMap::default();
+    /// What the children of a selected leaf depend on, read from the
+    /// selection on the drawing thread (the computation itself is pure).
+    fn expansion_input(node: &crate::dag::Selection<'_, Eval>) -> ExpansionInput {
+        let (state, next) = node.state();
+        ExpansionInput { state, next, root_edge: node.is_root() }
+    }
+
+    /// Generates and evaluates the children of one selected leaf without
+    /// touching the DAG, so batched leaves can be computed in parallel.
+    fn compute_children(
+        &self,
+        options: &BotOptions,
+        priority: Option<&PublicRootLockContext>,
+        observation: Option<&RootObjectiveSession>,
+        input: &ExpansionInput,
+        new_stats: &mut Statistics,
+    ) -> Result<EnumMap<Piece, Vec<ChildData<Eval>>>, CompatError> {
+        let leaf_conversion_scale = observation.and_then(|root| root.leaf_conversion_scale());
+        let ren_attack_gain = options.config.freestyle_weights.leaf_ren_attack_gain != 0.0;
+        let leaf_conversion_max_height =
+            observation.and_then(|root| root.leaf_conversion_max_height());
+        let leaf_conversion_root_pressure_rows =
+            observation.and_then(|root| root.leaf_conversion_root_pressure_rows());
+        let ExpansionInput { state, next, root_edge } = *input;
+        let next_possibilities = next.map(EnumSet::only).unwrap_or(state.bag);
+
+        let mut moves = EnumMap::default();
+        {
+            puffin::profile_scope!("movegen");
+            for piece in next_possibilities | state.reserve {
+                moves[piece] =
+                    find_moves(&state.board, piece, options.config.enable_direct_180);
+            }
+            if options.config.enable_spawn_buffer_entry
+                && root_edge
+                && (next_possibilities | state.reserve)
+                    .iter()
+                    .all(|p| moves[p].is_empty())
             {
-                puffin::profile_scope!("movegen");
                 for piece in next_possibilities | state.reserve {
-                    moves[piece] =
-                        find_moves(&state.board, piece, options.config.enable_direct_180);
-                }
-                if options.config.enable_spawn_buffer_entry
-                    && node.is_root()
-                    && (next_possibilities | state.reserve)
-                        .iter()
-                        .all(|p| moves[p].is_empty())
-                {
-                    for piece in next_possibilities | state.reserve {
-                        moves[piece] = find_moves_complete_with_entry(
-                            &state.board,
-                            piece,
-                            options.config.enable_direct_180,
-                            RootEntry::SpawnBufferFallback,
-                        )
-                        .moves;
-                    }
+                    moves[piece] = find_moves_complete_with_entry(
+                        &state.board,
+                        piece,
+                        options.config.enable_direct_180,
+                        RootEntry::SpawnBufferFallback,
+                    )
+                    .moves;
                 }
             }
+        }
 
-            let mut children: EnumMap<_, Vec<_>> = EnumMap::default();
+        let mut children: EnumMap<_, Vec<_>> = EnumMap::default();
 
-            {
-                puffin::profile_scope!("eval");
-                for next in next_possibilities {
-                    // Capacity only: at most one child per listed move.
-                    children[next].reserve(moves[next].len()
-                        + if next == state.reserve { 0 } else { moves[state.reserve].len() });
-                    let moves = moves[next].iter().chain(if next == state.reserve {
-                        [].iter()
-                    } else {
-                        moves[state.reserve].iter()
-                    });
-                    for &(mv, sd_distance) in moves {
-                        let combo_before = state.combo;
-                        let b2b_before = state.b2b;
-                        let pending_rows_before_lock = state.pending_incoming_rows;
-                        let due_rows_before_lock = state.due_this_lock_rows;
-                        let mut state = state;
-                        let info = state
-                            .try_advance_with_surge(next, mv, options.config.enable_s2_b2b_surge)
-                            .map_err(|_| CompatError::ChainOverflow)?;
-                        if info.search_attack_overflow {
-                            continue;
-                        }
-                        let amount_top_out = amount_tops_out(
-                            options.config.enable_s2_amount_only_incoming,
-                            &state.board,
-                            &info,
+        {
+            puffin::profile_scope!("eval");
+            for next in next_possibilities {
+                // Capacity only: at most one child per listed move.
+                children[next].reserve(moves[next].len()
+                    + if next == state.reserve { 0 } else { moves[state.reserve].len() });
+                let moves = moves[next].iter().chain(if next == state.reserve {
+                    [].iter()
+                } else {
+                    moves[state.reserve].iter()
+                });
+                for &(mv, sd_distance) in moves {
+                    let combo_before = state.combo;
+                    let b2b_before = state.b2b;
+                    let pending_rows_before_lock = state.pending_incoming_rows;
+                    let due_rows_before_lock = state.due_this_lock_rows;
+                    let mut state = state;
+                    let info = state
+                        .try_advance_with_surge(next, mv, options.config.enable_s2_b2b_surge)
+                        .map_err(|_| CompatError::ChainOverflow)?;
+                    if info.search_attack_overflow {
+                        continue;
+                    }
+                    let amount_top_out = amount_tops_out(
+                        options.config.enable_s2_amount_only_incoming,
+                        &state.board,
+                        &info,
+                    );
+                    if amount_top_out && !options.config.amount_top_out_edge_retention() {
+                        new_stats.amount_top_out_omitted += 1;
+                        continue;
+                    }
+                    if amount_top_out {
+                        new_stats.amount_top_out_retained += 1;
+                    }
+                    let amount_top_out_reward =
+                        amount_top_out && options.config.amount_top_out_reward();
+                    if amount_top_out_reward {
+                        new_stats.amount_top_out_priced += 1;
+                    }
+
+                    let (eval, mut reward) = evaluate_with_surge(
+                        &options.config.freestyle_weights,
+                        state,
+                        &info,
+                        sd_distance,
+                        options.config.enable_spawn_occupancy_eval,
+                        options.config.enable_s2_amount_only_incoming,
+                        amount_top_out_reward,
+                        options.config.enable_real_board_structural_eval,
+                        options.config.enable_tslot_nonmutating_dedup,
+                        options.config.enable_s2_tank_risk_shaping,
+                        options.config.enable_s2_b2b_surge,
+                        root_edge,
+                        pending_rows_before_lock,
+                    );
+                    if let (Some(scale), Some(max_height)) =
+                        (leaf_conversion_scale, leaf_conversion_max_height)
+                    {
+                        let gate_height = leaf_conversion_gate_height(
+                            occupied_height(&state.board),
+                            leaf_conversion_root_pressure_rows,
                         );
-                        if amount_top_out && !options.config.amount_top_out_edge_retention() {
-                            new_stats.amount_top_out_omitted += 1;
-                            continue;
-                        }
-                        if amount_top_out {
-                            new_stats.amount_top_out_retained += 1;
-                        }
-                        let amount_top_out_reward =
-                            amount_top_out && options.config.amount_top_out_reward();
-                        if amount_top_out_reward {
-                            new_stats.amount_top_out_priced += 1;
-                        }
-
-                        let (eval, mut reward) = evaluate_with_surge(
-                            &options.config.freestyle_weights,
-                            state,
-                            &info,
-                            sd_distance,
-                            options.config.enable_spawn_occupancy_eval,
-                            options.config.enable_s2_amount_only_incoming,
-                            amount_top_out_reward,
-                            options.config.enable_real_board_structural_eval,
-                            options.config.enable_tslot_nonmutating_dedup,
-                            options.config.enable_s2_tank_risk_shaping,
-                            options.config.enable_s2_b2b_surge,
-                            root_edge,
-                            pending_rows_before_lock,
-                        );
-                        if let (Some(scale), Some(max_height)) =
-                            (leaf_conversion_scale, leaf_conversion_max_height)
-                        {
-                            let gate_height = leaf_conversion_gate_height(
-                                occupied_height(&state.board),
-                                leaf_conversion_root_pressure_rows,
-                            );
-                            add_leaf_conversion_reward_when_safe(
-                                &mut reward,
-                                Some(scale),
-                                max_height,
-                                gate_height,
-                                || {
-                                    legacy_conversion_facts(
-                                        combo_before,
-                                        info.combo,
-                                        b2b_before,
-                                        state.b2b,
-                                        pending_rows_before_lock,
-                                        due_rows_before_lock,
-                                        &info,
-                                        ren_attack_gain,
-                                    )
-                                },
-                            )?;
-                        } else if leaf_conversion_scale.is_some() {
-                            add_leaf_conversion_reward(&mut reward, leaf_conversion_scale, || {
+                        add_leaf_conversion_reward_when_safe(
+                            &mut reward,
+                            Some(scale),
+                            max_height,
+                            gate_height,
+                            || {
                                 legacy_conversion_facts(
                                     combo_before,
                                     info.combo,
@@ -315,30 +426,53 @@ impl Freestyle {
                                     &info,
                                     ren_attack_gain,
                                 )
-                            })?;
-                        }
-
-                        children[next].push(ChildData {
-                            resulting_state: state,
-                            mv,
-                            eval,
-                            reward,
-                            root_priority: if node.is_root() {
-                                priority.map(|context| context.inside_margin(mv)).transpose()?
-                                    .unwrap_or(false)
-                            } else { false },
-                        });
+                            },
+                        )?;
+                    } else if leaf_conversion_scale.is_some() {
+                        add_leaf_conversion_reward(&mut reward, leaf_conversion_scale, || {
+                            legacy_conversion_facts(
+                                combo_before,
+                                info.combo,
+                                b2b_before,
+                                state.b2b,
+                                pending_rows_before_lock,
+                                due_rows_before_lock,
+                                &info,
+                                ren_attack_gain,
+                            )
+                        })?;
                     }
 
-                    new_stats.nodes += children[next].len() as u64;
+                    children[next].push(ChildData {
+                        resulting_state: state,
+                        mv,
+                        eval,
+                        reward,
+                        root_priority: if root_edge {
+                            priority.map(|context| context.inside_margin(mv)).transpose()?
+                                .unwrap_or(false)
+                        } else { false },
+                        // Hashed here so batched leaves hash on their threads.
+                        state_index: Some(crate::map::legacy_state_index(&state)),
+                    });
                 }
-            }
 
-            new_stats.expansions += 1;
-            node.expand(children);
+                new_stats.nodes += children[next].len() as u64;
+            }
         }
 
-        Ok(new_stats)
+        Ok(children)
+    }
+
+    /// Links a computed expansion into the DAG (draw order).
+    fn apply_expansion(
+        &self,
+        node: crate::dag::Selection<'_, Eval>,
+        children: EnumMap<Piece, Vec<ChildData<Eval>>>,
+        new_stats: &mut Statistics,
+    ) {
+        new_stats.expansions += 1;
+        node.expand(children);
     }
 
     fn apply_root_values(&self, root: &RootObjectiveSession) -> Result<(), CompatError> {
@@ -1642,7 +1776,7 @@ mod amount_exchange_tests {
             due_this_lock_rows: 1,
         };
         let search = Freestyle::new(&options, root, &[Piece::I, Piece::O]);
-        let stats = search.do_work(&options, None).unwrap();
+        let stats = search.do_work(&options, None, 1).unwrap();
         (search, options, stats)
     }
 
@@ -1666,7 +1800,7 @@ mod amount_exchange_tests {
             due_this_lock_rows: 1,
         };
         let search = Freestyle::new(&options, root, &[Piece::I, Piece::O]);
-        let stats = search.do_work(&options, None).unwrap();
+        let stats = search.do_work(&options, None, 1).unwrap();
         (search, options, stats)
     }
 
@@ -1719,7 +1853,7 @@ mod amount_exchange_tests {
     fn amount_top_out_frontier_remains_finite_at_a_deep_node() {
         let (search, options, first) = top_out_search(true);
         assert!(first.amount_top_out_priced > 0);
-        let second = search.do_work(&options, None).unwrap();
+        let second = search.do_work(&options, None, 1).unwrap();
         assert!(second.amount_top_out_priced > 0);
         assert!(search
             .dag

@@ -26,6 +26,8 @@ const entryPoints = [
   "src-js/input-resolution-worker.mjs",
   // Started by cc2-wasm-worker-session.mjs the same way.
   "src-js/cc2-wasm-session-worker.mjs",
+  // Helper threads of the threaded WASM: bundled by build-pages.mjs and started by cc2-worker.mjs.
+  "cc2-gui/cc2-wasm-thread.mjs",
   // Timing-free F14 response comparison shared by the champion WASM tests.
   "scripts/f14-response-comparator.mjs",
   "scripts/cs1.mjs",
@@ -89,6 +91,8 @@ const allowedTrees = [
   "bot/cold-clear-2-upstream/",
   "bot/cold-clear-2-chouhy/",
   "bot/instant-wasm-safe/",
+  // parking_lot_core with a WASI thread parker, patched in by scripts/build-wasm-threads.mjs.
+  "bot/parking-lot-core-wasi/",
   "bot/puffin-noop/",
   "cc2-gui/",
   "fixtures/cross-runtime/",

@@ -280,8 +280,9 @@ impl BotSyncronizer {
                 }
             };
 
+            let remaining = state.selection_limit.saturating_sub(state.stats.selections);
             drop(state);
-            let result = bot.do_work();
+            let result = bot.do_work_up_to(remaining);
             drop(bot_guard);
 
             state = self.state.lock();

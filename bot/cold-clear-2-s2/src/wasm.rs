@@ -162,7 +162,8 @@ fn handle_request(request: Request) -> Result<Value, &'static str> {
                 let target = driver.stats.selections.saturating_add(selections as u64).min(driver.limit);
                 while driver.stats.selections < target {
                     let before = driver.stats.selections;
-                    let stats = driver.bot.do_work().map_err(|_| "chain-overflow")?;
+                    // Whole remaining budget, as the native driver (batch boundaries).
+                    let stats = driver.bot.do_work_up_to(driver.limit - before).map_err(|_| "chain-overflow")?;
                     driver.stats.accumulate(stats);
                     if driver.stats.selections == before {
                         break;
@@ -175,7 +176,7 @@ fn handle_request(request: Request) -> Result<Value, &'static str> {
             let mut slot = slot.borrow_mut();
             let driver = slot.as_mut().ok_or("no-active-bot")?;
             while driver.stats.selections < driver.limit {
-                let stats = driver.bot.do_work().map_err(|_| "chain-overflow")?;
+                let stats = driver.bot.do_work_up_to(driver.limit - driver.stats.selections).map_err(|_| "chain-overflow")?;
                 driver.stats.accumulate(stats);
             }
             suggestion(driver, "fixed selection budget complete")

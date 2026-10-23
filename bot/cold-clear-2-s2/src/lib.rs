@@ -37,6 +37,9 @@ pub mod s2_eval;
 pub mod s2_search;
 #[cfg(not(target_arch = "wasm32"))]
 mod sync;
+// Threads: native, and WASI with shared memory (wasm32-wasip1-threads).
+#[cfg(any(not(target_arch = "wasm32"), all(target_os = "wasi", feature = "wasm-threads")))]
+mod search_pool;
 
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;

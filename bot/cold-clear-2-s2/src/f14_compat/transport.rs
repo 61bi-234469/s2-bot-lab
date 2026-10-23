@@ -150,6 +150,8 @@ pub const TUNABLE_WEIGHT_KEYS: &[&str] = &[
     RESCUE_TOPOUT_FALLBACK_KEY,
     LEGACY_BACKUP_CONSISTENCY_KEY,
     TREE_REUSE_FLOOR_KEY,
+    SEARCH_BATCH_SIZE_KEY,
+    SEARCH_THREADS_KEY,
 ];
 
 /// Root-policy keys (not search weights): set together, both positive. See
@@ -174,6 +176,16 @@ pub const LEGACY_BACKUP_CONSISTENCY_KEY: &str = "legacy_backup_consistency";
 /// continues it: inherited expanded nodes are credited against the budget,
 /// leaving at least F new selections. Absent keeps every request fresh.
 pub const TREE_REUSE_FLOOR_KEY: &str = "tree_reuse_floor";
+
+/// Search key: an integer 2..=16. Batched expansion (`BotConfig::search_batch_size`):
+/// each work unit draws this many selections before expanding any of them.
+/// Absent expands every selection before the next draw.
+pub const SEARCH_BATCH_SIZE_KEY: &str = "search_batch_size";
+
+/// Execution key: an integer 2..=16, only with `search_batch_size`. Threads
+/// that compute a batch's leaf expansions (native; WASM computes them in
+/// order). The decision does not depend on it.
+pub const SEARCH_THREADS_KEY: &str = "search_threads";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -400,10 +412,17 @@ impl Profile {
                     floor >= 1 && floor <= self.budget.selections && floor.to_string() == *value
                 }) && !self.is_time_budget()
             });
+            let batch_valid = overrides.get(SEARCH_BATCH_SIZE_KEY).map_or(true, |value| {
+                value.parse::<u32>().map_or(false, |n| (2..=16).contains(&n) && n.to_string() == *value)
+            }) && overrides.get(SEARCH_THREADS_KEY).map_or(true, |value| {
+                overrides.contains_key(SEARCH_BATCH_SIZE_KEY)
+                    && value.parse::<u32>().map_or(false, |n| (2..=16).contains(&n) && n.to_string() == *value)
+            });
             danger_valid
                 && backup_valid
                 && rescue_valid
                 && tree_reuse_valid
+                && batch_valid
                 && !overrides.is_empty()
                 && overrides.iter().all(|(key, value)| {
                     TUNABLE_WEIGHT_KEYS.contains(&key.as_str())
@@ -424,6 +443,14 @@ impl Profile {
             }
             if key == TREE_REUSE_FLOOR_KEY {
                 config.tree_reuse_floor = value.parse().expect("admitted override value");
+                continue;
+            }
+            if key == SEARCH_BATCH_SIZE_KEY {
+                config.search_batch_size = value.parse().expect("admitted override value");
+                continue;
+            }
+            if key == SEARCH_THREADS_KEY {
+                config.search_threads = value.parse().expect("admitted override value");
                 continue;
             }
             if key == "freestyle_exploitation" {
@@ -2453,6 +2480,82 @@ mod tests {
         assert!(kept);
         // Reuse is part of a deterministic sequence.
         assert_eq!(run().1, again);
+    }
+
+    #[test]
+    fn search_batch_size_meets_the_budget_exactly_and_is_deterministic() {
+        let with = |pairs: &[(&str, &str)]| {
+            let mut profile = leaf_conversion_gated_profile(CONFIG_HASH);
+            profile.weight_overrides =
+                Some(pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect());
+            profile
+        };
+        for bad in ["0", "1", "17", "04", "2.5"] {
+            assert!(!with(&[(SEARCH_BATCH_SIZE_KEY, bad)]).valid(), "{bad}");
+        }
+        // A floor of 130 leaves a remainder that is not a multiple of 4.
+        let batched = with(&[(TREE_REUSE_FLOOR_KEY, "130"), (SEARCH_BATCH_SIZE_KEY, "4")]);
+        let plain = with(&[(TREE_REUSE_FLOOR_KEY, "130")]);
+        assert!(batched.valid());
+        assert_eq!(batched.search_bot_config().unwrap().search_batch_size, 4);
+        assert_eq!(plain.search_bot_config().unwrap().search_batch_size, 0);
+        let run = |profile: &Profile| {
+            let request = || reuse_request(profile, opening_start());
+            let (first, tree) = run_reuse(profile, request(), None);
+            let (mut again, _) = run_reuse(profile, request(), tree);
+            again["search"]["reuse"].as_object_mut().unwrap().remove("micros");
+            (first, again)
+        };
+        let (first, again) = run(&batched);
+        assert_eq!(first["status"], "move");
+        assert_eq!(first["search"]["actualSelections"], 512);
+        assert_eq!(again["search"]["reuse"]["newSelections"], 130, "{}", again["search"]["reuse"]);
+        assert_eq!(again["search"]["actualSelections"], 512);
+        // The same batch size gives the same sequence.
+        let (mut first_again, again_again) = run(&batched);
+        let mut first = first;
+        without_timing_fields(&mut first);
+        without_timing_fields(&mut first_again);
+        assert_eq!(first_again, first);
+        let mut again = again;
+        let mut again_again = again_again;
+        without_timing_fields(&mut again);
+        without_timing_fields(&mut again_again);
+        assert_eq!(again_again, again);
+        // Batching changes the search itself (draws race for held leaves).
+        let (plain_first, _) = run(&plain);
+        assert_ne!(plain_first["search"]["nodes"], first["search"]["nodes"]);
+
+        // Batch boundaries follow the request's selection count, not the
+        // host's work chunks: K = 3 decides the same with chunks of 1 and 64.
+        let three = with(&[(SEARCH_BATCH_SIZE_KEY, "3")]);
+        let chunked = |chunk: u32| {
+            let mut driver = F14Driver::start_reusing(three.clone(), reuse_request(&three, opening_start()), None)
+                .expect("F14 driver start");
+            while !driver.work(chunk).complete {}
+            let (mut response, _, _) = driver.finish_with_retained_tree();
+            without_timing_fields(&mut response);
+            response
+        };
+        let one = chunked(1);
+        assert_eq!(one["search"]["actualSelections"], 512);
+        assert_eq!(chunked(64), one);
+
+        // Helper threads compute the batch's leaves; the response is the same.
+        assert!(!with(&[(SEARCH_THREADS_KEY, "4")]).valid(), "threads need a batch size");
+        for bad in ["1", "17", "04"] {
+            assert!(!with(&[(SEARCH_BATCH_SIZE_KEY, "4"), (SEARCH_THREADS_KEY, bad)]).valid(), "{bad}");
+        }
+        let threaded = with(&[(SEARCH_BATCH_SIZE_KEY, "3"), (SEARCH_THREADS_KEY, "4")]);
+        let mut threaded_response = {
+            let mut driver = F14Driver::start_reusing(threaded.clone(), reuse_request(&threaded, opening_start()), None)
+                .expect("F14 driver start");
+            while !driver.work(64).complete {}
+            driver.finish_with_retained_tree().0
+        };
+        without_timing_fields(&mut threaded_response);
+        threaded_response["execution"] = one["execution"].clone();
+        assert_eq!(threaded_response, one);
     }
 
     #[test]

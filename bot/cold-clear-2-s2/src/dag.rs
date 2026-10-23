@@ -107,6 +107,10 @@ pub struct ChildData<E: Evaluation> {
     pub reward: E::Reward,
     // Diagnostic only: parent-edge preference, never a shared node value.
     pub root_priority: bool,
+    /// The child's node index when the caller computed it ahead (Legacy maps
+    /// index by the state hash, a pure function of the state); `None`
+    /// computes it at node creation.
+    pub state_index: Option<u64>,
 }
 
 /// Side-effect-free Legacy root read used by the F14 allocation observer.
@@ -813,6 +817,29 @@ impl<E: Evaluation> Selection<'_, E> {
         })
     }
 
+    /// Legacy only: creates the child nodes `expand` will link, ahead and on
+    /// any thread. New nodes get the same initial value whoever inserts them,
+    /// and `expand` then links parents in its own (draw) order, so the result
+    /// is the same as without this call.
+    pub fn prepare_children(&self, children: &EnumMap<Piece, Vec<ChildData<E>>>) {
+        if E::Domain::S2 {
+            return;
+        }
+        let layer = self.layers.last().unwrap();
+        let next = layer.next();
+        layer.kind.with(|this| match this.data {
+            LayerKind::Known(l) => {
+                let piece = l.piece.for_state::<E::Domain>(&self.game_state).expect("expand requires known current");
+                next.kind.ensure_nodes(&children[piece]);
+            }
+            LayerKind::Speculated(_) => {
+                for piece in enumset::EnumSet::<Piece>::all() {
+                    next.kind.ensure_nodes(&children[piece]);
+                }
+            }
+        });
+    }
+
     pub fn expand(mut self, children: EnumMap<Piece, Vec<ChildData<E>>>) {
         puffin::profile_function!();
         assert!(E::Domain::S2 || self.is_root() || children.values().all(|list| list.iter().all(|c| !c.root_priority)),
@@ -1000,6 +1027,15 @@ impl<E: Evaluation> WithBump<E> {
         })
     }
 
+    /// Legacy only: inserts the absent nodes `create_nodes` would insert for
+    /// `children`, without linking (see `Selection::prepare_children`).
+    fn ensure_nodes(&self, children: &[ChildData<E>]) {
+        self.with(|this| match this.data {
+            LayerKind::Known(l) => children.iter().for_each(|child| l.ensure_node(child)),
+            LayerKind::Speculated(l) => children.iter().for_each(|child| l.ensure_node(child)),
+        })
+    }
+
     fn create_nodes(
         &self,
         children: &[ChildData<E>],
@@ -1100,7 +1136,7 @@ mod s2_connection_tests {
             for action in expansion.actions().unwrap() {
                 let transition=expansion.transition(action).unwrap();
                 children[piece.unwrap()].push(ChildData {resulting_state:transition.next,mv:action,
-                    eval:Value::Finite(0),reward:0,root_priority:false});
+                    eval:Value::Finite(0),reward:0,root_priority:false,state_index:None});
             }
             selection.expand(children);
             expansions+=1;
@@ -1131,7 +1167,7 @@ mod s2_connection_tests {
         let mut children:EnumMap<Piece,Vec<ChildData<Value>>>=EnumMap::default();
         children[context.root().current.unwrap()]=vec![ChildData {mv:action,
             resulting_state:crate::s2_core::State {horizon:crate::s2_core::Horizon::KnownNextExhausted,..transition.next},
-            eval:Value::Finite(-1000),reward:0,root_priority:false}];
+            eval:Value::Finite(-1000),reward:0,root_priority:false,state_index:None}];
         retry.expand(children);
         assert!(dag.is_complete());
         assert!(dag.select(false,0.5,&mut rng).is_none());
@@ -1151,7 +1187,7 @@ mod s2_connection_tests {
         let state=|combo,horizon| State {chain:Chain {combo,b2b:0},horizon,..root};
         let parent=state(1,Horizon::Open);
         let a=state(2,Horizon::Open);let b=state(3,Horizon::Open);
-        let edge=|mv,resulting_state,value,reward| ChildData {mv,resulting_state,eval:Value::Finite(value),reward,root_priority:false};
+        let edge=|mv,resulting_state,value,reward| ChildData {mv,resulting_state,eval:Value::Finite(value),reward,root_priority:false,state_index:None};
         let batch=|list| {let mut e=EnumMap::default();e[Piece::T]=list;e};
         root_layer.kind.initialize_root(&root);
         root_layer.kind.expand(&parent_layer,root,batch(actions.iter().take(6).enumerate()
@@ -1181,7 +1217,7 @@ mod s2_connection_tests {
         let next=prepared.transition(actions[0]).unwrap().next;
         let mut children:EnumMap<Piece,Vec<ChildData<Value>>>=EnumMap::default();
         children[root.current.unwrap()]=actions.iter().take(3).map(|&mv|ChildData {
-            resulting_state:next,mv,eval:Value::Finite(0),reward:0,root_priority:false}).collect();
+            resulting_state:next,mv,eval:Value::Finite(0),reward:0,root_priority:false,state_index:None}).collect();
         let selected=dag.select(false,0.5,&mut rng).unwrap();let quote=selected.allocation_quote(&children).unwrap();
         assert_eq!(quote.new_nodes,1);assert_eq!(quote.parent_copy_slots,3);assert_eq!(quote.parent_allocation_slots,4);
         selected.expand(children);
@@ -1196,7 +1232,7 @@ mod s2_connection_tests {
         let probe=Selection {layers:vec![&dag.top_layer],game_state:root,root_action:None,root_draw_index:None,path_states:vec![root],committed:true,legacy_backup_consistency:false};
         let mut children:EnumMap<Piece,Vec<ChildData<Value>>>=EnumMap::default();
         children[root.current.unwrap()]=actions.iter().take(2).map(|&mv|ChildData {
-            resulting_state:next,mv,eval:Value::Finite(0),reward:0,root_priority:false}).collect();
+            resulting_state:next,mv,eval:Value::Finite(0),reward:0,root_priority:false,state_index:None}).collect();
         let quote=probe.allocation_quote(&children).unwrap();
         assert_eq!(quote.new_nodes,0);assert_eq!(quote.parent_copy_slots,6);assert_eq!(quote.parent_allocation_slots,8);
         assert_eq!(stored(),before); // quoting and dropping a selection cannot allocate parent buffers
@@ -1218,7 +1254,7 @@ mod s2_connection_tests {
         let [r,p,c,l]=std::array::from_fn::<_,4,_>(|_|LayerCommon::<Value>::default());
         let state=|combo,horizon|State {chain:Chain {combo,b2b:0},horizon,..root};
         let parent=state(1,Horizon::Open);let a=state(2,Horizon::Open);let b=state(3,Horizon::Open);
-        let edge=|mv,resulting_state,value|ChildData {mv,resulting_state,eval:Value::Finite(value),reward:0,root_priority:false};
+        let edge=|mv,resulting_state,value|ChildData {mv,resulting_state,eval:Value::Finite(value),reward:0,root_priority:false,state_index:None};
         let batch=|list|{let mut e=EnumMap::default();e[Piece::T]=list;e};
         r.kind.initialize_root(&root);
         r.kind.expand(&p,root,batch(vec![edge(actions[0],parent,100),edge(actions[1],parent,100)]));
@@ -1239,7 +1275,7 @@ mod s2_connection_tests {
         let prepared=context.prepare(root,0).unwrap();let action=prepared.actions().unwrap()[0];
         let next=prepared.transition(action).unwrap().next;
         let mut children:EnumMap<Piece,Vec<ChildData<Value>>>=EnumMap::default();
-        children[root.current.unwrap()]=vec![ChildData {resulting_state:next,mv:action,eval:Value::Finite(0),reward:0,root_priority:false}];
+        children[root.current.unwrap()]=vec![ChildData {resulting_state:next,mv:action,eval:Value::Finite(0),reward:0,root_priority:false,state_index:None}];
         first.expand(children);
         dag.select(false,0.5,&mut rng).unwrap().expand(EnumMap::default());
         assert!(dag.is_complete());
@@ -1258,8 +1294,8 @@ mod s2_connection_tests {
         let open=prepared.transition(actions[1]).unwrap().next;
         let finite=crate::s2_core::State {horizon:crate::s2_core::Horizon::DepthLimit,..prepared.transition(actions[0]).unwrap().next};
         let mut children:EnumMap<Piece,Vec<ChildData<Value>>>=EnumMap::default();
-        children[root.current.unwrap()]=vec![ChildData {resulting_state:finite,mv:actions[0],eval:Value::Finite(100),reward:0,root_priority:false},
-            ChildData {resulting_state:open,mv:actions[1],eval:Value::Finite(10),reward:0,root_priority:false}];
+        children[root.current.unwrap()]=vec![ChildData {resulting_state:finite,mv:actions[0],eval:Value::Finite(100),reward:0,root_priority:false,state_index:None},
+            ChildData {resulting_state:open,mv:actions[1],eval:Value::Finite(10),reward:0,root_priority:false,state_index:None}];
         initial.expand(children);
         for _ in 0..32 {
             let selected=dag.select(false,0.5,&mut rng).unwrap();
@@ -1369,7 +1405,7 @@ mod edge_cost_tests {
         let states = [GameState { combo: 1, ..root }, GameState { combo: 2, ..root }];
         let mut edges = EnumMap::default();
         edges[Piece::I] = (0..2).map(|i| ChildData { resulting_state: states[i], mv: mv(i as i8),
-            eval: Value(0), reward: 0, root_priority: false }).collect();
+            eval: Value(0), reward: 0, root_priority: false, state_index: None }).collect();
         parent.kind.expand(&child, root, edges);
 
         let mapper = RejectingRootMapper;
@@ -1418,9 +1454,9 @@ mod edge_cost_tests {
         let mut children = EnumMap::default();
         children[Piece::I] = vec![
             ChildData { resulting_state: GameState { combo: 1, ..root }, mv: mv(0),
-                eval: Value(1), reward: 0, root_priority: false },
+                eval: Value(1), reward: 0, root_priority: false, state_index: None },
             ChildData { resulting_state: GameState { combo: 2, ..root }, mv: mv(1),
-                eval: Value(2), reward: 0, root_priority: false },
+                eval: Value(2), reward: 0, root_priority: false, state_index: None },
         ];
         selected.expand(children);
         assert_eq!(dag.suggest(2), vec![(mv(1), 2.0), (mv(0), 1.0)]);
@@ -1446,16 +1482,16 @@ mod edge_cost_tests {
         let mut children = EnumMap::default();
         children[Piece::I] = vec![
             ChildData { resulting_state: GameState { combo: 1, ..root }, mv: mv(0),
-                eval: Value(2), reward: 0, root_priority: false },
+                eval: Value(2), reward: 0, root_priority: false, state_index: None },
             ChildData { resulting_state: GameState { combo: 2, ..root }, mv: mv(1),
-                eval: Value(1), reward: 0, root_priority: false },
+                eval: Value(1), reward: 0, root_priority: false, state_index: None },
             // Represents a rejected candidate inside the prefix; it has no F14 score.
             ChildData { resulting_state: GameState { combo: 3, ..root }, mv: mv(2),
-                eval: Value(100), reward: 0, root_priority: false },
+                eval: Value(100), reward: 0, root_priority: false, state_index: None },
             // Represents an out-of-prefix child and retains its native ordering
             // relative to other unscored children, but not relative to scored moves.
             ChildData { resulting_state: GameState { combo: 4, ..root }, mv: mv(3),
-                eval: Value(200), reward: 0, root_priority: true },
+                eval: Value(200), reward: 0, root_priority: true, state_index: None },
         ];
         selected.expand(children);
 
@@ -1484,13 +1520,13 @@ mod edge_cost_tests {
         let mut children = EnumMap::default();
         children[Piece::I] = vec![
             ChildData { resulting_state: GameState { combo: 1, ..root }, mv: mv(0),
-                eval: Value(2), reward: 0, root_priority: false },
+                eval: Value(2), reward: 0, root_priority: false, state_index: None },
             ChildData { resulting_state: GameState { combo: 2, ..root }, mv: mv(1),
-                eval: Value(1), reward: 0, root_priority: false },
+                eval: Value(1), reward: 0, root_priority: false, state_index: None },
             ChildData { resulting_state: GameState { combo: 3, ..root }, mv: mv(2),
-                eval: Value(100), reward: 0, root_priority: false },
+                eval: Value(100), reward: 0, root_priority: false, state_index: None },
             ChildData { resulting_state: GameState { combo: 4, ..root }, mv: mv(3),
-                eval: Value(0), reward: 0, root_priority: false },
+                eval: Value(0), reward: 0, root_priority: false, state_index: None },
         ];
         selected.expand(children);
 
@@ -1521,15 +1557,15 @@ mod edge_cost_tests {
         let mut children = EnumMap::default();
         children[Piece::I] = vec![
             ChildData { resulting_state: GameState { combo: 1, ..root }, mv: mv(0),
-                eval: Value(3), reward: 0, root_priority: false },
+                eval: Value(3), reward: 0, root_priority: false, state_index: None },
             ChildData { resulting_state: GameState { combo: 2, ..root }, mv: mv(1),
-                eval: Value(3), reward: 0, root_priority: false },
+                eval: Value(3), reward: 0, root_priority: false, state_index: None },
             ChildData { resulting_state: GameState { combo: 3, ..root }, mv: mv(2),
-                eval: Value(4), reward: 0, root_priority: false },
+                eval: Value(4), reward: 0, root_priority: false, state_index: None },
             ChildData { resulting_state: GameState { combo: 4, ..root }, mv: mv(3),
-                eval: Value(3), reward: 0, root_priority: false },
+                eval: Value(3), reward: 0, root_priority: false, state_index: None },
             ChildData { resulting_state: GameState { combo: 5, ..root }, mv: mv(4),
-                eval: Value(3), reward: 0, root_priority: false },
+                eval: Value(3), reward: 0, root_priority: false, state_index: None },
         ];
         selected.expand(children);
 
@@ -1561,7 +1597,7 @@ mod edge_cost_tests {
             let states: Vec<_> = (1..=3).map(|combo| GameState { combo, ..root }).collect();
             let mut edges = EnumMap::default();
             edges[Piece::I] = (0..3).map(|i| ChildData { resulting_state: states[i],
-                mv: mv(i as i8), eval: Value([10, 9, 100][i]), reward: 0, root_priority: priorities[i] }).collect();
+                mv: mv(i as i8), eval: Value([10, 9, 100][i]), reward: 0, root_priority: priorities[i], state_index: None }).collect();
             parent.kind.expand(&child, root, edges);
             let moves = || parent.kind.suggest(&root, 3).into_iter().map(|(m, _)| m).collect::<Vec<_>>();
             assert_eq!(moves(), if priorities[0] && !priorities[2] { vec![mv(0),mv(1),mv(2)] } else { vec![mv(2),mv(0),mv(1)] });
@@ -1574,7 +1610,7 @@ mod edge_cost_tests {
             for (index, value) in [(0, 8), (2, 200), (0, 9)] {
                 let mut deeper = EnumMap::default();
                 deeper[Piece::I] = vec![ChildData { resulting_state: GameState { combo: 10 + index as u8, b2b: value as u32, ..root },
-                    mv: mv(5), eval: Value(value), reward: 0, root_priority: false }];
+                    mv: mv(5), eval: Value(value), reward: 0, root_priority: false, state_index: None }];
                 let updates = child.kind.expand(&grandchild, states[index], deeper);
                 parent.kind.backprop(updates, &child, false);
             }
@@ -1608,8 +1644,8 @@ mod edge_cost_tests {
             parent.kind.initialize_root(&root);
             let mut edges = EnumMap::default();
             edges[Piece::I] = vec![
-                ChildData { resulting_state: shared, mv: mv(3), eval: Value(100), reward: -15, root_priority: false },
-                ChildData { resulting_state: shared, mv: mv(4), eval: Value(100), reward: -7, root_priority: false },
+                ChildData { resulting_state: shared, mv: mv(3), eval: Value(100), reward: -15, root_priority: false, state_index: None },
+                ChildData { resulting_state: shared, mv: mv(4), eval: Value(100), reward: -7, root_priority: false, state_index: None },
             ];
             parent.kind.expand(&child, root, edges);
             let scores = || parent.kind.with(|this| match this.data {
@@ -1620,7 +1656,7 @@ mod edge_cost_tests {
             });
             assert_eq!(scores(), vec![(mv(4), 93.0), (mv(3), 85.0)]);
             let mut deeper = EnumMap::default();
-            deeper[Piece::I] = vec![ChildData { resulting_state: leaf, mv: mv(5), eval: Value(200), reward: 0, root_priority: false }];
+            deeper[Piece::I] = vec![ChildData { resulting_state: leaf, mv: mv(5), eval: Value(200), reward: 0, root_priority: false, state_index: None }];
             let updates = child.kind.expand(&grandchild, shared, deeper);
             parent.kind.backprop(updates, &child, false);
             assert_eq!(scores(), vec![(mv(4), 193.0), (mv(3), 185.0)]);
@@ -1641,7 +1677,7 @@ mod edge_cost_tests {
     fn known_edges(list: &[(GameState, i8, i32, i32)]) -> EnumMap<Piece, Vec<ChildData<Value>>> {
         let mut edges = EnumMap::default();
         edges[Piece::I] = list.iter().map(|&(state, x, eval, reward)| ChildData {
-            resulting_state: state, mv: mv_at(x), eval: Value(eval), reward, root_priority: false }).collect();
+            resulting_state: state, mv: mv_at(x), eval: Value(eval), reward, root_priority: false, state_index: None }).collect();
         edges
     }
 
@@ -1741,7 +1777,7 @@ mod edge_cost_tests {
         let (parent, next, leaf) = (LayerCommon::<Value>::default(), LayerCommon::<Value>::default(), LayerCommon::<Value>::default());
         parent.kind.initialize_root(&root);
         let mut edges: EnumMap<Piece, Vec<ChildData<Value>>> = EnumMap::default();
-        let edge = |state, mv, eval| ChildData { resulting_state: state, mv, eval: Value(eval), reward: 0, root_priority: false };
+        let edge = |state, mv, eval| ChildData { resulting_state: state, mv, eval: Value(eval), reward: 0, root_priority: false, state_index: None };
         edges[Piece::I] = vec![edge(ia, place(Piece::I, 0), 10), edge(ib, place(Piece::I, 1), 8)];
         edges[Piece::T] = vec![edge(tc, place(Piece::T, 0), 6)];
         parent.kind.expand(&next, root, edges);

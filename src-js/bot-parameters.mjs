@@ -40,8 +40,19 @@ const F14_CORE_PARAMETERS = Object.freeze(CC2_PARAMETERS.map((parameter) =>
 // The current champion and the former champions from the tree-reuse one on
 // search 2,048 selections by default (with tree reuse); the older F14-core
 // bots keep 512.
-const CHAMPION_PARAMETERS = Object.freeze(F14_CORE_PARAMETERS.map((parameter) =>
-  parameter.key === "selectionLimit" ? Object.freeze({ ...parameter, defaultValue: 2048 }) : parameter));
+// MULTITHREAD (2026-10-23): batched expansion of 8 leaves on 4 threads. Off by default and left out of the
+// parameters while off, so saved settings, requests and engine ids of the OFF bots stay as they were.
+export const MULTITHREAD_PARAMETER = Object.freeze({
+  key: "multithreadEnabled",
+  label: "MULTITHREAD",
+  group: "budget",
+  type: "boolean",
+  defaultValue: false,
+  omitDefault: true,
+  description: "ONにすると、探索する局面を8つずつまとめ、4つのスレッドで並べて展開します。まとめて探索するため、OFF と同じ SELECTION でも選ぶ手が変わることがあります。ブラウザでは、初めて ON にしたときにページを一度読み直します。",
+});
+const CHAMPION_PARAMETERS = Object.freeze([...F14_CORE_PARAMETERS.map((parameter) =>
+  parameter.key === "selectionLimit" ? Object.freeze({ ...parameter, defaultValue: 2048 }) : parameter), MULTITHREAD_PARAMETER]);
 
 /* Each GUI bot's display name and settings introduction, shared by both hosts.
    The project bots run oldest to newest; names describe the design, and only
@@ -262,12 +273,16 @@ export function normalizeBotParameters(botType, input = {}) {
 export function fairComparisonBotParameters(botType, input = {}) {
   const normalizedType = botType === "cc2" ? "cc2-raw" : botType;
   if (!normalizedType.startsWith("cc2-")) return normalizeBotParameters(botType, input);
+  // FAIR keeps the single-thread search: MULTITHREAD changes how the search draws (batches of 8).
+  const multithread = definitionFor(normalizedType).parameters.some((parameter) => parameter.key === MULTITHREAD_PARAMETER.key)
+    ? { [MULTITHREAD_PARAMETER.key]: false } : {};
   return normalizeBotParameters(botType, {
     ...input,
     ppsEnabled: false,
     selectionEnabled: true,
     selectionLimit: 512,
     thinkTimeEnabled: false,
+    ...multithread,
   });
 }
 

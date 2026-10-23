@@ -1,3 +1,5 @@
+import { instantiateThreadedWasm } from "./cc2-wasm-threads.mjs";
+
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -8,26 +10,48 @@ export async function createCc2WasmSession({ wasmBytes, config = null, selection
   const imports = WebAssembly.Module.imports(module);
   if (imports.length !== 0) throw new Error(`CC2 WASM must be import-free; found ${imports.length}`);
   const { exports } = await WebAssembly.instantiate(module, {});
-  for (const name of ["memory", "cc2_alloc", "cc2_invoke", "cc2_dealloc"]) {
+  return createSessionOn({ module, imports, exports, memory: exports.memory, config, normalizedSelectionLimit, searchSeed });
+}
+
+/**
+ * The same session on the threaded build (scripts/build-wasm-threads.mjs, host src-js/cc2-wasm-threads.mjs).
+ * `startThread({ module, memory, tid, startArg })` starts one helper thread in a new worker. Responses are the same
+ * as the import-free build's; only `search_threads` decides how many helpers the search uses.
+ */
+export async function createCc2WasmThreadedSession({ wasmBytes, startThread, config = null, selectionLimit, searchSeed }) {
+  if (!(wasmBytes instanceof ArrayBuffer) && !ArrayBuffer.isView(wasmBytes)) throw new TypeError("wasmBytes is required");
+  if (typeof startThread !== "function") throw new TypeError("startThread is required");
+  const normalizedSelectionLimit = normalizeSelectionLimit(selectionLimit);
+  const { module, memory, exports, threadsStarted } = await instantiateThreadedWasm({ wasmBytes, startThread });
+  const session = createSessionOn({ module, imports: WebAssembly.Module.imports(module), exports, memory, config, normalizedSelectionLimit, searchSeed });
+  return Object.freeze({ ...session, threaded: true, threadsStarted });
+}
+
+function createSessionOn({ module, imports, exports, memory, config, normalizedSelectionLimit, searchSeed }) {
+  for (const name of ["cc2_alloc", "cc2_invoke", "cc2_dealloc"]) {
     if (!(name in exports)) throw new Error(`CC2 WASM export missing: ${name}`);
   }
+  if (!(memory instanceof WebAssembly.Memory)) throw new Error("CC2 WASM export missing: memory");
+  // TextDecoder rejects views of a SharedArrayBuffer (threaded build): copy those first.
+  const shared = typeof SharedArrayBuffer === "function" && memory.buffer instanceof SharedArrayBuffer;
   let closed = false;
 
   function invoke(request) {
     if (closed) throw new Error("CC2 WASM session is closed");
     const input = encoder.encode(JSON.stringify(request));
     const inputPointer = exports.cc2_alloc(input.length);
-    new Uint8Array(exports.memory.buffer, inputPointer, input.length).set(input);
+    new Uint8Array(memory.buffer, inputPointer, input.length).set(input);
     let outputPointer;
     try {
       outputPointer = exports.cc2_invoke(inputPointer, input.length);
     } finally {
       exports.cc2_dealloc(inputPointer, input.length);
     }
-    const header = new DataView(exports.memory.buffer, outputPointer, 4);
+    const header = new DataView(memory.buffer, outputPointer, 4);
     const length = header.getUint32(0, true);
     try {
-      const response = JSON.parse(decoder.decode(new Uint8Array(exports.memory.buffer, outputPointer + 4, length)));
+      const bytes = new Uint8Array(memory.buffer, outputPointer + 4, length);
+      const response = JSON.parse(decoder.decode(shared ? bytes.slice() : bytes));
       if (!response?.ok) throw new Error(`CC2 WASM request failed: ${response?.error ?? "unknown"}`);
       return response.value;
     } finally {
@@ -77,7 +101,7 @@ export async function createCc2WasmSession({ wasmBytes, config = null, selection
         error.moveInfo = suggestion.move_info ?? null;
         throw error;
       }
-      return { suggestion, peakMemoryBytes: exports.memory.buffer.byteLength };
+      return { suggestion, peakMemoryBytes: memory.buffer.byteLength };
     },
     async decideF14({ request, profile }) {
       return runF14Search({ request, profile, startOp: "f14_start" });
@@ -103,7 +127,9 @@ export async function createCc2WasmSession({ wasmBytes, config = null, selection
       if (started?.type === "f14_decision") return started;
       // A time budget is clocked here, like CC2's THINK TIME: work until the
       // deadline, then rank what the search has (the WASM module has no clock).
-      // The 8-selection unit bounds how far past the deadline one unit can run.
+      // The 8-selection unit bounds how far past the deadline one unit can run
+      // (plus up to K - 1 draws under `search_batch_size` K, whose batches
+      // follow the request's selection count, not the unit).
       // A selection budget has no deadline, so it takes larger units: the
       // search result is the same, and each unit is one JSON round trip.
       if (profile?.budget?.mode === "time") {
