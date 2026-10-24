@@ -5,7 +5,10 @@ import { createGame, toS2GuiState } from "../cc2-gui/game.mjs";
 import { guiStateToCanonical } from "../src-js/gui-state.mjs";
 import { createS2AmountOnlyDecisionState } from "../src-js/s2-amount-only-decision-state.mjs";
 import { analyzeSimpleS2FinalPlacements } from "../src-js/simple-s2-bot.mjs";
-import { assertGatedChampionResponse } from "../src-js/champion-parameters.mjs";
+import { canonicalize } from "../scripts/cs1.mjs";
+import { assertGatedChampionResponse, championVisibleState } from "../src-js/champion-parameters.mjs";
+import { decisionStateToSyntheticGui } from "../src-js/s2-amount-only-decision-state.mjs";
+import { applyTransition } from "../src-js/transition.mjs";
 import { isChampionInputSpeculationHit } from "../src-js/gui-input-match.mjs";
 import { championInputMoves, createChampionInputRequest, predictChampionNextRequest } from "../src-js/input-champion-decision.mjs";
 import { createF14LeafConversionGatedProfile } from "../src-js/s2-f14-compat-browser.mjs";
@@ -185,4 +188,67 @@ test("a first HOLD at the boundary leaves 12 public pieces, so one more piece is
     assert.deepEqual(predicted.request.start.queue, boundaryQueue.slice(2));
     assert.equal(predicted.request.start.hold, boundaryQueue[0]);
   }
+});
+
+// The real next position: the predicted lock, then the /2 refill of one new
+// bag when fewer than 14 pieces (current included) remain.
+function realNextRequest(decision, placement, queueDepth, newBag = [..."ZSJLTIO"]) {
+  const state = { ...guiStateToCanonical(decisionStateToSyntheticGui(decision)), rulesetId: decision.rulesetId };
+  const { nextState } = applyTransition(state, { kind: "placement", placement }, decision.rulesetId);
+  const next = createS2AmountOnlyDecisionState(nextState);
+  const publicQueue = [next.pieces.current, ...next.pieces.known];
+  const refilled = publicQueue.length < 14
+    ? { ...next, pieces: { ...next.pieces, known: [...next.pieces.known, ...newBag] } } : next;
+  return createChampionInputRequest(championVisibleState(refilled, queueDepth), { requestId: "real", profile, queueDepth,
+    bagState: "public-below-14", publicQueue: [refilled.pieces.current, ...refilled.pieces.known] });
+}
+
+test("below QUEUE 14 the predicted next start carries the public bag state of the real one", () => {
+  const { decision, response } = boundaryPosition();
+  const base = guiStateToCanonical(toS2GuiState(createGame(1)));
+  const state = { ...base, pieces: { ...base.pieces, current: boundaryQueue[0], known: boundaryQueue.slice(1), hold: null, holdAvailable: true } };
+  const holdMove = analyzeSimpleS2FinalPlacements(state, { topN: 40 }).moves.find((candidate) => candidate.placement.usedHold);
+  assert.ok(holdMove, "fixture queue has a legal placement with HOLD");
+  const publicQueue = [decision.pieces.current, ...decision.pieces.known];
+  for (const [placement, label] of [[response.selectedPlacement, "lock"], [holdMove.placement, "first HOLD"]]) {
+    for (const queueDepth of [2, 5, 6, 12]) {
+      const request = createChampionInputRequest(championVisibleState(decision, queueDepth), { requestId: "below-source",
+        profile, queueDepth, bagState: "public-below-14", publicQueue });
+      const predicted = predictChampionNextRequest(decision, request, { status: "move", selectedPlacement: placement }, {
+        profile, queueDepth, queueRefillsByBag: true, queuePrefixSpeculation: true, publicBagState: true,
+      });
+      assert.equal(predicted.queuePrefix, 0, `${label} QUEUE ${queueDepth}`);
+      const real = realNextRequest(decision, placement, queueDepth);
+      assert.equal(canonicalize(predicted.request.start), canonicalize(real.start), `${label} QUEUE ${queueDepth}`);
+      assert.equal(isChampionInputSpeculationHit({ start: predicted.request.start, execution: predicted.request.execution,
+        queuePrefix: 0 }, real), true, `${label} QUEUE ${queueDepth}`);
+    }
+  }
+  // Non-empty after the lock at QUEUE 5 (the rest of the first bag after O T S Z J is L).
+  const at5 = predictChampionNextRequest(decision, createChampionInputRequest(championVisibleState(decision, 5),
+    { requestId: "below-source", profile, queueDepth: 5, bagState: "public-below-14", publicQueue }), response,
+  { profile, queueDepth: 5, queueRefillsByBag: true, publicBagState: true });
+  assert.deepEqual(at5.request.start.randomizer, { type: "seven_bag", bag_state: ["L"] });
+  // Off keeps the empty bag state.
+  const off = predictChampionNextRequest(decision, createChampionInputRequest(championVisibleState(decision, 5),
+    { requestId: "below-source", profile, queueDepth: 5 }), response, { profile, queueDepth: 5, queueRefillsByBag: true });
+  assert.deepEqual(off.request.start.randomizer, { type: "seven_bag", bag_state: [] });
+});
+
+test("QUEUE 13 after a first HOLD at 14 public pieces skips speculation with the public bag state", () => {
+  const base = guiStateToCanonical(toS2GuiState(createGame(1)));
+  const state = { ...base, pieces: { ...base.pieces, current: boundaryQueue[0], known: boundaryQueue.slice(1), hold: null, holdAvailable: true } };
+  const decision = createS2AmountOnlyDecisionState(state);
+  const move = analyzeSimpleS2FinalPlacements(state, { topN: 40 }).moves.find((candidate) => candidate.placement.usedHold);
+  const response = { status: "move", selectedPlacement: move.placement };
+  const publicQueue = [decision.pieces.current, ...decision.pieces.known];
+  const on = createChampionInputRequest(championVisibleState(decision, 13), { requestId: "q13", profile, queueDepth: 13,
+    bagState: "public-below-14", publicQueue });
+  assert.equal(predictChampionNextRequest(decision, on, response, {
+    profile, queueDepth: 13, queueRefillsByBag: true, queuePrefixSpeculation: true, publicBagState: true,
+  }), null);
+  const off = createChampionInputRequest(championVisibleState(decision, 13), { requestId: "q13", profile, queueDepth: 13 });
+  assert.equal(predictChampionNextRequest(decision, off, response, {
+    profile, queueDepth: 13, queueRefillsByBag: true, queuePrefixSpeculation: true,
+  }).queuePrefix, 1);
 });

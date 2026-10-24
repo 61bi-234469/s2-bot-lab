@@ -120,10 +120,18 @@ function lockCount(session, id) {
 // after the decision. Off, or a function of the side id returning false, keeps
 // the earlier order: search after the plan, only when the planner took the
 // core's selection.
+//
+// `championPublicBagState` (default on) sends, below QUEUE DEPTH 14, the rest
+// of the last searched piece's 7-bag worked out from the whole public queue,
+// instead of an empty bag state that marks the cut queue's end as a bag
+// boundary. QUEUE 14 and deeper are unchanged. Off, or a function of the side
+// id returning false, keeps the empty bag state for that side.
 export function createGuiInputMatchHandlers({ runtime, now = () => performance.now(), championQueuePrefixSpeculation = true,
-  championEarlySpeculation = true }) {
+  championEarlySpeculation = true, championPublicBagState = true }) {
   const queuePrefixSpeculation = (id) => typeof championQueuePrefixSpeculation === 'function'
     ? championQueuePrefixSpeculation(id) === true : championQueuePrefixSpeculation === true;
+  const publicBagState = (id) => typeof championPublicBagState === 'function'
+    ? championPublicBagState(id) === true : championPublicBagState === true;
   const earlySpeculation = (id) => typeof championEarlySpeculation === 'function'
     ? championEarlySpeculation(id) === true : championEarlySpeculation !== false;
   let current = null;
@@ -438,6 +446,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
         queueRefillsByBag: INPUT_EXECUTION_PROFILE.id === 's2-input-execution/2',
         // The queue-prefix rerank came after profile-B and is not offered to it.
         queuePrefixSpeculation: queuePrefixSpeculation(id) && payload.profile.profileId !== PROFILE_B_PROFILE_ID,
+        publicBagState: publicBagState(id),
       });
     } catch {
       return null;
@@ -510,7 +519,9 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
               : realtimeCc2ThinkMs({ thinkMs: parameters.thinkMs, stepFrames: interval }) }, type);
           const payload = { sessionKey, type, engine: { botType: type, engineId: type },
             request: createChampionInputRequest(championVisibleState(initial.decision, parameters.queueDepth),
-              { requestId: `f14-input-${++session.f14Requests}`, profile, queueDepth: parameters.queueDepth }),
+              { requestId: `f14-input-${++session.f14Requests}`, profile, queueDepth: parameters.queueDepth,
+                ...(publicBagState(id) ? { bagState: 'public-below-14', publicQueue: [initial.decision.pieces.current,
+                  ...initial.decision.pieces.known].filter(piece => piece != null) } : {}) }),
             profile };
           let decided;
           let usedRerank = false;

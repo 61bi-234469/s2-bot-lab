@@ -14,8 +14,10 @@ import { applyTransition } from "./transition.mjs";
  */
 export function createChampionInputRequest(decision, { requestId, generation = 1,
   profile = createChampionBaseProfile(), queueDepth = F14_COMPAT_QUEUE_LIMIT,
-  bagState = "empty" } = {}) {
-  if (bagState !== "empty" && bagState !== "public") throw new Error("champion INPUT bagState must be empty or public");
+  bagState = "empty", publicQueue = null } = {}) {
+  if (bagState !== "empty" && bagState !== "public" && bagState !== "public-below-14") {
+    throw new Error("champion INPUT bagState must be empty, public or public-below-14");
+  }
   if (profile?.profileId !== ROOT_LEAF_CONVERSION_GATED_PROFILE && profile?.profileId !== PROFILE_B_PROFILE_ID) {
     throw new Error("champion INPUT requires the gated leaf-conversion profile or profile-B");
   }
@@ -39,11 +41,32 @@ export function createChampionInputRequest(decision, { requestId, generation = 1
   // Set after construction, exactly as createPublicCompatRequest does.
   request.selector.incoming = { pendingRows: incoming.pendingRows, dueThisLockRows: incoming.dueThisLockRows };
   const extended = extendChampionQueue(request, queueDepth);
+  if (bagState === "public-below-14") return withPublicBagBelowQueueLimit(extended, publicQueue, queueDepth);
+  // "public" fills in the bag at QUEUE 14 and deeper too; an offline diagnostic, not a product setting.
   if (bagState === "empty" || queueDepth < F14_COMPAT_QUEUE_LIMIT) return extended;
   // Below QUEUE 14 the visible NEXT is already cut, so its end is not a bag boundary.
   const remaining = publicSevenBagStateAfterQueue(queue, extended.start.queue.length);
   if (remaining === null) return extended;
   return { ...extended, start: { ...extended.start, randomizer: { type: "seven_bag", bag_state: remaining } } };
+}
+
+/**
+ * Below QUEUE 14 the searched queue is cut short of the public queue, so its
+ * end is generally not a bag boundary, which is what an empty bag_state tells
+ * the core. `publicQueue` (the current piece and the whole public NEXT, before
+ * the cut) gives the rest of the last searched piece's bag from public pieces
+ * alone. QUEUE 14 and deeper keep the empty bag_state, byte for byte.
+ */
+function withPublicBagBelowQueueLimit(request, publicQueue, queueDepth) {
+  if (queueDepth >= F14_COMPAT_QUEUE_LIMIT) return request;
+  const { queue } = request.start;
+  if (!Array.isArray(publicQueue) || publicQueue.length < queue.length
+      || queue.some((piece, index) => piece !== publicQueue[index])) {
+    throw new Error("champion INPUT public bag state needs the public queue the searched queue was cut from");
+  }
+  const remaining = publicSevenBagStateAfterQueue(publicQueue, queue.length);
+  if (remaining === null || remaining.length === 0) return request;
+  return { ...request, start: { ...request.start, randomizer: { type: "seven_bag", bag_state: remaining } } };
 }
 
 /**
@@ -119,22 +142,27 @@ export function championInputMoves(response, { current = null, holdAvailable = t
  * next queue needs a piece that is not visible yet.
  */
 export function predictChampionNextRequest(decision, request, response, { profile, queueDepth,
-  queueRefillsByBag = false, queuePrefixSpeculation = false } = {}) {
+  queueRefillsByBag = false, queuePrefixSpeculation = false, publicBagState = false } = {}) {
   if (response?.status !== "move" || response.selectedPlacement == null) return null;
   if (decision.incoming.dueThisLockRows > 0) return null;
   const state = { ...guiStateToCanonical(decisionStateToSyntheticGui(decision)), rulesetId: decision.rulesetId };
   const transition = applyTransition(state, { kind: "placement", placement: response.selectedPlacement }, decision.rulesetId);
   if (transition.legality?.legal !== true || transition.nextState?.pieces?.current == null) return null;
   const next = createS2AmountOnlyDecisionState(transition.nextState);
+  const publicQueue = [next.pieces.current, ...next.pieces.known].filter((piece) => piece != null);
   const predicted = createChampionInputRequest(championVisibleState(next, queueDepth),
-    { requestId: `${request.requestId}-next`, profile, queueDepth });
+    { requestId: `${request.requestId}-next`, profile, queueDepth,
+      ...(publicBagState === true ? { bagState: "public-below-14", publicQueue } : {}) });
   if (predicted.start.queue.length === request.start.queue.length) return { request: predicted, queuePrefix: 0 };
+  // The searched queue reaches past this public queue (QUEUE 13 after a first
+  // HOLD): the real request's bag state can be non-empty, which the
+  // empty-bag queue-prefix search below cannot stand in for.
+  if (publicBagState === true && queueDepth < F14_COMPAT_QUEUE_LIMIT) return null;
   // The /2 INPUT queue refills one 7-bag only when fewer than
   // INPUT_QUEUE_REFILL_BELOW pieces (current included) would remain. Without
   // a refill the next public queue is exactly this one, so the predicted
   // `start` is the real one; the core's rerank still checks it byte for byte.
   if (queueRefillsByBag !== true) return null;
-  const publicQueue = [next.pieces.current, ...next.pieces.known].filter((piece) => piece != null);
   if (predicted.start.queue.some((piece, index) => piece !== publicQueue[index])) return null;
   if (publicQueue.length >= INPUT_QUEUE_REFILL_BELOW) return { request: predicted, queuePrefix: 0 };
   // A refill appends a whole bag: the next search queue is this public queue
