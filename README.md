@@ -42,20 +42,20 @@ tuned and why, and how it plays.
 - CC2 S2 — REN attack gain gated leaf-conversion (former champion): the SPSA v2 weights, with the
   leaf conversion's REN (combo) bonuses counted from the pre-cancel attack so they can fire inside
   the search
-- Sold Slear — Legacy backup consistency (former champion): the REN attack gain design, with every
+- Sold Slear 1.0 — Legacy backup consistency (former champion): the REN attack gain design, with every
   search backup re-deriving the parent's value from its current best children so a demoted former
   best no longer leaves a stale value
-- Sold Slear — 2,048 selections with tree reuse (former champion): Sold Slear searched at 2,048
+- Sold Slear 1.1 — 2,048 selections with tree reuse (former champion): Sold Slear 1.0 searched at 2,048
   selections, continuing the previous move's search tree below the move actually played (tree
   reuse, at least 256 new selections per move)
-- Sold Slear — SPSA v7 APP-tuned weights (former champion): the tree-reuse design with ten
+- Sold Slear 1.2 — SPSA v7 APP-tuned weights (former champion): the tree-reuse design with ten
   evaluation weights (line clear types, the Quad well depth, B2B, combo attack, mini spin
   singles and wasted T) retuned by SPSA for attack per piece
-- Sold Slear — SPSA v10 guarded shape and height weights (former champion): the SPSA v7 design
+- Sold Slear 1.3 — SPSA v10 guarded shape and height weights (former champion): the SPSA v7 design
   plus a top-out fallback (when the best move tops out and no move is safe, the first move that
   does not top out is played), with ten shape and height weights (holes, covered cells, row
   transitions, height, spin clears, freedom) retuned by SPSA for attack per piece and wins
-- Sold Slear — SPSA v11 guarded clear and B2B weights (current champion): the SPSA v10 design
+- Sold Slear 1.4 — SPSA v11 guarded clear and B2B weights (current champion): the SPSA v10 design
   with the ten SPSA v7 weights retuned again for attack per piece and wins; development-only,
   not release-qualified
 
