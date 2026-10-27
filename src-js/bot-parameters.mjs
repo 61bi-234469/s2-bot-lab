@@ -141,25 +141,25 @@ export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
     parameters: F14_CORE_PARAMETERS,
   }),
   "cc2-s2-champion-backup": Object.freeze({
-    label: "Sold Slear — Legacy backup consistency (former champion)",
+    label: "Sold Slear 1.0 — Legacy backup consistency (former champion)",
     description: [
-      "由来：2026年9月30日〜10月3日のチャンピオンで、この時点の固定版を Sold Slear と名付けました。REN attack gain 版のチャンピオンを土台にしています。",
+      "由来：2026年9月30日〜10月3日のチャンピオンで、この時点の固定版を Sold Slear 1.0 と名付けました。REN attack gain 版のチャンピオンを土台にしています。",
       "調整・意図：探索木で、いちばん良かった手の値が下がっても親の値に反映されず、古い値が残ることがありました。値を更新するたびに親の値を子から計算し直し、古い値が残らないように直しました。評価の重みは REN attack gain 版のままです（kappa=0.1164, H=8, 評価重み 16 個 + REN 追加火力）。",
       "特徴：判断の仕組みと評価は REN attack gain 版と同じで、探索の値の更新だけが正しくなっています。開発版で、正式な評価（release-qualified）は受けていません。",
     ].join("\n"),
     parameters: F14_CORE_PARAMETERS,
   }),
   "cc2-s2-champion-tree-reuse": Object.freeze({
-    label: "Sold Slear — 2,048 selections with tree reuse (former champion)",
+    label: "Sold Slear 1.1 — 2,048 selections with tree reuse (former champion)",
     description: [
-      "由来：2026年10月3日〜10日のチャンピオンです。Sold Slear（Legacy backup consistency）を土台にしています。",
-      "調整・意図：評価はそのままで、探索数を 512 から 2,048 に増やしました。前の手で探索した木のうち、実際に指した手の先を次の手に引き継ぎます（tree reuse、新しい探索は最低 256）。引き継ぎの条件に合う局面では、新しく探索する量を減らせます。評価の重みは Sold Slear と同じです（REN attack gain 版の kappa=0.1164, H=8, 評価重み 16 個 + REN 追加火力）。",
+      "由来：2026年10月3日〜10日のチャンピオンです。Sold Slear 1.0（Legacy backup consistency）を土台にしています。",
+      "調整・意図：評価はそのままで、探索数を 512 から 2,048 に増やしました。前の手で探索した木のうち、実際に指した手の先を次の手に引き継ぎます（tree reuse、新しい探索は最低 256）。引き継ぎの条件に合う局面では、新しく探索する量を減らせます。評価の重みは Sold Slear 1.0 と同じです（REN attack gain 版の kappa=0.1164, H=8, 評価重み 16 個 + REN 追加火力）。",
       "特徴：探索の予算を増やした構成です。探索量は SELECTION で、置く間隔は PPS で調整できます。開発版で、正式な評価（release-qualified）は受けていません。",
     ].join("\n"),
     parameters: CHAMPION_PARAMETERS,
   }),
   "cc2-s2-champion-spsa-v7": Object.freeze({
-    label: "Sold Slear — SPSA v7 APP-tuned weights (former champion)",
+    label: "Sold Slear 1.2 — SPSA v7 APP-tuned weights (former champion)",
     description: [
       "由来：2026年10月10日〜20日のチャンピオンです。2,048 selections with tree reuse 版を土台にしています。",
       "調整・意図：1 手あたりの火力（APP）を目的にした自己対戦による自動調整（SPSA v7）で、ライン消去の種類ごとの重み（1〜4 ライン）、Quad 用の縦穴の深さ、B2B の維持と継続、コンボ火力、ミニスピンの 1 ライン消去、T の無駄の 10 個を決め直しました。1 ラインだけの通常消去は加点から小さな減点に変わりました。探索の設定（2,048 selections、tree reuse）は土台と同じです。",
@@ -168,7 +168,7 @@ export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
     parameters: CHAMPION_PARAMETERS,
   }),
   "cc2-s2-champion-spsa-v10": Object.freeze({
-    label: "Sold Slear — SPSA v10 guarded shape and height weights (former champion)",
+    label: "Sold Slear 1.3 — SPSA v10 guarded shape and height weights (former champion)",
     description: [
       "由来：開発用の評価で 2026年10月19日〜20日のチャンピオンです（GUI には 10月20日に追加）。SPSA v7 版に、詰む局面での救済（rescue top-out fallback）を加えたものを土台にしています。",
       "調整・意図：救済は、いちばん良い手がその場で詰み、安全な候補も無いときだけ、その場で詰まない候補に切り替えます。そのうえで、v7 が触れなかった評価の重み 10 個（穴とその上のブロック、行の切れ目、高さ 3 段階、スピン消去 1〜3 ライン、自由度）を、APP に勝敗の項を加えた自動調整（SPSA v10）で決め直しました。",
@@ -177,7 +177,7 @@ export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
     parameters: CHAMPION_PARAMETERS,
   }),
   "cc2-s2-champion": Object.freeze({
-    label: "Sold Slear — SPSA v11 guarded clear and B2B weights (current champion)",
+    label: "Sold Slear 1.4 — SPSA v11 guarded clear and B2B weights (current champion)",
     description: [
       "由来：2026年10月20日からの現チャンピオンです。SPSA v10 版を土台にしています。",
       "調整・意図：v7 が APP だけを目的に決めた重み 10 個（ライン消去の種類ごとの重み 1〜4 ライン、Quad 用の縦穴の深さ、B2B の維持と継続、コンボ火力、ミニスピンの 1 ライン消去、T の無駄）を、APP に勝敗の項を加えた自動調整（SPSA v11）で決め直しました。1 ラインだけの通常消去は小さな減点からほぼ 0 に戻り、B2B の維持の加点はやや下がり、T の無駄の減点は強くなりました。",
