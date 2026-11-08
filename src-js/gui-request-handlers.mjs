@@ -56,7 +56,8 @@ const CC2_LABELS = Object.freeze(Object.fromEntries(["cc2-raw", "cc2-chouhy", "c
  * Transport-neutral browser API. Native CC2 engines are deliberately absent;
  * callers get a stable capability response instead of an import-time failure.
  */
-export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = () => performance.now(), wait = defaultWait } = {}) {
+export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = () => performance.now(), wait = defaultWait,
+  rgSpikePool = null } = {}) {
   const cc2Runtime = cc2 ?? (proposeCc2 === null ? null : {
     propose: proposeCc2,
     closeSessions: async () => {},
@@ -64,7 +65,8 @@ export function createGuiRequestHandlers({ cc2 = null, proposeCc2 = null, now = 
   let session = null;
   let sessionGeneration = 0;
   let publicRequestSequence = 0;
-  const inputMatches = createGuiInputMatchHandlers({ runtime: cc2Runtime, now });
+  // `rgSpikePool()` starts the spike worker pool of RG (EXPERIMENTAL) for one INPUT side (the Pages host's Web Workers).
+  const inputMatches = createGuiInputMatchHandlers({ runtime: cc2Runtime, now, championRgSpikeFactory: rgSpikePool });
 
   return Object.freeze({
     async handle({ method, path, body = null }) {

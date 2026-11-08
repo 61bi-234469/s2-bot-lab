@@ -65,9 +65,17 @@ THINK TIME runs without tree reuse.
 MULTITHREAD (off by default, on the champion and the 2,048-selection former champions) expands the
 search in batches of eight leaves on four threads. Batching changes how the search draws, so with
 MULTITHREAD on the bot can choose a different move than with it off at the same SELECTION.
+RG (EXPERIMENTAL) (off by default, on the current champion only, TTRM INPUT matches only) re-ranks
+each move among the champion's near-equal candidates by a spike-stress search: after a large incoming
+spike, the search scores each candidate by the final board height plus the garbage still pending (or a
+failure value), and the bot switches to a candidate whose score is clearly lower, never to one with less
+estimated attack. It is experimental: no strength claim is made for it. It waits for that search
+on every move, so at a fast PPS the expected effect may not appear; there is no PPS limit. Each side
+with it on starts three spike-search workers for the round and closes them when the round ends.
 The Pages build runs these Cold Clear 2 entries
 in browser module workers. It bundles three
-import-free WebAssembly engines and the matching S2 configurations, so the browser entries do not
+import-free WebAssembly engines (plus the import-free spike-stress search of RG (EXPERIMENTAL), loaded
+only when a side turns it on) and the matching S2 configurations, so the browser entries do not
 require a native executable or the local Node server. WebAssembly and module-worker support are
 required in the browser.
 
@@ -91,12 +99,19 @@ npm start
 
 Open <http://localhost:4173/>. The local Node server can also use native engines; provide paths through
 `CC2_RAW_BINARY`, `CC2_CHOUHY_BINARY`, or `CC2_S2_BINARY`; no machine-specific
-path is used as a fallback.
+path is used as a fallback. RG (EXPERIMENTAL) reads the spike-stress WASM from its build output
+(below), or from `--spike-wasm=<path>` / `CC2_SPIKE_WASM`; without it the server refuses that setting.
 
 To build the Pages artifact locally:
 
 ```powershell
 npm run build-pages
+```
+
+The spike-stress WASM of RG (EXPERIMENTAL) is required by `build-pages`:
+
+```powershell
+cargo build --release --target wasm32-unknown-unknown --manifest-path bot/cc2-spike-wasm/Cargo.toml --lib
 ```
 
 The threaded S2 engine for MULTITHREAD is optional and built separately, before `build-pages`:
@@ -111,7 +126,7 @@ by default. Pass `--include-environment` only when those host details are
 intentionally part of a local report.
 
 The generated `_site/` directory contains the browser bundle, the three WebAssembly engines (plus
-the threaded S2 engine when built), the MULTITHREAD service worker, their configuration, and a
+the threaded S2 engine when built), the RG (EXPERIMENTAL) spike-stress WASM and its worker, the MULTITHREAD service worker, their configuration, and a
 matching third-party notice file. The browser bundle has no Node built-in
 dependency.
 

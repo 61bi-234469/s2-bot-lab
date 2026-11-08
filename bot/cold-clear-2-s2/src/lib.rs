@@ -34,6 +34,9 @@ pub mod native_s2;
 pub mod f14_compat;
 pub mod s2_core;
 pub mod s2_eval;
+// Spike-stress beam search with exact S2 garbage (in WASM only in the bot/cc2-spike-wasm build).
+#[cfg(any(not(target_arch = "wasm32"), feature = "spike-wasm"))]
+pub mod spike_stress;
 pub mod s2_search;
 #[cfg(not(target_arch = "wasm32"))]
 mod sync;
@@ -41,7 +44,7 @@ mod sync;
 #[cfg(any(not(target_arch = "wasm32"), all(target_os = "wasi", feature = "wasm-threads")))]
 mod search_pool;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(feature = "spike-wasm")))] // the champion ABI; not in the spike WASM
 pub mod wasm;
 
 pub use bot::BotConfig;

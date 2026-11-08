@@ -165,6 +165,7 @@ impl F14Driver {
             if let (Some(root), Some(bot)) =
                 (self.prepared.root_session.as_ref(), self.prepared.bot.as_ref())
             {
+                bot.observe_published_root(root);
                 // A failure is published into the session and reported by finish.
                 let _ = root.complete_early(|| bot.suggest());
             }

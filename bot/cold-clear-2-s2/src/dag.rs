@@ -693,7 +693,7 @@ impl<E: Evaluation> Dag<E> {
         rng: &mut R,
         enable_s2_b2b_surge: bool,
     ) -> Option<Selection<E>> {
-        self.select_with_surge_root_impl(speculate, exploration, rng, enable_s2_b2b_surge, None)
+        self.select_with_surge_root_impl(speculate, exploration, rng, enable_s2_b2b_surge, None, None)
             .ok()
             .flatten()
     }
@@ -712,7 +712,25 @@ impl<E: Evaluation> Dag<E> {
     where
         E::Domain: domain::LegacyRootDomain,
     {
-        self.select_with_surge_root_impl(speculate, exploration, rng, enable_s2_b2b_surge, root_index)
+        self.select_with_surge_root_impl(speculate, exploration, rng, enable_s2_b2b_surge, root_index, None)
+    }
+
+    /// As `select_with_surge_root`, and also reports the root child the draw
+    /// chose (after mapping) even when the descent fails deeper, for the
+    /// opt-in per-child root draw diagnostic. Same RNG use and selection.
+    pub(crate) fn select_with_surge_root_traced<R: rand::Rng + ?Sized>(
+        &self,
+        speculate: bool,
+        exploration: f64,
+        rng: &mut R,
+        enable_s2_b2b_surge: bool,
+        root_index: Option<&dyn RootSelectionMapper>,
+        root_drawn: &mut Option<Action<E>>,
+    ) -> Result<Option<Selection<E>>, CompatError>
+    where
+        E::Domain: domain::LegacyRootDomain,
+    {
+        self.select_with_surge_root_impl(speculate, exploration, rng, enable_s2_b2b_surge, root_index, Some(root_drawn))
     }
 
     #[cfg(test)]
@@ -724,7 +742,7 @@ impl<E: Evaluation> Dag<E> {
         enable_s2_b2b_surge: bool,
         root_index: Option<&dyn RootSelectionMapper>,
     ) -> Result<Option<Selection<E>>, CompatError> {
-        self.select_with_surge_root_impl(speculate, exploration, rng, enable_s2_b2b_surge, root_index)
+        self.select_with_surge_root_impl(speculate, exploration, rng, enable_s2_b2b_surge, root_index, None)
     }
 
     fn select_with_surge_root_impl<R: rand::Rng + ?Sized>(
@@ -734,6 +752,7 @@ impl<E: Evaluation> Dag<E> {
         rng: &mut R,
         enable_s2_b2b_surge: bool,
         root_index: Option<&dyn RootSelectionMapper>,
+        mut root_drawn: Option<&mut Option<Action<E>>>,
     ) -> Result<Option<Selection<E>>, CompatError> {
         puffin::profile_function!();
         let mut layers = vec![&*self.top_layer];
@@ -766,6 +785,9 @@ impl<E: Evaluation> Dag<E> {
                     if root_action.is_none() {
                         root_action = Some(placement);
                         root_draw_index = Some(draw_index);
+                        if let Some(out) = root_drawn.as_mut() {
+                            **out = Some(placement);
+                        }
                     }
                     if let Some(id) = E::Domain::link_id(target) {
                         game_state = layer.next().kind.key(id).expect("layer-local S2 node missing");

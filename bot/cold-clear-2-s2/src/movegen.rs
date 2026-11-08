@@ -477,6 +477,10 @@ pub fn find_moves(board: &Board, piece: Piece, enable_direct_180: bool) -> Vec<(
 pub enum RootEntry {
     Normal,
     SpawnBufferFallback,
+    /// Every rotation and column dropped from the highest in-bounds row of the 40-row board, with no spawn
+    /// ceiling: the reachability of the JS public placement list (`listS2AmountOnlyPublicReachablePlacements`).
+    /// Only the spike-stress search (`crate::spike_stress`) uses it; the bot's own roots never do.
+    Sky,
 }
 
 pub fn find_moves_complete(
@@ -643,12 +647,20 @@ fn find_moves_in(
     let MovegenWorkspace { queue, values, underground_locks } = workspace;
     let heights = column_heights(board);
     let mut locks = Vec::with_capacity(64);
-    let mut collision_map = CollisionMaps::new(board, piece).with_ceiling(
-        if entry == RootEntry::SpawnBufferFallback { 21 } else { 20 },
-    );
+    let sky = entry == RootEntry::Sky;
+    let mut collision_map = if sky {
+        // Cells at row 40 and above are walls; the pivot bound then never binds.
+        let walled = Board { cols: board.cols.map(|c| c | !0u64 << 40) };
+        CollisionMaps::new(&walled, piece).with_ceiling(44)
+    } else {
+        CollisionMaps::new(board, piece).with_ceiling(
+            if entry == RootEntry::SpawnBufferFallback { 21 } else { 20 },
+        )
+    };
     collision_map.canonical_rotation = witnesses.is_some();
 
-    let fast_mode = board.cols.iter().all(|&c| c.leading_zeros() > 64 - 16);
+    // Sky seeds every rotation and column from above the stack, as the shallow-board fast mode does.
+    let fast_mode = sky || board.cols.iter().all(|&c| c.leading_zeros() > 64 - 16);
     if entry == RootEntry::SpawnBufferFallback && fast_mode {
         debug_assert!(!fast_mode, "spawn buffer fallback requires a blocked normal root");
         return CompleteRootMoves { moves: Vec::new(), queue_exhausted: true };
@@ -661,11 +673,12 @@ fn find_moves_in(
             Rotation::West,
         ] {
             for x in 0..10 {
+                let top = rotation.rotate_cells(piece.cells()).iter().map(|&(_, dy)| dy).max().unwrap_or(0);
                 let mut location = PieceLocation {
                     piece,
                     rotation,
                     x,
-                    y: 19,
+                    y: if sky { 39 - top } else { 19 },
                 };
                 if collision_map.obstructed(location) {
                     continue;
@@ -678,7 +691,7 @@ fn find_moves_in(
                 };
 
                 let mut update_position =
-                    update_position(queue, values, fast_mode, &heights);
+                    update_position(queue, values, fast_mode && !sky, &heights);
 
                 if let Some(mv) = shift(location, &collision_map, -1) {
                     if witnesses.is_some() && mv.location.drop_distance(board)==0 { record_s2_drop(&mut witnesses,board,mv,distance as u32); }
@@ -760,7 +773,7 @@ fn find_moves_in(
         let sds = underground_locks.get(&key).unwrap_or(expand.soft_drops);
         underground_locks.set(key, expand.soft_drops.min(sds));
 
-        let mut update_position = update_position(queue, values, fast_mode, &heights);
+        let mut update_position = update_position(queue, values, fast_mode && !sky, &heights);
 
         update_position(dropped, expand.soft_drops + drop_dist as u32);
 
@@ -1336,6 +1349,16 @@ impl CollisionMaps {
             .unwrap_or(true);
         v
     }
+}
+
+/// `find_native_s2_moves`'s witnesses before its sort and dedup, in generation order, for the spike-stress
+/// search, which keeps one witness per lock (`crate::spike_stress::distinct_locks`). Placed after the generator
+/// so no line above it moved; compiled where `spike_stress` is.
+#[cfg(any(not(target_arch = "wasm32"), feature = "spike-wasm"))]
+pub(crate) fn native_s2_witnesses_unsorted(board: &Board, piece: Piece, entry: RootEntry) -> Vec<NativeS2Move> {
+    let mut sink = (std::rc::Rc::new(*board), Vec::new());
+    find_moves_core(board, piece, true, entry, Some(&mut sink));
+    sink.1
 }
 
 #[cfg(test)]

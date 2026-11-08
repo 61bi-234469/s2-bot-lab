@@ -138,6 +138,10 @@ const BOT_PARAMETER_GROUPS = Object.freeze({
     note: "SELECTION と THINK TIME は併用でき、先に到達した方で探索を終了します。",
   }),
   input: Object.freeze({ label: "INPUT" }),
+  experimental: Object.freeze({
+    label: "EXPERIMENTAL",
+    note: "実験的な設定です。既定は OFF で、強くなることは確かめていません。PPS が速いと期待した効果が得られないことがあります。",
+  }),
 });
 const SEARCH_BUDGET_VALIDATION_NOTE = "SELECTIONまたはTHINK TIMEを1つ以上ONにしてください。";
 // B2B charging as resolved by the server from the ruleset the GUI runs under.
@@ -2080,7 +2084,13 @@ async function startSeriesGame() {
   });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error ?? "match start failed");
-  if (generation !== matchGeneration) return;
+  if (generation !== matchGeneration) {
+    // A RESET while the round was starting: close what that start opened (its core sessions and RG pools).
+    if (inputMode && typeof body.sessionId === "string") void fetch(`${INPUT_MATCH_ENDPOINT}/close`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId: body.sessionId }),
+    }).catch(() => {});
+    return;
+  }
   if (matchSeries.replayMeta === null && body.replayMeta !== null && body.replayMeta !== undefined) {
     matchSeries.replayMeta = structuredClone(body.replayMeta);
   }

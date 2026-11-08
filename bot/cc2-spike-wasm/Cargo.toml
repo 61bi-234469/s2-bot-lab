@@ -1,0 +1,24 @@
+[package]
+name = "cc2-spike-wasm"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "The spike-stress search of cold-clear-2-s2 as an import-free WASM module (RG in the browser)"
+publish = false
+
+# Its own workspace: the `spike-wasm` feature of cold-clear-2-s2 is enabled only in this build, so the champion
+# WASM (built from bot/cold-clear-2-s2) is unchanged.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+cold-clear-2-s2 = { path = "../cold-clear-2-s2", features = ["spike-wasm"] }
+serde_json = "1.0.64"
+
+[patch.crates-io]
+instant = { path = "../instant-wasm-safe" }
+
+[profile.release]
+codegen-units = 1

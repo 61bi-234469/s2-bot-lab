@@ -53,6 +53,19 @@ export const MULTITHREAD_PARAMETER = Object.freeze({
 });
 const CHAMPION_PARAMETERS = Object.freeze([...F14_CORE_PARAMETERS.map((parameter) =>
   parameter.key === "selectionLimit" ? Object.freeze({ ...parameter, defaultValue: 2048 }) : parameter), MULTITHREAD_PARAMETER]);
+// RG (EXPERIMENTAL): the guarded spike re-rank RG on the current champion in TTRM INPUT
+// (src-js/gui-input-match.mjs `championRgSpikeFactory`). Off by default and left out of the parameters while off, as
+// MULTITHREAD. Experimental: no strength claim is made for it, and it waits for RG on every move.
+export const RG_PARAMETER = Object.freeze({
+  key: "rgEnabled",
+  label: "RG (EXPERIMENTAL)",
+  group: "experimental",
+  type: "boolean",
+  defaultValue: false,
+  omitDefault: true,
+  description: "実験的な機能です。既定は OFF で、現チャンピオンの TTRM INPUT の対局でのみ動きます。毎手、評価の近い候補手の中から、仮に大きなせり上がりを受けたときの探索で高さが低く見積もられる手に選び直します（spike re-rank RG）。その探索で見積もった火力が下がる手には切り替えません。強くなることは確かめていません。判断の待ち時間が増えるため、PPS が速いと期待した効果が得られないことがあります。PPS の制限はありません。",
+});
+const CURRENT_CHAMPION_PARAMETERS = Object.freeze([...CHAMPION_PARAMETERS, RG_PARAMETER]);
 
 /* Each GUI bot's display name and settings introduction, shared by both hosts.
    The project bots run oldest to newest; names describe the design, and only
@@ -183,7 +196,7 @@ export const BOT_PARAMETER_DEFINITIONS = Object.freeze({
       "調整・意図：v7 が APP だけを目的に決めた重み 10 個（ライン消去の種類ごとの重み 1〜4 ライン、Quad 用の縦穴の深さ、B2B の維持と継続、コンボ火力、ミニスピンの 1 ライン消去、T の無駄）を、APP に勝敗の項を加えた自動調整（SPSA v11）で決め直しました。1 ラインだけの通常消去は小さな減点からほぼ 0 に戻り、B2B の維持の加点はやや下がり、T の無駄の減点は強くなりました。",
       "特徴：判断の仕組み・救済・探索の設定（2,048 selections、tree reuse）は v10 版と同じで、評価の重み 10 個だけが違います。探索量は SELECTION で、置く間隔は PPS で調整できます。開発版で、正式な評価（release-qualified）は受けていません。",
     ].join("\n"),
-    parameters: CHAMPION_PARAMETERS,
+    parameters: CURRENT_CHAMPION_PARAMETERS,
   }),
   "s2-simple": Object.freeze({
     label: "S2 placement bot",
@@ -276,6 +289,9 @@ export function fairComparisonBotParameters(botType, input = {}) {
   // FAIR keeps the single-thread search: MULTITHREAD changes how the search draws (batches of 8).
   const multithread = definitionFor(normalizedType).parameters.some((parameter) => parameter.key === MULTITHREAD_PARAMETER.key)
     ? { [MULTITHREAD_PARAMETER.key]: false } : {};
+  // FAIR runs the plain search: RG (EXPERIMENTAL) is TTRM INPUT only.
+  const rg = definitionFor(normalizedType).parameters.some((parameter) => parameter.key === RG_PARAMETER.key)
+    ? { [RG_PARAMETER.key]: false } : {};
   return normalizeBotParameters(botType, {
     ...input,
     ppsEnabled: false,
@@ -283,6 +299,7 @@ export function fairComparisonBotParameters(botType, input = {}) {
     selectionLimit: 512,
     thinkTimeEnabled: false,
     ...multithread,
+    ...rg,
   });
 }
 
