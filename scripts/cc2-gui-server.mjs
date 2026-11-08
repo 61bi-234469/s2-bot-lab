@@ -13,6 +13,7 @@ import { assertChampionParameters, createChampionProfile, createChampionRequest,
 import { BOT_PARAMETER_DEFINITIONS, defaultBotParameters } from "../src-js/bot-parameters.mjs";
 import { isInputBotType } from '../src-js/input-bot-contract.mjs';
 import { createNativeInputRuntime } from '../src-js/native-input-runtime.mjs';
+import { createNodeSpikePool } from './rg-wasm/node-spike-pool.mjs';
 import {
   suggestionFailureOutcome,
 } from "../src-js/cc2-suggestion-failure.mjs";
@@ -341,7 +342,20 @@ function inputUnavailableReason(type) {
   try { inputEngineFor(type); return null; }
   catch (error) { return error.message; }
 }
-const inputMatches = createGuiInputMatchHandlers({ runtime: inputRuntime });
+// RG (EXPERIMENTAL): each round with the setting ON starts its own spike worker pool on worker_threads; the INPUT
+// handlers close it with the round. The WASM is read and hashed only when the first such round starts (nothing at
+// startup while the setting stays OFF), and every later round must read the same bytes.
+let rgSpikeWasm = null;
+async function rgSpikePool() {
+  rgSpikeWasm ??= Object.freeze({ label: "RG spike search", wasm: options.spikeWasm, wasmSha256: fileSha256IfPresent(options.spikeWasm) });
+  if (rgSpikeWasm.wasmSha256 === null) {
+    const missing = rgSpikeWasm.wasm;
+    rgSpikeWasm = null;
+    throw new Error(`RG spike search WASM artifact not found: ${missing}`);
+  }
+  return createNodeSpikePool({ wasm: readWasmBytesMatchingHash(rgSpikeWasm), workers: 3 });
+}
+const inputMatches = createGuiInputMatchHandlers({ runtime: inputRuntime, championRgSpikeFactory: rgSpikePool });
 const server = createServer(async (request, response) => {
   try {
     if (request.url.startsWith('/api/input-match/')) {
@@ -1426,6 +1440,7 @@ function parseArguments(args) {
   const chouhyBinaryArgument = args.find((arg) => arg.startsWith("--cc2-chouhy="));
   const s2BinaryArgument = args.find((arg) => arg.startsWith("--cc2-s2="));
   const f14WasmArgument = args.find((arg) => arg.startsWith("--f14-wasm="));
+  const spikeWasmArgument = args.find((arg) => arg.startsWith("--spike-wasm="));
   const portArgument = args.find((arg) => arg.startsWith("--port="));
   const executableSuffix = process.platform === "win32" ? ".exe" : "";
   const rawFallback = fileURLToPath(new URL(
@@ -1468,9 +1483,12 @@ function parseArguments(args) {
   const f14InputWasm = resolve(f14WasmLocator ?? f14WasmFallback);
   const f14Wasm = f14WasmLocator !== undefined ? resolve(f14WasmLocator)
     : f14ChampionBinary === null && existsSync(f14WasmFallback) ? f14WasmFallback : null;
+  // RG (EXPERIMENTAL)'s spike search WASM (bot/cc2-spike-wasm), also defaulting to the repository build output.
+  const spikeWasm = resolve(spikeWasmArgument?.slice("--spike-wasm=".length) ?? process.env.CC2_SPIKE_WASM ?? fileURLToPath(new URL(
+    "../bot/cc2-spike-wasm/target/wasm32-unknown-unknown/release/cc2_spike_wasm.wasm", import.meta.url)));
   const port = Number(portArgument?.slice("--port=".length) ?? 4173);
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new Error("port must be an integer from 1 to 65535");
-  return { rawBinary, chouhyBinary, s2Binary, f14ChampionBinary, f14Wasm, f14InputWasm, port };
+  return { rawBinary, chouhyBinary, s2Binary, f14ChampionBinary, f14Wasm, f14InputWasm, spikeWasm, port };
 }
 
 async function readJson(request) {

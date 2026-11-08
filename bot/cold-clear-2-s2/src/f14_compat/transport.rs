@@ -993,6 +993,15 @@ pub(crate) fn root_values_requested(raw: &Json) -> bool {
     raw.pointer("/diagnostics/rootValues") == Some(&json!(true))
 }
 
+/// Opt-in `"diagnostics": {"rootChildValues": true}`: a decide move response
+/// (selection budget, or a time budget's early finish) then carries
+/// `diagnostics.rootChildValues`, every Legacy root child's identity, value at
+/// publish and draws in this request, highest value first. Decisions are
+/// unchanged; a retained rerank does not carry it.
+pub(crate) fn root_child_values_requested(raw: &Json) -> bool {
+    raw.pointer("/diagnostics/rootChildValues") == Some(&json!(true))
+}
+
 pub fn decide(raw: Json, profile: &Profile, moves: &[Placement], search: SearchStats) -> Json {
     decide_limited(raw, profile, moves, search, None, None, 0)
 }

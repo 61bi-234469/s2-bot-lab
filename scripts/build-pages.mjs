@@ -51,7 +51,27 @@ await build({
   outfile: threadWorkerPath,
   minify: true,
 });
-const workerVersion = createHash("sha256").update(await readFile(workerPath)).update(await readFile(threadWorkerPath)).digest("hex").slice(0, 12);
+// RG (EXPERIMENTAL)'s spike search workers (cc2-gui/spike-worker.mjs), started only when a side turns it on.
+const spikeWorkerPath = resolve(site, "spike-worker.bundle.js");
+await build({
+  entryPoints: [resolve(repo, "cc2-gui/spike-worker.mjs")],
+  bundle: true,
+  platform: "browser",
+  format: "esm",
+  outfile: spikeWorkerPath,
+  minify: true,
+  plugins: [{ name: "spike-worker-browser-boundary", setup(buildApi) { buildApi.onResolve({ filter: /.*/ }, (args) => {
+    if (forbidden.test(args.path)) throw new Error(`spike worker bundle cannot resolve Node dependency ${args.path} from ${args.importer}`);
+    return undefined;
+  }); } }],
+});
+const workerVersion = createHash("sha256").update(await readFile(workerPath)).update(await readFile(threadWorkerPath))
+  .digest("hex").slice(0, 12);
+// RG (EXPERIMENTAL) is versioned on its own, so the CC2 worker URLs do not change with it: the spike worker bundle and
+// cc2_spike_wasm.wasm share one version, and the page checks the WASM against its digest before compiling it.
+const spikeWasmBytes = await readFile(resolve(repo, "bot/cc2-spike-wasm/target/wasm32-unknown-unknown/release/cc2_spike_wasm.wasm"));
+const spikeWasmSha256 = createHash("sha256").update(spikeWasmBytes).digest("hex");
+const spikeVersion = createHash("sha256").update(await readFile(spikeWorkerPath)).update(spikeWasmBytes).digest("hex").slice(0, 12);
 const appPath = resolve(site, "app.bundle.js");
 const result = await build({
   entryPoints: [resolve(repo, "cc2-gui/static-entry.mjs")],
@@ -61,7 +81,8 @@ const result = await build({
   outfile: appPath,
   metafile: true,
   minify: true,
-  define: { "globalThis.__CC2_WORKER_VERSION__": JSON.stringify(workerVersion) },
+  define: { "globalThis.__CC2_WORKER_VERSION__": JSON.stringify(workerVersion),
+    "globalThis.__CC2_SPIKE_VERSION__": JSON.stringify(spikeVersion), "globalThis.__CC2_SPIKE_WASM_SHA256__": JSON.stringify(spikeWasmSha256) },
   plugins: [{
     name: "pages-browser-boundary",
     setup(buildApi) {
@@ -102,7 +123,7 @@ await cp(resolve(repo, "cc2-gui/og-image.png"), resolve(site, "og-image.png"));
 await cp(resolve(repo, "cc2-gui/coi-sw.js"), resolve(site, "coi-sw.js"));
 await cp(resolve(repo, "fixtures/tuning/cc2-s2-spin-value-aligned.json"), resolve(site, "cc2-s2-spin-value-aligned.json"));
 await cp(resolve(repo, "fixtures/tuning/cc2-s2-spawn-integrity-substrate-v2.json"), resolve(site, "cc2-s2-spawn-integrity-substrate-v2.json"));
-const wasmArtifacts = ["cold_clear_2_s2", "cold_clear_2_upstream", "cold_clear_2_chouhy"];
+const wasmArtifacts = ["cold_clear_2_s2", "cold_clear_2_upstream", "cold_clear_2_chouhy", "cc2_spike_wasm"];
 const wasm = [];
 for (const name of wasmArtifacts) {
   const source = resolve(repo, "bot", name.replaceAll("_", "-"), "target/wasm32-unknown-unknown/release", `${name}.wasm`);

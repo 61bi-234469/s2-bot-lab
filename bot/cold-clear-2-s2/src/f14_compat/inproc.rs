@@ -266,7 +266,7 @@ fn prepare_inner(
             &profile.profile_id,
             profile.allocation_mode.as_deref(),
         );
-        let session = RootObjectiveSession::new_with_allocation_mode_and_scales(
+        let mut session = RootObjectiveSession::new_with_allocation_mode_and_scales(
             context,
             profile.decision_stage(),
             profile.budget.selections,
@@ -277,6 +277,9 @@ fn prepare_inner(
             profile.leaf_conversion_scale_f64(),
             profile.leaf_conversion_max_height_u32(),
         );
+        if f14::root_child_values_requested(&request) {
+            session.enable_root_draw_counts();
+        }
         if let Some(observation) = observation {
             session.attach_observation(observation);
         }
@@ -329,7 +332,17 @@ pub(crate) fn finish_with_hook(
     hook: Option<&f14::F14CancelHook>,
 ) -> Json {
     let reuse = prepared.reuse.as_ref().map(|report| report.to_json(prepared.profile.budget.selections));
+    let root_child_values = prepared
+        .root_session
+        .as_ref()
+        .filter(|_| f14::root_child_values_requested(&prepared.request))
+        .and_then(|session| session.root_child_values_json());
     let mut response = finish_response(prepared, moves, info, ended, hook);
+    if let Some(root_child_values) = root_child_values {
+        if response["status"] == "move" {
+            response["diagnostics"]["rootChildValues"] = root_child_values;
+        }
+    }
     if let Some(reuse) = reuse {
         if response["search"].is_object() {
             response["search"]["reuse"] = reuse;

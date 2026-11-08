@@ -524,6 +524,19 @@ impl RootDecisionStage {
     }
 }
 
+/// Per-child native root draws, with the child value at publish (the opt-in
+/// `diagnostics.rootChildValues`).
+#[derive(Default)]
+struct RootDrawCounts {
+    draws: HashMap<Placement, u64>,
+    total: u64,
+    published: Option<Vec<(Placement, f32)>>,
+}
+
+fn placement_identity(action: &Placement) -> Option<String> {
+    serde_json::to_value(action).ok().and_then(|value| super::canonicalize(&value).ok())
+}
+
 pub(crate) struct RootObjectiveSession {
     context: PublicRootLockContext,
     decision_stage: RootDecisionStage,
@@ -543,6 +556,7 @@ pub(crate) struct RootObjectiveSession {
     observation: Mutex<Option<RootObservation>>,
     pending_draw: Mutex<Option<PendingRootDraw>>,
     root_visits: Mutex<HashMap<usize, u64>>,
+    root_draw_counts: Option<Mutex<RootDrawCounts>>,
 }
 
 /// Typed adapter used only by the Legacy DAG root selector. Keeping the
@@ -609,6 +623,7 @@ impl RootObjectiveSession {
             observation: Mutex::new(None),
             pending_draw: Mutex::new(None),
             root_visits: Mutex::new(HashMap::new()),
+            root_draw_counts: None,
         }
     }
 
@@ -620,6 +635,51 @@ impl RootObjectiveSession {
 
     pub(crate) fn attach_observation(&self, observation: RootObservation) {
         *self.observation.lock() = Some(observation);
+    }
+
+    pub(crate) fn enable_root_draw_counts(&mut self) {
+        self.root_draw_counts = Some(Mutex::new(RootDrawCounts::default()));
+    }
+
+    pub(crate) fn root_draw_counts_enabled(&self) -> bool {
+        self.root_draw_counts.is_some()
+    }
+
+    pub(crate) fn record_root_draw(&self, action: Placement) {
+        let Some(slot) = self.root_draw_counts.as_ref() else { return; };
+        let mut counts = slot.lock();
+        *counts.draws.entry(action).or_insert(0) += 1;
+        counts.total += 1;
+    }
+
+    pub(crate) fn observe_published_root(&self, snapshot: LegacyRootSnapshot) {
+        let Some(slot) = self.root_draw_counts.as_ref() else { return; };
+        if let LegacyRootSnapshot::Expanded { actions } = snapshot {
+            slot.lock().published = Some(actions);
+        }
+    }
+
+    /// Display view of the root: every root child with its value at publish
+    /// and its draws, highest value first (stable on ties).
+    pub(crate) fn root_child_values_json(&self) -> Option<serde_json::Value> {
+        let counts = self.root_draw_counts.as_ref()?.lock();
+        let mut published = counts.published.clone()?;
+        published.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let children = published
+            .iter()
+            .map(|(action, value)| {
+                serde_json::json!({
+                    "identity": placement_identity(action),
+                    "value": f64::from(*value),
+                    "draws": counts.draws.get(action).copied().unwrap_or(0),
+                })
+            })
+            .collect::<Vec<_>>();
+        Some(serde_json::json!({
+            "schema": "cc2-s2-root-child-values/1",
+            "draws": counts.total,
+            "children": children,
+        }))
     }
 
     pub(crate) fn new_with_allocation_mode(

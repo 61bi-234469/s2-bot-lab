@@ -41,6 +41,8 @@ puffin-noop = { package = "puffin", path = "../puffin-noop" }
 [features]
 # wasm32-wasip1-threads builds only: batched-expansion threads through WASI threads (src/search_pool.rs).
 wasm-threads = []
+# bot/cc2-spike-wasm only: compiles spike_stress for wasm32 and leaves out the champion WASM ABI (src/wasm.rs).
+spike-wasm = []
 native-pressure-height-recovery = []
 native-root-first-expansion = []
 native-root-attack-tiebreak = ["native-root-first-expansion"]

@@ -133,6 +133,10 @@ impl Mode for Freestyle {
                 }
             }
             root.complete_work(&stats, || {
+                // Published once, after search and before the native suggestion.
+                if root.root_draw_counts_enabled() {
+                    root.observe_published_root(self.dag.legacy_root_snapshot());
+                }
                 self.dag.suggest(options.config.suggestion_count.clamp(1, 64))
             })?;
         }
@@ -141,6 +145,14 @@ impl Mode for Freestyle {
 }
 
 impl Freestyle {
+    /// Early finish (time budget): publish the root for the opt-in root draw
+    /// counts, as `complete_work` does when the selection budget completes.
+    pub(crate) fn observe_published_root(&self, root: &RootObjectiveSession) {
+        if root.root_draw_counts_enabled() {
+            root.observe_published_root(self.dag.legacy_root_snapshot());
+        }
+    }
+
     /// Tree reuse: the root's child moves in stored order, `None` before the
     /// root is expanded.
     pub(super) fn reuse_root_actions(&self) -> Option<Vec<Placement>> {
@@ -267,7 +279,31 @@ impl Freestyle {
         options: &BotOptions,
         observation: Option<&RootObjectiveSession>,
     ) -> Result<Option<crate::dag::Selection<'_, Eval>>, CompatError> {
-        let node = if let Some(root) = observation.filter(|root| {
+        let node = if let Some(root) = observation.filter(|root| root.root_draw_counts_enabled()) {
+            // Opt-in per-child draw diagnostic: the same mapper choice as the
+            // branches below, plus the drawn root child even when the descent
+            // fails deeper.
+            let permutation = crate::f14_compat::select::RootSelectionBinding::new(root);
+            let map: Option<&dyn crate::dag::RootSelectionMapper> =
+                if root.allocation_mode() == crate::f14_compat::select::AllocationMode::PermutationV1 {
+                    Some(&permutation)
+                } else {
+                    None
+                };
+            let mut root_drawn = None;
+            let node = self.dag.select_with_surge_root_traced(
+                options.speculate,
+                options.config.freestyle_exploitation,
+                &mut *self.rng.lock(),
+                options.config.enable_s2_b2b_surge,
+                map,
+                &mut root_drawn,
+            )?;
+            if let Some(action) = root_drawn {
+                root.record_root_draw(action);
+            }
+            node
+        } else if let Some(root) = observation.filter(|root| {
             root.allocation_mode() == crate::f14_compat::select::AllocationMode::PermutationV1
         }) {
             let map = crate::f14_compat::select::RootSelectionBinding::new(root);

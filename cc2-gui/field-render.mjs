@@ -395,6 +395,13 @@ export function formatInputExecutionTooltip(inputExecution) {
     lines.push(`経路未発見 ${counts.notFound}回 / 予測失効 ${counts.stale}回`);
     lines.push(`PPS期限超過 / PPS有効接地: ${rate(inputExecution.deadlineExceededLocks, inputExecution.pacedLocks)}`);
   }
+  // RG (EXPERIMENTAL): how often the spike re-rank changed the core's move, and the time it added.
+  const rg = inputExecution.rg;
+  if (rg && typeof rg === "object" && Number.isFinite(rg.decisions)) {
+    const share = rg.decisions > 0 ? ` (${(100 * rg.changed / rg.decisions).toFixed(1)}%)` : "";
+    const wait = rg.decisions > 0 ? `${(rg.ms / rg.decisions).toFixed(1)}ms` : "—";
+    lines.push(`RG（実験的）: 判断 ${rg.decisions}回 / 手を変えた ${rg.changed}回${share} / 待ち 平均 ${wait} / 計算結果の再利用 ${rg.cached}回`);
+  }
   if (fallback === null || typeof fallback !== "object") return lines.join("\n");
 
   const candidate = fallback.preferredCandidate ?? {};

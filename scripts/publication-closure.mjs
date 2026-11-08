@@ -28,6 +28,10 @@ const entryPoints = [
   "src-js/cc2-wasm-session-worker.mjs",
   // Helper threads of the threaded WASM: bundled by build-pages.mjs and started by cc2-worker.mjs.
   "cc2-gui/cc2-wasm-thread.mjs",
+  // RG (EXPERIMENTAL): the spike worker the server's pool starts by URL (scripts/rg-wasm/node-spike-pool.mjs);
+  // the page's spike worker (cc2-gui/spike-worker.mjs) is bundled by build-pages.mjs.
+  "scripts/rg-wasm/node-spike-worker.mjs",
+  "cc2-gui/spike-worker.mjs",
   // Timing-free F14 response comparison shared by the champion WASM tests.
   "scripts/f14-response-comparator.mjs",
   "scripts/cs1.mjs",
@@ -90,6 +94,8 @@ const allowedTrees = [
   "bot/cold-clear-2-s2/",
   "bot/cold-clear-2-upstream/",
   "bot/cold-clear-2-chouhy/",
+  // The spike-stress WASM of RG (EXPERIMENTAL), built by the Pages workflow.
+  "bot/cc2-spike-wasm/",
   "bot/instant-wasm-safe/",
   // parking_lot_core with a WASI thread parker, patched in by scripts/build-wasm-threads.mjs.
   "bot/parking-lot-core-wasi/",

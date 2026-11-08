@@ -1,5 +1,6 @@
 import { createGuiRequestHandlers } from "../src-js/gui-request-handlers.mjs";
 import { inputDecisionFingerprint as amountOnlyDecisionFingerprint } from "../src-js/input-decision-request.mjs";
+import { compileSpikeWasm, createSpikeWorkerPool, webWorkerSpikePort } from "../src-js/spike-wasm-client.mjs";
 
 let installed = false;
 
@@ -12,7 +13,7 @@ export function installStaticTransport() {
   const nativeFetch = window.fetch.bind(window);
   const wasmAvailable = typeof Worker === "function" && typeof WebAssembly === "object";
   const cc2 = wasmAvailable ? createStaticCc2Runtime() : null;
-  const handlers = createGuiRequestHandlers({ cc2 });
+  const handlers = createGuiRequestHandlers({ cc2, rgSpikePool: wasmAvailable ? createStaticRgSpikePool() : null });
   window.addEventListener("pagehide", () => { void cc2?.closeSessions(); }, { once: true });
   window.fetch = async (input, init) => {
     const request = new Request(input, init);
@@ -300,4 +301,36 @@ async function createWorkerSession({ WorkerType, engine, selectionLimit, resolve
       worker.terminate();
     },
   });
+}
+
+/** RG (EXPERIMENTAL) on the page: each call starts a pool of three spike Web Workers (spike-worker.bundle.js) over the
+ * import-free cc2_spike_wasm.wasm, fetched (with a time limit) and compiled once per page, and only when a side turns
+ * RG on. Both URLs carry the build's spike version; a built page also checks the WASM's SHA-256. The INPUT handlers
+ * close the pool with its round. */
+export function createStaticRgSpikePool({ WorkerType = globalThis.Worker, workers = 3, fetchTimeoutMs = 30_000 } = {}) {
+  let module = null;
+  const version = globalThis.__CC2_SPIKE_VERSION__ ?? "dev";
+  const expectedSha256 = globalThis.__CC2_SPIKE_WASM_SHA256__ ?? null;
+  const versioned = (path) => { const url = new URL(path, import.meta.url); url.searchParams.set("v", version); return url; };
+  return async function rgSpikePool() {
+    module ??= (async () => {
+      const abort = new AbortController();
+      const timer = setTimeout(() => abort.abort(), fetchTimeoutMs);
+      let bytes;
+      try {
+        const response = await fetch(versioned("./cc2_spike_wasm.wasm"), { signal: abort.signal });
+        if (!response.ok) throw new Error(`spike WASM ${response.status}`);
+        bytes = await response.arrayBuffer();
+      } catch (error) {
+        throw abort.signal.aborted ? new Error(`spike WASM did not load within ${fetchTimeoutMs} ms`) : error;
+      } finally { clearTimeout(timer); }
+      if (expectedSha256 !== null && globalThis.crypto?.subtle) {
+        const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((b) => b.toString(16).padStart(2, "0")).join("");
+        if (digest !== expectedSha256) throw new Error("spike WASM does not match this build");
+      }
+      return compileSpikeWasm(bytes);
+    })().catch((error) => { module = null; throw error; });
+    const workerUrl = versioned("./spike-worker.bundle.js");
+    return createSpikeWorkerPool({ wasm: await module, workers, startWorker: () => webWorkerSpikePort(workerUrl, WorkerType) });
+  };
 }

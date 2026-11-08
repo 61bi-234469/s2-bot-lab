@@ -7,7 +7,8 @@ export const INPUT_BOT_PROFILES = Object.freeze(Object.fromEntries([
   ['cc2-raw', 'cc2-order/1'],
   ['cc2-chouhy', 'cc2-order/1'],
   ['cc2-s2-f14', 'f14-amount-only/1'],
-  // The champion's gated F14 core decides; INPUT only plans reachability.
+  // The champion's gated F14 core decides; INPUT only plans reachability. With RG (EXPERIMENTAL) ON
+  // (src-js/bot-parameters.mjs) rule RG may put another root child first.
   ['cc2-s2-champion', 'f14-core-order/1'],
   // Former champions' profiles on the same core (comparison).
   ['cc2-s2-champion-profile-b', 'f14-core-order/1'],

@@ -16,7 +16,8 @@ import { HANDICAP_GARBAGE_ID, handicapColumnHeights, handicapGarbageCells,
   handicapRecord, normalizeHandicapGarbage } from './gui-1p-handicap-garbage.mjs';
 import { normalizeTurnMatch } from './gui-turn-match.mjs';
 import { championInputMoves, createChampionInputRequest, predictChampionNextRequest } from './input-champion-decision.mjs';
-import { F14_CORE_BOT_TYPES, PROFILE_B_PROFILE_ID, assertChampionParameters, assertF14CoreResponse, championVisibleState, createChampionProfile } from './champion-parameters.mjs';
+import { F14_CORE_BOT_TYPES, PROFILE_B_PROFILE_ID, assertChampionParameters, assertF14CoreResponse, championVisibleState, createChampionProfile, f14CoreBaseProfile } from './champion-parameters.mjs';
+import { createInputRg, normalizeRgWait, rgGuessIncoming, rgInputMoves } from './rg-input.mjs';
 
 const IDS = ['left', 'right'];
 const KEYS = new Set(['moveLeft', 'moveRight', 'softDrop', 'hardDrop', 'rotateCW', 'rotateCCW', 'rotate180', 'hold']);
@@ -46,6 +47,14 @@ const pieceIdentity = state => ({ board: state.decision.board, pieces: state.dec
 // The champion decides through the F14 core, whose amount-only selector reads
 // incoming rows; a CC2 proposal never sees them.
 const F14_CORE_TYPES = new Set(F14_CORE_BOT_TYPES);
+// The spike pools a round started for RG (EXPERIMENTAL); closing rejects their waiting requests.
+async function closeRgPools(session) {
+  const pools = session?.rgPools ?? [];
+  if (session) session.rgPools = [];
+  await Promise.allSettled(pools.map((pool) => pool.close()));
+}
+// A round that ended (complete or failed) releases its core sessions and its spike pools.
+const closeRound = (runtime, session) => Promise.allSettled([runtime.closeSessions({ sessionKeys: session.keys }), closeRgPools(session)]);
 const nativeInputState = (decision, parameters, type) => ({
   ...guiStateToCc2NativeStart(decisionStateToSyntheticGui(decision), { queueLimit: parameters.queueDepth }),
   ...(['cc2-raw', 'cc2-chouhy'].includes(type) ? { input_candidates: true } : {}),
@@ -126,14 +135,33 @@ function lockCount(session, id) {
 // instead of an empty bag state that marks the cut queue's end as a bag
 // boundary. QUEUE 14 and deeper are unchanged. Off, or a function of the side
 // id returning false, keeps the empty bag state for that side.
+//
+// `championRgSpike` (default off; checks only) re-ranks a gated
+// F14-core side's decisions with rule RG (src-js/rg-input.mjs): a function of
+// the side id returning a spike search client (src-js/spike-wasm-client.mjs)
+// turns RG on for that side, null keeps it off. Its requests then ask for the
+// root child values, a speculative search's RG starts as soon as that search
+// answers, and the decision reuses it when its key is unchanged. Not offered in
+// the bot lists; RG failures fail the round (no fallback move).
+// `championRgAudit(id, record)` (checks only) sees each RG decision.
+// `championRgSpikeFactory(id)` (async, returns a spike client with close()) serves the experimental GUI
+// setting RG (EXPERIMENTAL) (`rgEnabled`, src-js/bot-parameters.mjs): a side with it ON gets a pool started at
+// the round's start and closed when the round is replaced or closed. A host without one refuses the setting.
+// `championRgWait` (default "block"): "block" waits for RG on every decision as
+// before; "ready" or a number of ms (or a function of the side id returning one) uses RG only when its result is
+// already computed or arrives within that wait, else plays the core's move (src-js/rg-input.mjs createInputRg).
 export function createGuiInputMatchHandlers({ runtime, now = () => performance.now(), championQueuePrefixSpeculation = true,
-  championEarlySpeculation = true, championPublicBagState = true }) {
+  championEarlySpeculation = true, championPublicBagState = true, championRgSpike = null, championRgAudit = null, championRgWait = 'block',
+  championRgSpikeFactory = null }) {
   const queuePrefixSpeculation = (id) => typeof championQueuePrefixSpeculation === 'function'
     ? championQueuePrefixSpeculation(id) === true : championQueuePrefixSpeculation === true;
   const publicBagState = (id) => typeof championPublicBagState === 'function'
     ? championPublicBagState(id) === true : championPublicBagState === true;
   const earlySpeculation = (id) => typeof championEarlySpeculation === 'function'
     ? championEarlySpeculation(id) === true : championEarlySpeculation !== false;
+  const rgSpike = (id) => (typeof championRgSpike === 'function' ? championRgSpike(id) ?? null : null);
+  const rgWait = (id) => normalizeRgWait(typeof championRgWait === 'function' ? championRgWait(id) : championRgWait);
+  const withRgDiagnostics = (session, id, request) => (session.rg[id] ? { ...request, diagnostics: { rootChildValues: true } } : request);
   let current = null;
   let generation = 0;
   const ok = body => ({ status: 200, body });
@@ -171,12 +199,47 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           const previous = current;
           current = null;
           await runtime.closeSessions({ sessionKeys: previous?.keys ?? [] });
+          await closeRgPools(previous);
           if (sessionId !== `input-${generation}`) throw new Error('match-replaced');
           // The 1P handicap places its terrain before the round opens, so the
           // referee owns it and every later lock is compared against a board
           // that already has it. It is per-round: each game of an FT series and
           // each restart arrives here with its own seed.
           const handicapTerrain = handicap.enabled ? handicapColumnHeights(body.seed) : null;
+          // Any RG failure, a speculative one included, fails the round (the step loop throws session.failure).
+          const rgOwner = { session: null };
+          const rgFailed = (error) => { const s = rgOwner.session;
+            if (s && !s.closed && !s.failure && s.round.status === 'active') {
+              s.failure = `RG failed: ${error instanceof Error ? error.message : String(error)}`;
+              // The round has failed: release its core sessions and spike pools now, not only on an explicit close.
+              void closeRound(runtime, s);
+            } };
+          // The spike search of each RG side: the checks' `championRgSpike` client, or for the experimental
+          // RG (EXPERIMENTAL) setting a worker pool this round owns, started now and closed with the round.
+          const spikes = { left: null, right: null }, rgPools = [];
+          try {
+            for (const id of IDS) {
+              if (types[id] === 'human') continue;
+              const hook = rgSpike(id);
+              if (hook !== null) { spikes[id] = hook; continue; }
+              if (parameters[id].rgEnabled !== true) continue;
+              if (!F14_CORE_TYPES.has(types[id]) || f14CoreBaseProfile(types[id]).profileId === PROFILE_B_PROFILE_ID) throw new Error(`RG needs a gated F14-core bot, not ${types[id]}`);
+              if (typeof championRgSpikeFactory !== 'function') throw new Error('RG (EXPERIMENTAL) is unavailable on this host');
+              let pool;
+              try { pool = await championRgSpikeFactory(id); }
+              catch (error) { throw new Error(`RG (EXPERIMENTAL) could not start: ${error instanceof Error ? error.message : String(error)}`); }
+              rgPools.push(pool);
+              spikes[id] = pool;
+            }
+            if (sessionId !== `input-${generation}`) throw new Error('match-replaced');
+          const rg = Object.fromEntries(IDS.map(id => {
+            const spike = spikes[id];
+            if (spike === null) return [id, null];
+            if (!F14_CORE_TYPES.has(types[id]) || f14CoreBaseProfile(types[id]).profileId === PROFILE_B_PROFILE_ID) throw new Error(`RG needs a gated F14-core bot, not ${types[id]}`);
+            return [id, createInputRg(spike, { onApply: championRgAudit ? (record) => championRgAudit(id, { kind: 'apply', ...record }) : null,
+              onPrepare: championRgAudit ? (record) => championRgAudit(id, { kind: 'prepare', ...record }) : null, onFailure: rgFailed,
+              wait: rgWait(id) })];
+          }));
           current = { sessionId, keys: IDS.map(id => `${sessionId}/${id}`), types, parameters, turnMatch,
             // A turn match removes natural gravity: the piece then waits where
             // the player leaves it and only a hard drop locks it, which is the
@@ -185,7 +248,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
               stallPenaltyForgivenessId: stallPenalty.enabled && stallPenalty.penalty === 'penalty-line' ? 'left' : null,
               initialGarbageById: handicapTerrain === null ? {} : { [humanSide]: handicapGarbageCells(handicapTerrain) },
               handlingById: types.left === 'human' ? { left: humanEngineHandling(body.humanControls) } : {} }), closed: false, failure: null,
-            jobs: {}, ready: {}, plans: {}, proposals: {}, speculations: {}, f14Requests: 0, pathWaits: {}, lastLock: {}, misses: {}, leadFrames: {}, paceDeadline: {}, saved: null, maxTurns: body.maxTurns ?? null,
+            rg, rgPools, jobs: {}, ready: {}, plans: {}, proposals: {}, speculations: {}, f14Requests: 0, pathWaits: {}, lastLock: {}, misses: {}, leadFrames: {}, paceDeadline: {}, saved: null, maxTurns: body.maxTurns ?? null,
             selections: {}, cachedPlans: {}, incomingObserved: {}, incomingWait: {}, stallPenalty: { ...stallPenalty, rows: 0,
               forcedLockPending: false, dueFrame: stallPenalty.enabled ? 60 / stallPenalty.pps : null },
             diagnostics: Object.fromEntries(IDS.map(id => [id,
@@ -195,7 +258,9 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
                 inputPlanReuses: 0, decisionMs: 0, planningMs: 0,
                 incomingChanges: 0, incomingWaitSamples: 0, incomingWaitFrames: 0, incomingWaitMaxFrames: 0, incomingStaleAdoptions: 0,
                 resolutionOutcomes: { preferred: 0, fallback: 0, notFound: 0, stale: 0 },
-                fallbackReasons: {}, pacedLocks: 0, deadlineExceededLocks: 0 }])),
+                fallbackReasons: {}, pacedLocks: 0, deadlineExceededLocks: 0,
+                ...(rg[id] ? { rg: { decisions: 0, applicable: 0, changed: 0, cached: 0, unplaced: 0, ms: 0, cachedMs: 0, reasons: {},
+                  ...(rg[id].wait === 'block' ? {} : { wait: rg[id].wait, ready: 0, notReady: 0, seen: {} }) } } : {}) }])),
             handicap: handicapTerrain === null
               ? { id: HANDICAP_GARBAGE_ID, enabled: false }
               : handicapRecord({ seed: body.seed, columnHeights: handicapTerrain, appliedTo: humanSide }),
@@ -203,7 +268,14 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
               maxTurns: body.maxTurns ?? null, stallLock: stallPenalty,
               turnMatch: { ...turnMatch },
               handicap: { id: HANDICAP_GARBAGE_ID, enabled: handicap.enabled } } };
+          rgOwner.session = current;
           return ok(view(current));
+          } catch (error) {
+            // A start that fails after its pools started (a bad seed, a replaced round) closes them.
+            if (current?.sessionId === sessionId) current = null;
+            await closeRgPools({ rgPools });
+            throw error;
+          }
         }
         const session = current;
         if (!session) throw new Error('match-not-started');
@@ -214,6 +286,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           current = null;
           generation++;
           await runtime.closeSessions({ sessionKeys: session.keys });
+          await closeRgPools(session);
           return ok({ closed: true });
         }
         if (method === 'POST' && path === '/api/input-match/step') {
@@ -239,6 +312,12 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
               if (session.incomingObserved[id] && !equal(incoming, session.incomingObserved[id])) {
                 session.diagnostics[id].incomingChanges++;
                 session.incomingWait[id] ??= frame;
+                // The next piece's speculative RG guessed its incoming rows from this piece's: guess again.
+                const speculation = session.speculations[id];
+                if (session.rg[id] && speculation?.resolved && speculation.rgBasis?.currentRequest) {
+                  const current = speculation.rgBasis.currentRequest;
+                  prepareSpeculativeRg(session, id, speculation, { ...current, selector: { ...current.selector, incoming: structuredClone(incoming) } });
+                }
               }
               session.incomingObserved[id] = incoming;
               adopt(session, id);
@@ -325,10 +404,10 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
                 throw new Error('MAX TURNS reached before top-out; unfinished rounds cannot be exported as .ttrm');
               }
               applyDueStallPenalty(session);
-            } catch (error) { session.failure = error.message; void runtime.closeSessions({ sessionKeys: session.keys }); throw error; }
+            } catch (error) { session.failure = error.message; void closeRound(runtime, session); throw error; }
           }
           for (const id of IDS) schedule(session, id);
-          if (session.round.status === 'complete') void runtime.closeSessions({ sessionKeys: session.keys });
+          if (session.round.status === 'complete') void closeRound(runtime, session);
           return ok(view(session));
         }
         if (method === 'GET' && ['/api/input-match/round', '/api/input-match/ttrm'].includes(path)) {
@@ -427,7 +506,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
       }
       const reasons = [...new Set((ready.attempts ?? []).map(attempt => attempt.reason ?? attempt.status))].join(', ') || 'no admitted target';
       session.failure = `CC2 input path not found; match stopped · ${id.toUpperCase()} ${session.types[id]} · frame ${frame} · ${reasons}`;
-      void runtime.closeSessions({ sessionKeys: session.keys });
+      void closeRound(runtime, session);
       throw new Error(session.failure);
     }
     if (!equal(current.decision.incoming, ready.boundary.decision.incoming)) session.diagnostics[id].incomingStaleAdoptions++;
@@ -437,10 +516,10 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
   }
   // Selection budgets only: a THINK TIME search started early would get more
   // time than the budget. Null when the next `start` cannot be known yet.
-  function speculationRequest(id, decision, payload, decided, parameters) {
+  function speculationRequest(session, id, decision, payload, decided, parameters) {
     if (typeof runtime.speculateF14 !== 'function' || payload.profile.budget.mode !== 'selection') return null;
     try {
-      return predictChampionNextRequest(decision, payload.request, decided, {
+      const next = predictChampionNextRequest(decision, payload.request, decided, {
         profile: payload.profile,
         queueDepth: parameters.queueDepth,
         queueRefillsByBag: INPUT_EXECUTION_PROFILE.id === 's2-input-execution/2',
@@ -448,21 +527,47 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
         queuePrefixSpeculation: queuePrefixSpeculation(id) && payload.profile.profileId !== PROFILE_B_PROFILE_ID,
         publicBagState: publicBagState(id),
       });
+      return next && session.rg[id] ? { ...next, request: withRgDiagnostics(session, id, next.request) } : next;
     } catch {
       return null;
     }
   }
+  // RG's choice first; a choice the moves do not hold (HOLD spent on a replan)
+  // keeps the core's order and is counted.
+  function rgOrdered(session, id, moves, rgResult) {
+    if (rgResult?.choice == null) return moves;
+    const ordered = rgInputMoves(moves, rgResult.choice);
+    if (ordered === null) { session.diagnostics[id].rg.unplaced++; return moves; }
+    session.diagnostics[id].rg.changed++;
+    return ordered;
+  }
   // Runs once this piece is planned on the core's selection, so its own rerank
   // basis is no longer needed. Failure only loses the head start.
+  function prepareSpeculativeRg(session, id, speculation, currentRequest) {
+    const response = speculation.resolved;
+    speculation.rgBasis = { ...speculation.rgBasis, currentRequest };
+    session.rg[id].prepare(rgGuessIncoming(speculation.request, currentRequest, speculation.rgBasis.placement),
+      response, response.diagnostics?.rootChildValues ?? null);
+  }
   function speculate(session, id, sessionKey, type, proposed) {
     const { request, queuePrefix } = proposed.next;
     proposed.next = null;
-    const speculation = { start: request.start, execution: request.execution, queuePrefix };
+    const speculation = { start: request.start, execution: request.execution, queuePrefix,
+      ...(session.rg[id] && proposed.rgBasis ? { request, rgBasis: { placement: proposed.rgBasis.placement } } : {}) };
     session.speculations[id] = speculation;
     session.diagnostics[id].championSpeculations++;
-    runtime.speculateF14({ sessionKey, type, engine: { botType: type, engineId: type }, request,
-      profile: request.execution, inputSpeculation: queuePrefix >= 1 })
-      .then(response => { if (response?.status !== 'move' && session.speculations[id] === speculation) delete session.speculations[id]; },
+    speculation.response = runtime.speculateF14({ sessionKey, type, engine: { botType: type, engineId: type }, request,
+      profile: request.execution, inputSpeculation: queuePrefix >= 1 });
+    speculation.response
+      .then(response => {
+        if (response?.status !== 'move') { if (session.speculations[id] === speculation) delete session.speculations[id]; }
+        // RG on the speculative answer, while this piece is still being moved, under the incoming rows this
+        // piece's lock leaves; again whenever this piece's incoming rows change (step loop).
+        else if (session.rg[id] && live(session) && proposed.rgBasis) {
+          speculation.resolved = response;
+          prepareSpeculativeRg(session, id, speculation, proposed.rgBasis.request);
+        }
+      },
         () => { if (session.speculations[id] === speculation) delete session.speculations[id]; });
   }
   function schedule(session, id) {
@@ -472,7 +577,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
     if (!turnAllowsLock(session, id)) return;
     if ((session.misses[id] ?? 0) > 30) {
       session.failure = 'input planning repeatedly missed its live boundary';
-      void runtime.closeSessions({ sessionKeys: session.keys });
+      void closeRound(runtime, session);
       return;
     }
     const initial = session.round.publicState(id);
@@ -518,13 +623,15 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
             : session.turnMatch.enabled || parameters.ppsEnabled === false ? parameters.thinkMs
               : realtimeCc2ThinkMs({ thinkMs: parameters.thinkMs, stepFrames: interval }) }, type);
           const payload = { sessionKey, type, engine: { botType: type, engineId: type },
-            request: createChampionInputRequest(championVisibleState(initial.decision, parameters.queueDepth),
+            request: withRgDiagnostics(session, id, createChampionInputRequest(championVisibleState(initial.decision, parameters.queueDepth),
               { requestId: `f14-input-${++session.f14Requests}`, profile, queueDepth: parameters.queueDepth,
                 ...(publicBagState(id) ? { bagState: 'public-below-14', publicQueue: [initial.decision.pieces.current,
-                  ...initial.decision.pieces.known].filter(piece => piece != null) } : {}) }),
+                  ...initial.decision.pieces.known].filter(piece => piece != null) } : {}) })),
             profile };
           let decided;
           let usedRerank = false;
+          // The search a rerank serves: its root child values are what RG reads (a rerank answer has none).
+          const previousRoot = proposed?.rootChildValues ?? null;
           // A search already run for this piece while the previous one was
           // being moved serves it when `start` came true; the core checks
           // that and reranks from this request, exactly as a fresh decision.
@@ -556,21 +663,41 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           const inputQueuePrefixHit = usedRerank && retainedPrefix >= 1 &&
             Object.hasOwn(decided?.search ?? {}, 'searchedQueueLength');
           assertF14CoreResponse(payload.request, decided, { allowQueuePrefix: inputQueuePrefixHit ? retainedPrefix : 0 });
+          let rgResult = null, rgNext = decided, rootChildValues = null;
+          if (session.rg[id] && decided.status === 'move') {
+            rootChildValues = !usedRerank ? decided.diagnostics?.rootChildValues ?? null
+              : speculationHit ? (await speculated.response)?.diagnostics?.rootChildValues ?? null : previousRoot;
+            const rgStarted = now();
+            rgResult = await session.rg[id].apply(payload.request, decided, rootChildValues);
+            const d = session.diagnostics[id].rg;
+            const rgMs = Math.max(0, now() - rgStarted);
+            d.decisions++; d.ms += rgMs;
+            if (rgResult.cached) { d.cached++; d.cachedMs += rgMs; }
+            if (rgResult.applicable) d.applicable++;
+            if (rgResult.reason) d.reasons[rgResult.reason] = (d.reasons[rgResult.reason] ?? 0) + 1;
+            if (rgResult.wait) { d[rgResult.ready ? 'ready' : 'notReady']++; d.seen[rgResult.wait.seen] = (d.seen[rgResult.wait.seen] ?? 0) + 1; }
+            if (rgResult.choice !== null) rgNext = { ...decided, selectedPlacement: rgResult.resolvedChoice.placement };
+            if (!live(session)) return;
+          }
           // No legal placement is no controller input, as for CC2. The core
           // reports it as root-no-move before search or empty-candidates after
           // it; the champion screen runner counts both as terminal.
           proposed = decided.status === 'root-no-move' || (decided.status === 'error' && decided.reason === 'empty-candidates')
             ? { identity, state: savedState, status: 'no-input', coreDecision: true,
               evidence: { status: decided.status, reason: decided.reason } }
-            : { identity, state: savedState, coreDecision: true, moves: championInputMoves(decided, {
+            : { identity, state: savedState, coreDecision: true, moves: rgOrdered(session, id, championInputMoves(decided, {
                 ...initial.decision.pieces,
                 allowQueuePrefix: inputQueuePrefixHit ? retainedPrefix : 0,
-              }),
+              }), rgResult),
               queuePrefix: inputQueuePrefixHit ? retainedPrefix : 0,
-              // The core's spin witness for its selected move; the planner
+              rootChildValues,
+              // What this piece's speculative RG guesses the next piece's incoming rows from.
+              ...(session.rg[id] ? { rgBasis: { request: payload.request, placement: rgNext.selectedPlacement ?? null } } : {}),
+              // The core's spin witness for its selected move (RG's resolved
+              // placement when RG moved another child first); the planner
               // reuses it instead of repeating the public reach search.
-              preferredWitness: structuredClone(decided.selectedPlacement ?? null),
-              next: speculationRequest(id, initial.decision, payload, decided, parameters) };
+              preferredWitness: structuredClone(rgNext.selectedPlacement ?? null),
+              next: speculationRequest(session, id, initial.decision, payload, rgNext, parameters) };
         } else try { response = await runtime.propose({ sessionKey, engine: type, state,
           selectionLimit: parameters.selectionEnabled ? parameters.selectionLimit : null,
           thinkMs: !parameters.thinkTimeEnabled ? null : session.turnMatch.enabled || parameters.ppsEnabled === false ? parameters.thinkMs :
@@ -677,7 +804,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
       session.ready[id] = { ...resolved, startFrame };
     })().catch(error => { if (live(session)) {
       session.failure = error.message;
-      void runtime.closeSessions({ sessionKeys: session.keys });
+      void closeRound(runtime, session);
     } }).finally(() => {
       if (session.jobs[id] === work) delete session.jobs[id];
     });

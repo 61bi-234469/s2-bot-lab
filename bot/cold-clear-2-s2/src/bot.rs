@@ -544,6 +544,12 @@ impl Bot {
         self.mode.new_piece(&self.options, piece);
     }
 
+    /// Early finish: publish the root to the session's opt-in root draw counts.
+    pub(crate) fn observe_published_root(&self, root: &RootObjectiveSession) {
+        let ModeEnum::Freestyle(mode) = &self.mode;
+        mode.observe_published_root(root);
+    }
+
     pub fn suggest(&self) -> Vec<(Placement, f32)> {
         puffin::profile_function!();
         self.mode.suggest(&self.options)
