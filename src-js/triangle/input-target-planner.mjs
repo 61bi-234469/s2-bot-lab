@@ -6,10 +6,19 @@ import { clearStaleSpin, createInputRotationObserver } from './input-rotation-ob
 import { dynamicValue } from '../dynamic-values.mjs';
 import { MAX_TTRM_FRAMES_PER_PLAYER } from '../replay/ttrm-parser.mjs';
 
-export const INPUT_TARGET_CONTROLLER = 's2-public-target-input/3';
+// /4: a compact soft drop finishes inside its frame (see FLOOR_SUBFRAME_STEP).
+export const INPUT_TARGET_CONTROLLER = 's2-public-target-input/4';
 const ROTATIONS = ['spawn', 'right', 'reverse', 'left'];
 const cellKey = cells => cells.map(([x, y]) => `${x},${y}`).sort().join(';');
-const key = (frame, name, type = 'keydown') => ({ frame, type, data: { key: name, subframe: 0 } });
+const key = (frame, name, type = 'keydown', subframe = 0) => ({ frame, type, data: { key: name, subframe } });
+// A compact `floor` presses soft drop and releases it this much later in the
+// same frame. The Engine advances the falling piece to each key's subframe
+// first, and at SDF 41 a held soft drop falls 400 cells per frame, so the piece
+// reaches the floor before the release; the inputs after it share the
+// release's subframe. Three such floors fit in a frame; a fourth takes the
+// two-frame form (press, then release on the next frame).
+const FLOOR_SUBFRAME_STEP = 0.25;
+const MAX_FLOOR_SUBFRAME = 0.75;
 
 /** Bounded target search. Only a validated public request and movement enter.
  * Neutral Engine execution stops at Board.add, before any rule/garbage result.
@@ -59,15 +68,17 @@ export function planInputTarget(request, movement, candidate, {
   let hitFrameBudget = false;
   const frameStop = {};
   const timeStop = {};
+  // Every trial restores the same public boundary into its own Engine; build that snapshot once per call.
+  const prepared = {};
   const notFound = () => equivalentTrial ? result(equivalentTrial) : ({ status: 'not-found', reason:
     performance.now() - startedAt >= maxTimeMs ? 'time-budget' :
       nodes >= maxNodes ? 'node-budget' : hitFrameBudget ? 'frame-budget' : 'search-exhausted',
     nodes, elapsedMs: performance.now() - startedAt });
 
-  const attempt = (actions, compact = compactInputs, replay = null) => {
+  const attempt = (actions, compact = compactInputs, replay = null, sameFrameFloor = true) => {
     if (nodes >= maxNodes || performance.now() - startedAt >= maxTimeMs) return null;
     nodes++;
-    const engine = neutralEngine(decision, movement, timeProgression, naturalGravity);
+    const engine = neutralEngine(decision, movement, timeProgression, naturalGravity, prepared);
     const observer = createInputRotationObserver(engine);
     let usedHold = false;
     const hold = engine.hold.bind(engine);
@@ -76,16 +87,39 @@ export function planInputTarget(request, movement, candidate, {
       if (result) usedHold = true;
       return result;
     };
+    // This tick's input and the hard drops it has run so far.
+    let tickInput = [];
+    let hardDrops = 0;
+    const hardDrop = engine.hardDrop.bind(engine);
+    engine.hardDrop = (...args) => {
+      hardDrops++;
+      return hardDrop(...args);
+    };
     const events = [];
     let lock = null;
     const stop = {};
+    const leftoverStop = {};
     engine.board.add = () => {
+      // A lock must leave no key input of its tick to the next piece. A hard
+      // drop's lock may be followed only by key releases. A natural lock (the
+      // lock delay running out) happens while the Engine advances the piece,
+      // either to a later input's subframe, which then has not run, or after
+      // the tick's last input.
+      let leftover;
+      if (hardDrops > 0) {
+        let seen = 0;
+        const at = tickInput.findIndex(event => event.type === 'keydown' && event.data.key === 'hardDrop' && ++seen === hardDrops);
+        leftover = at < 0 || tickInput.slice(at + 1).some(event => event.type === 'keydown');
+      } else leftover = tickInput.some(event => event.data.subframe > engine.subframe);
+      if (leftover) throw leftoverStop;
       // Predict the lock label the game engine will produce.
       clearStaleSpin(engine);
       observer.beforeMerge();
       lock = { cells: cellKey(engine.falling.absoluteBlocks), piece: engine.falling.symbol.toUpperCase(),
         rotation: engine.falling.rotation, spin: engine.lastSpin ?? 'none',
-        evidence: observer.evidenceForLock(), frame: engine.frame };
+        evidence: observer.evidenceForLock(), frame: engine.frame,
+        // Only a lock inside its frame (after a same-frame soft drop) records one.
+        ...(engine.subframe > 0 ? { subframe: engine.subframe } : {}) };
       throw stop;
     };
     const tick = input => {
@@ -93,6 +127,8 @@ export function planInputTarget(request, movement, candidate, {
       if (engine.frame - movement.frame >= maxFrames) { hitFrameBudget = true; throw frameStop; }
       observer.beforeTick(input);
       events.push(...input);
+      tickInput = input;
+      hardDrops = 0;
       engine.tick(input);
       observer.checkBoundary();
     };
@@ -106,21 +142,32 @@ export function planInputTarget(request, movement, candidate, {
         return null;
       }
       let input = [];
+      // The subframe of this frame's next compact input; every tick starts at 0.
+      let subframe = 0;
       for (const action of actions) {
-        if (action === 'floor') {
-          tick([...input, key(engine.frame, 'softDrop')]);
+        if (action === 'floor' && compact && sameFrameFloor && subframe + FLOOR_SUBFRAME_STEP <= MAX_FLOOR_SUBFRAME) {
+          input.push(key(engine.frame, 'softDrop', 'keydown', subframe));
+          subframe += FLOOR_SUBFRAME_STEP;
+          input.push(key(engine.frame, 'softDrop', 'keyup', subframe));
+        } else if (action === 'floor') {
+          tick([...input, key(engine.frame, 'softDrop', 'keydown', subframe)]);
           input = [];
+          subframe = 0;
           tick([key(engine.frame, 'softDrop', 'keyup')]);
-        } else if (action === 'noop') { tick(input); input = []; }
+        } else if (action === 'noop') { tick(input); input = []; subframe = 0; }
         else {
-          input.push(key(engine.frame, action), key(engine.frame, action, 'keyup'));
-          if (!compact) { tick(input); input = []; }
+          input.push(key(engine.frame, action, 'keydown', subframe), key(engine.frame, action, 'keyup', subframe));
+          if (!compact) { tick(input); input = []; subframe = 0; }
         }
       }
       if (input.length) tick(input);
       return { pose: { x: engine.falling.x, y: engine.falling.y, rotation: engine.falling.rotation }, events, lock: null };
     } catch (error) {
       if (error === frameStop || error === timeStop) return null;
+      // Input left to the next piece: a reused route is refused (the normal
+      // search follows); a searched route retries with the two-frame soft drop,
+      // whose inputs all precede its tick's own advance.
+      if (error === leftoverStop) return replay === null && compact && sameFrameFloor ? attempt(actions, compact, null, false) : null;
       if (error !== stop) throw error;
       const expected = target.rotationEvidence;
       const sameOutcome = usedHold === target.usedHold && lock.cells === targetCells && lock.piece === target.piece && lock.rotation === rotation &&
@@ -149,9 +196,12 @@ export function planInputTarget(request, movement, candidate, {
       Number.isSafeInteger(reusePlan.lockedAtFrame) && reusePlan.lockedAtFrame >= reusePlan.startedAtFrame &&
       reusePlan.lockedAtFrame - reusePlan.startedAtFrame < maxFrames &&
       Array.isArray(reusePlan.events) && reusePlan.events.length <= 512 &&
-      reusePlan.events.every(event => Number.isSafeInteger(event.frame) &&
+      reusePlan.events.every((event, index, events) => Number.isSafeInteger(event.frame) &&
         event.frame >= reusePlan.startedAtFrame && event.frame <= reusePlan.lockedAtFrame &&
-        ['keydown', 'keyup'].includes(event.type) && event.data?.subframe === 0 &&
+        ['keydown', 'keyup'].includes(event.type) && Number.isFinite(event.data?.subframe) &&
+        event.data.subframe >= 0 && event.data.subframe <= MAX_FLOOR_SUBFRAME &&
+        (index === 0 || events[index - 1].frame < event.frame ||
+          (events[index - 1].frame === event.frame && events[index - 1].data.subframe <= event.data.subframe)) &&
         ['moveLeft', 'moveRight', 'softDrop', 'hardDrop', 'rotateCW', 'rotateCCW', 'rotate180', 'hold'].includes(event.data?.key))) {
     const trial = attempt([], compactInputs, reusePlan);
     const reusedTrial = trial?.matches ? trial : equivalentTrial;
@@ -378,24 +428,30 @@ export function forecastInputBoundary(request, movement, frame, { timeProgressio
    observed descent while the round had switched natural gravity off, would
    search routes under a different descent speed than the one the referee
    executes. */
-function neutralEngine(decision, movement, timeProgression = true, naturalGravity = true) {
+function neutralEngine(decision, movement, timeProgression = true, naturalGravity = true, prepared = {}) {
   const options = inputExecutionOptions({ seed: 0, timeProgression, naturalGravity });
   const engine = new Engine(buildEngineConfig(options, []));
   // This snapshot originates here with constant seeds and an empty queue of
   // garbage. It is never a referee snapshot or a public cache identity.
-  const snapshot = engine.snapshot();
-  snapshot.board = Array.from({ length: 40 }, (_, y) => Array.from({ length: 10 }, (_, x) => {
-    const symbol = decision.board.cells[y * 10 + x];
-    return symbol === '_' ? null : { mino: symbol === 'G' ? 'gb' : symbol.toLowerCase() };
-  }));
-  snapshot.falling = structuredClone(movement.falling);
-  snapshot.input = structuredClone(movement.input);
-  for (const field of ['subframe', 'hold', 'holdLocked', 'lastSpin', 'lastWasClear', 'glock', 'state']) snapshot[field] = movement[field];
-  snapshot.queue.value = decision.pieces.known.map(value => value.toLowerCase());
-  snapshot.stats.combo = decision.chain.combo - 1;
-  snapshot.stats.b2b = decision.chain.b2b - 1;
-  snapshot.stats.pieces = decision.lockTime.piecesPlaced;
-  engine.fromSnapshot(snapshot);
+  // `prepared` lives for one planInputTarget call (same decision, movement and
+  // options). Engine.fromSnapshot copies every field this neutral snapshot
+  // carries (IGE players are empty here), so later trials never see edits.
+  if (!prepared.snapshot) {
+    const snapshot = engine.snapshot();
+    snapshot.board = Array.from({ length: 40 }, (_, y) => Array.from({ length: 10 }, (_, x) => {
+      const symbol = decision.board.cells[y * 10 + x];
+      return symbol === '_' ? null : { mino: symbol === 'G' ? 'gb' : symbol.toLowerCase() };
+    }));
+    snapshot.falling = structuredClone(movement.falling);
+    snapshot.input = structuredClone(movement.input);
+    for (const field of ['subframe', 'hold', 'holdLocked', 'lastSpin', 'lastWasClear', 'glock', 'state']) snapshot[field] = movement[field];
+    snapshot.queue.value = decision.pieces.known.map(value => value.toLowerCase());
+    snapshot.stats.combo = decision.chain.combo - 1;
+    snapshot.stats.b2b = decision.chain.b2b - 1;
+    snapshot.stats.pieces = decision.lockTime.piecesPlaced;
+    prepared.snapshot = snapshot;
+  }
+  engine.fromSnapshot(prepared.snapshot);
   engine.frame = movement.frame;
   engine.dynamic.gravity.set(dynamicValue({ base: options.g, increase: options.gincrease,
     marginFrames: options.gmargin }, movement.frame));

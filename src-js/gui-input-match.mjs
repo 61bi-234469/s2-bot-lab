@@ -47,6 +47,21 @@ const pieceIdentity = state => ({ board: state.decision.board, pieces: state.dec
 // The champion decides through the F14 core, whose amount-only selector reads
 // incoming rows; a CC2 proposal never sees them.
 const F14_CORE_TYPES = new Set(F14_CORE_BOT_TYPES);
+// FRESH INCOMING, the product setting: the lead and the per-piece limit it was measured with.
+export const PRODUCT_FRESH_INCOMING = Object.freeze({ leadFrames: 8, maxPerPiece: 8 });
+// The product setting LOW PPS BOOST (`lowPpsBoostEnabled`, src-js/bot-parameters.mjs): a side paced at PPS LIMIT 3 or
+// below has a smaller SELECTION LIMIT raised to 4,096. Measured at 1 and 3 PPS only, without
+// MULTITHREAD, FRESH INCOMING or RG, so any of those (or a turn match, which has no pace) leaves the side as it is.
+export const PRODUCT_LOW_PPS_BOOST = Object.freeze({ maxPps: 3, selections: 4096 });
+/** The parameters a side plays with: the setting key is dropped, and SELECTION LIMIT is raised when the boost applies. */
+export function lowPpsBoostedParameters(parameters, { turnMatch = false } = {}) {
+  if (parameters?.lowPpsBoostEnabled !== true) return parameters;
+  const { lowPpsBoostEnabled: _setting, ...rest } = parameters;
+  const applies = !turnMatch && rest.ppsEnabled === true && rest.pps <= PRODUCT_LOW_PPS_BOOST.maxPps &&
+    rest.selectionEnabled === true && rest.selectionLimit < PRODUCT_LOW_PPS_BOOST.selections &&
+    rest.multithreadEnabled !== true && rest.freshIncomingEnabled !== true && rest.rgEnabled !== true;
+  return Object.freeze(applies ? { ...rest, selectionLimit: PRODUCT_LOW_PPS_BOOST.selections } : rest);
+}
 // The spike pools a round started for RG (EXPERIMENTAL); closing rejects their waiting requests.
 async function closeRgPools(session) {
   const pools = session?.rgPools ?? [];
@@ -144,15 +159,40 @@ function lockCount(session, id) {
 // answers, and the decision reuses it when its key is unchanged. Not offered in
 // the bot lists; RG failures fail the round (no fallback move).
 // `championRgAudit(id, record)` (checks only) sees each RG decision.
+// `championProfileOverrides(id)` (checks only, default off) adds weightOverrides keys to one side's F14-core profile.
+// `championDecisionAudit(id, record)` (checks only, observation) sees each F14-core decision of a side: `{ request,
+// response, source }` with source "fresh", "rerank" or "speculation". It must not change its arguments.
 // `championRgSpikeFactory(id)` (async, returns a spike client with close()) serves the experimental GUI
 // setting RG (EXPERIMENTAL) (`rgEnabled`, src-js/bot-parameters.mjs): a side with it ON gets a pool started at
 // the round's start and closed when the round is replaced or closed. A host without one refuses the setting.
 // `championRgWait` (default "block"): "block" waits for RG on every decision as
 // before; "ready" or a number of ms (or a function of the side id returning one) uses RG only when its result is
 // already computed or arrives within that wait, else plays the core's move (src-js/rg-input.mjs createInputRg).
+// `championLearnedRuleFactory(id)` (default off; checks only) turns a learned rule (a learned estimate of RG's spike
+// height with RG's guard, provided by the caller) on for a side: async, returning a learned-rule
+// worker client with close() (null keeps the side off), started at the round's start and closed with the round.
+// It replaces RG on that side, so it cannot be combined with `championRgSpike` or RG (EXPERIMENTAL) there.
+// `championRgRule(id)` (default off; checks only)
+// gives a side's RG another spike search setting and margin: `{ settings: [{ width, horizon }], margin }`, null keeps
+// rule RG as it is. It needs RG on that side and does not apply to a learned rule.
 export function createGuiInputMatchHandlers({ runtime, now = () => performance.now(), championQueuePrefixSpeculation = true,
   championEarlySpeculation = true, championPublicBagState = true, championRgSpike = null, championRgAudit = null, championRgWait = 'block',
-  championRgSpikeFactory = null }) {
+  championRgSpikeFactory = null, championLearnedRuleFactory = null, championRgRule = null, championDecisionAudit = null, championProfileOverrides = null, freshIncoming = null, freshIncomingSides = null, rightSeedXor = null }) {
+  // Diagnostic opt-in (runner only):
+  // an F14-core plan whose incoming rows changed is dropped and decided again while at least `leadFrames`
+  // remain before its start, at most `maxPerPiece` times a piece. Adoption itself still ignores incoming,
+  // so a piece always moves.
+  if (freshIncoming !== null && !(Number.isSafeInteger(freshIncoming?.leadFrames) && freshIncoming.leadFrames >= 1 &&
+    Number.isSafeInteger(freshIncoming?.maxPerPiece) && freshIncoming.maxPerPiece >= 1)) throw new Error('invalid freshIncoming');
+  // Diagnostic opt-in (runner only): limits freshIncoming to the listed sides; null applies it to both.
+  if (freshIncomingSides !== null && !(freshIncoming !== null && Array.isArray(freshIncomingSides) && freshIncomingSides.length >= 1 &&
+    new Set(freshIncomingSides).size === freshIncomingSides.length && freshIncomingSides.every(id => id === 'left' || id === 'right'))) throw new Error('invalid freshIncomingSides');
+  // Diagnostic opt-in (runner only): the right side plays seed xor this value (distinct pieces); null keeps one seed for both.
+  if (rightSeedXor !== null && !(Number.isSafeInteger(rightSeedXor) && rightSeedXor > 0 && rightSeedXor <= 0xffffffff)) throw new Error('invalid rightSeedXor');
+  // The fresh-incoming option of one side: the runner opt-in above, else the product setting FRESH INCOMING
+  // (`freshIncomingEnabled`, src-js/bot-parameters.mjs) with the measured values, else null (off).
+  const freshFor = (parameters, id) => freshIncoming !== null && (freshIncomingSides === null || freshIncomingSides.includes(id)) ? freshIncoming
+    : parameters[id]?.freshIncomingEnabled === true ? PRODUCT_FRESH_INCOMING : null;
   const queuePrefixSpeculation = (id) => typeof championQueuePrefixSpeculation === 'function'
     ? championQueuePrefixSpeculation(id) === true : championQueuePrefixSpeculation === true;
   const publicBagState = (id) => typeof championPublicBagState === 'function'
@@ -160,6 +200,15 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
   const earlySpeculation = (id) => typeof championEarlySpeculation === 'function'
     ? championEarlySpeculation(id) === true : championEarlySpeculation !== false;
   const rgSpike = (id) => (typeof championRgSpike === 'function' ? championRgSpike(id) ?? null : null);
+  const rgRule = (id) => (typeof championRgRule === 'function' ? championRgRule(id) ?? null : null);
+  // `championProfileOverrides(id)` (checks only): extra weightOverrides keys of that side's F14-core profile, in the
+  // profile's sorted key order. The speculation and the re-rank take the same profile object.
+  const withProfileOverrides = (id, profile) => {
+    const extra = typeof championProfileOverrides === 'function' ? championProfileOverrides(id) ?? null : null;
+    if (extra === null) return profile;
+    const merged = { ...(profile.weightOverrides ?? {}), ...extra };
+    return Object.freeze({ ...profile, weightOverrides: Object.freeze(Object.fromEntries(Object.keys(merged).sort().map(key => [key, merged[key]]))) });
+  };
   const rgWait = (id) => normalizeRgWait(typeof championRgWait === 'function' ? championRgWait(id) : championRgWait);
   const withRgDiagnostics = (session, id, request) => (session.rg[id] ? { ...request, diagnostics: { rootChildValues: true } } : request);
   let current = null;
@@ -187,6 +236,14 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           // A turn match has no pace for a minimum-pace budget to measure, so
           // the pair is refused rather than silently resolved one way.
           if (turnMatch.enabled && stallPenalty.enabled) throw new Error('a turn match has no pace for STALL PENALTY');
+          // LOW PPS BOOST: from here on a side's parameters are the ones it plays with.
+          const lowPpsBoost = {};
+          for (const id of IDS) {
+            if (parameters[id].lowPpsBoostEnabled !== true) continue;
+            const played = lowPpsBoostedParameters(parameters[id], { turnMatch: turnMatch.enabled });
+            lowPpsBoost[id] = played.selectionLimit !== parameters[id].selectionLimit ? played.selectionLimit : 0;
+            parameters[id] = played;
+          }
           // Off keeps the observed S2 gravity and garbage multiplier at their
           // starting values for the whole round; it changes no other rule and
           // stays inside the exportable profile.
@@ -221,6 +278,17 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
             for (const id of IDS) {
               if (types[id] === 'human') continue;
               const hook = rgSpike(id);
+              if (typeof championLearnedRuleFactory === 'function') {
+                let client;
+                try { client = await championLearnedRuleFactory(id); }
+                catch (error) { throw new Error(`the learned rule could not start: ${error instanceof Error ? error.message : String(error)}`); }
+                if (client != null) {
+                  rgPools.push(client);
+                  if (hook !== null || parameters[id].rgEnabled === true) throw new Error('a learned rule cannot be combined with RG on the same side');
+                  spikes[id] = client;
+                  continue;
+                }
+              }
               if (hook !== null) { spikes[id] = hook; continue; }
               if (parameters[id].rgEnabled !== true) continue;
               if (!F14_CORE_TYPES.has(types[id]) || f14CoreBaseProfile(types[id]).profileId === PROFILE_B_PROFILE_ID) throw new Error(`RG needs a gated F14-core bot, not ${types[id]}`);
@@ -234,22 +302,26 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
             if (sessionId !== `input-${generation}`) throw new Error('match-replaced');
           const rg = Object.fromEntries(IDS.map(id => {
             const spike = spikes[id];
-            if (spike === null) return [id, null];
+            if (spike === null) {
+              if (rgRule(id) !== null) throw new Error('championRgRule needs RG on that side');
+              return [id, null];
+            }
             if (!F14_CORE_TYPES.has(types[id]) || f14CoreBaseProfile(types[id]).profileId === PROFILE_B_PROFILE_ID) throw new Error(`RG needs a gated F14-core bot, not ${types[id]}`);
             return [id, createInputRg(spike, { onApply: championRgAudit ? (record) => championRgAudit(id, { kind: 'apply', ...record }) : null,
               onPrepare: championRgAudit ? (record) => championRgAudit(id, { kind: 'prepare', ...record }) : null, onFailure: rgFailed,
-              wait: rgWait(id) })];
+              wait: rgWait(id), rule: rgRule(id) })];
           }));
+          const fresh = Object.fromEntries(IDS.map(id => [id, freshFor(parameters, id)]));
           current = { sessionId, keys: IDS.map(id => `${sessionId}/${id}`), types, parameters, turnMatch,
             // A turn match removes natural gravity: the piece then waits where
             // the player leaves it and only a hard drop locks it, which is the
             // movement contract a turn needs on this 60 Hz route too.
-            round: createInputExecutionRound({ seed: body.seed, timeProgression, naturalGravity: !turnMatch.enabled,
+            round: createInputExecutionRound({ seed: body.seed, ...(rightSeedXor === null ? {} : { seedById: { left: body.seed, right: (body.seed ^ rightSeedXor) >>> 0 } }), timeProgression, naturalGravity: !turnMatch.enabled,
               stallPenaltyForgivenessId: stallPenalty.enabled && stallPenalty.penalty === 'penalty-line' ? 'left' : null,
               initialGarbageById: handicapTerrain === null ? {} : { [humanSide]: handicapGarbageCells(handicapTerrain) },
               handlingById: types.left === 'human' ? { left: humanEngineHandling(body.humanControls) } : {} }), closed: false, failure: null,
-            rg, rgPools, jobs: {}, ready: {}, plans: {}, proposals: {}, speculations: {}, f14Requests: 0, pathWaits: {}, lastLock: {}, misses: {}, leadFrames: {}, paceDeadline: {}, saved: null, maxTurns: body.maxTurns ?? null,
-            selections: {}, cachedPlans: {}, incomingObserved: {}, incomingWait: {}, stallPenalty: { ...stallPenalty, rows: 0,
+            rg, rgPools, fresh, jobs: {}, ready: {}, plans: {}, proposals: {}, speculations: {}, f14Requests: 0, pathWaits: {}, lastLock: {}, misses: {}, leadFrames: {}, paceDeadline: {}, saved: null, maxTurns: body.maxTurns ?? null,
+            selections: {}, cachedPlans: {}, incomingObserved: {}, incomingWait: {}, freshRedecisions: {}, stallPenalty: { ...stallPenalty, rows: 0,
               forcedLockPending: false, dueFrame: stallPenalty.enabled ? 60 / stallPenalty.pps : null },
             diagnostics: Object.fromEntries(IDS.map(id => [id,
               { plannedLocks: 0, fallbackLocks: 0, naturalLocks: 0, lastFallback: null,
@@ -257,8 +329,11 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
                 pathBudgetWaits: 0, lastPathBudgetWait: null,
                 inputPlanReuses: 0, decisionMs: 0, planningMs: 0,
                 incomingChanges: 0, incomingWaitSamples: 0, incomingWaitFrames: 0, incomingWaitMaxFrames: 0, incomingStaleAdoptions: 0,
+                ...(fresh[id] ? { incomingStaleDueAdoptions: 0, incomingRedecisions: 0 } : {}),
+                // LOW PPS BOOST (present only while ON): the selections it raised this side to, 0 when it does not apply.
+                ...(id in lowPpsBoost ? { lowPpsBoostSelections: lowPpsBoost[id] } : {}),
                 resolutionOutcomes: { preferred: 0, fallback: 0, notFound: 0, stale: 0 },
-                fallbackReasons: {}, pacedLocks: 0, deadlineExceededLocks: 0,
+                fallbackReasons: {}, pacedLocks: 0, deadlineExceededLocks: 0, paceAlignAttempts: 0, paceAlignedStarts: 0,
                 ...(rg[id] ? { rg: { decisions: 0, applicable: 0, changed: 0, cached: 0, unplaced: 0, ms: 0, cachedMs: 0, reasons: {},
                   ...(rg[id].wait === 'block' ? {} : { wait: rg[id].wait, ready: 0, notReady: 0, seen: {} }) } } : {}) }])),
             handicap: handicapTerrain === null
@@ -320,6 +395,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
                 }
               }
               session.incomingObserved[id] = incoming;
+              if (session.fresh[id]) dropStaleIncomingPlan(session, id, incoming, frame);
               adopt(session, id);
               const plan = session.plans[id];
               if (plan) inputs[id] = plan.events.filter(event => event.frame === frame);
@@ -473,6 +549,17 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
     return proposed?.status === 'no-input' && equal(proposed.identity, identity) &&
       equal(proposed.state, nativeInputState(latest.decision, session.parameters[id], session.types[id]));
   }
+  function dropStaleIncomingPlan(session, id, incoming, frame) {
+    const ready = session.ready[id];
+    if (!ready || ready.status !== 'planned' || !F14_CORE_TYPES.has(session.types[id]) ||
+        equal(incoming, ready.boundary.decision.incoming) || ready.startFrame - frame < session.fresh[id].leadFrames) return;
+    const piece = session.round.publicState(id).decision.lockTime.piecesPlaced;
+    const count = session.freshRedecisions[id]?.piece === piece ? session.freshRedecisions[id].count : 0;
+    if (count >= session.fresh[id].maxPerPiece) return;
+    session.freshRedecisions[id] = { piece, count: count + 1 };
+    session.diagnostics[id].incomingRedecisions++;
+    delete session.ready[id];
+  }
   function adopt(session, id) {
     const ready = session.ready[id];
     if (!ready) return;
@@ -509,7 +596,12 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
       void closeRound(runtime, session);
       throw new Error(session.failure);
     }
-    if (!equal(current.decision.incoming, ready.boundary.decision.incoming)) session.diagnostics[id].incomingStaleAdoptions++;
+    if (!equal(current.decision.incoming, ready.boundary.decision.incoming)) {
+      session.diagnostics[id].incomingStaleAdoptions++;
+      if (session.fresh[id] && current.decision.incoming?.dueThisLockRows !== ready.boundary.decision.incoming?.dueThisLockRows) {
+        session.diagnostics[id].incomingStaleDueAdoptions++;
+      }
+    }
     session.plans[id] = ready.plan;
     session.selections[id] = ready.selection;
     session.misses[id] = 0;
@@ -556,6 +648,9 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
       ...(session.rg[id] && proposed.rgBasis ? { request, rgBasis: { placement: proposed.rgBasis.placement } } : {}) };
     session.speculations[id] = speculation;
     session.diagnostics[id].championSpeculations++;
+    // The learned rule's listing for the predicted next piece (only a
+    // learned-rule client created with `prelist` has it). This piece's RG decision is already made.
+    if (session.rg[id]) session.rg[id].prelist(request.selector);
     speculation.response = runtime.speculateF14({ sessionKey, type, engine: { botType: type, engineId: type }, request,
       profile: request.execution, inputSpeculation: queuePrefix >= 1 });
     speculation.response
@@ -619,9 +714,9 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
         if (F14_CORE_TYPES.has(type)) {
           // The same SELECTION / THINK TIME / QUEUE DEPTH the other CC2 bots
           // take here; THINK TIME is fitted to the pace like theirs.
-          const profile = createChampionProfile({ ...parameters, thinkMs: !parameters.thinkTimeEnabled ? parameters.thinkMs
+          const profile = withProfileOverrides(id, createChampionProfile({ ...parameters, thinkMs: !parameters.thinkTimeEnabled ? parameters.thinkMs
             : session.turnMatch.enabled || parameters.ppsEnabled === false ? parameters.thinkMs
-              : realtimeCc2ThinkMs({ thinkMs: parameters.thinkMs, stepFrames: interval }) }, type);
+              : realtimeCc2ThinkMs({ thinkMs: parameters.thinkMs, stepFrames: interval }) }, type));
           const payload = { sessionKey, type, engine: { botType: type, engineId: type },
             request: withRgDiagnostics(session, id, createChampionInputRequest(championVisibleState(initial.decision, parameters.queueDepth),
               { requestId: `f14-input-${++session.f14Requests}`, profile, queueDepth: parameters.queueDepth,
@@ -663,6 +758,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           const inputQueuePrefixHit = usedRerank && retainedPrefix >= 1 &&
             Object.hasOwn(decided?.search ?? {}, 'searchedQueueLength');
           assertF14CoreResponse(payload.request, decided, { allowQueuePrefix: inputQueuePrefixHit ? retainedPrefix : 0 });
+          championDecisionAudit?.(id, { request: payload.request, response: decided, source: !usedRerank ? 'fresh' : speculationHit ? 'speculation' : 'rerank' });
           let rgResult = null, rgNext = decided, rootChildValues = null;
           if (session.rg[id] && decided.status === 'move') {
             rootChildValues = !usedRerank ? decided.diagnostics?.rootChildValues ?? null
@@ -673,6 +769,7 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
             const rgMs = Math.max(0, now() - rgStarted);
             d.decisions++; d.ms += rgMs;
             if (rgResult.cached) { d.cached++; d.cachedMs += rgMs; }
+            if (rgResult.seen) { d.blockSeen ??= {}; d.blockSeen[rgResult.seen] = (d.blockSeen[rgResult.seen] ?? 0) + 1; }
             if (rgResult.applicable) d.applicable++;
             if (rgResult.reason) d.reasons[rgResult.reason] = (d.reasons[rgResult.reason] ?? 0) + 1;
             if (rgResult.wait) { d[rgResult.ready ? 'ready' : 'notReady']++; d.seen[rgResult.wait.seen] = (d.seen[rgResult.wait.seen] ?? 0) + 1; }
@@ -801,7 +898,44 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
           (resolved.status === 'planned' && resolved.plan?.startedAtFrame !== startFrame)) {
         throw new Error('invalid input resolution boundary');
       }
-      session.ready[id] = { ...resolved, startFrame };
+      const pending = { ...resolved, startFrame };
+      session.ready[id] = pending;
+      // PPS LIMIT bounds the lock, not the first input. A plan that needs
+      // frames between its first input and its lock (a soft drop) starts that
+      // many frames before the deadline when there is room, so it locks at the
+      // deadline instead of after it and the next deadline does not slip. The
+      // plan above stays ready meanwhile: the same move is planned again from
+      // the earlier boundary, off this job, and replaces it only while it is
+      // still the pending plan (not adopted, not dropped by FRESH INCOMING),
+      // the earlier start is still ahead and it locks the same way, no earlier
+      // than the deadline.
+      const span = resolved.status === 'planned' ? resolved.plan.lockedAtFrame - resolved.plan.startedAtFrame : 0;
+      const earlier = Math.max(dueFrame - span,
+        session.round.frame + (session.leadFrames[id] ?? 2) + ((session.misses[id] ?? 0) > 0 ? 1 : 0));
+      if (interval > 0 && !session.turnMatch.enabled && span > 0 && earlier < startFrame) {
+        diagnostics.paceAlignAttempts++;
+        const alignStarted = now();
+        runtime.resolveInput({ request, movement: latest.movement, startFrame: earlier,
+          reuse: { targetIdentity: resolved.targetIdentity, plan: resolved.plan },
+          preferredWitness: proposed.preferredWitness ?? null,
+          timeProgression: session.round.timeProgression, naturalGravity: session.round.naturalGravity }).then(aligned => {
+          if (!live(session)) return;
+          diagnostics.planningMs += Math.max(0, now() - alignStarted);
+          const lockShape = lock => { const { frame: _frame, ...shape } = lock; return shape; };
+          if (session.ready[id] === pending && session.round.frame <= earlier &&
+              aligned.status === 'planned' && aligned.plan?.startedAtFrame === earlier &&
+              aligned.plan.lockedAtFrame >= dueFrame && aligned.plan.lockedAtFrame < resolved.plan.lockedAtFrame &&
+              aligned.targetIdentity === resolved.targetIdentity &&
+              aligned.selection.adoptionRank === resolved.selection.adoptionRank &&
+              equal(lockShape(aligned.plan.lock), lockShape(resolved.plan.lock))) {
+            diagnostics.paceAlignedStarts++;
+            session.ready[id] = { ...aligned, startFrame: earlier };
+          }
+        }).catch(error => { if (live(session)) {
+          session.failure = error.message;
+          void closeRound(runtime, session);
+        } });
+      }
     })().catch(error => { if (live(session)) {
       session.failure = error.message;
       void closeRound(runtime, session);
@@ -819,6 +953,8 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
         garbageCleared: player.stats.garbage.cleared };
       return { ...player, type: session.types[player.id], preLockPreview: null,
         inputExecution: structuredClone(session.diagnostics[player.id]),
+        // Consumed TTRM events against the per-player budget (MAX_TTRM_EVENTS_PER_PLAYER).
+        executedEvents: typeof session.round.executedEventCount === 'function' ? session.round.executedEventCount(player.id) : null,
         stats, score: null, combo: Math.max(0, player.stats.combo + 1), b2b: Math.max(0, player.stats.b2b + 1),
         lastClear: player.lastLock?.clear ?? null, piecesPlaced: stats.turns,
         garbage: { pending: player.pendingRows, packets: player.pendingChunks },

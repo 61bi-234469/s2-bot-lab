@@ -90,8 +90,9 @@ test('input planner distinguishes node, frame and time exhaustion for a spin rou
   const nodeLimited = planInputTarget(request, movement, candidate, { maxNodes: 1, compactInputs: true });
   assert.equal(nodeLimited.reason, 'node-budget');
   assert.equal(nodeLimited.nodes, 1);
+  // One input per frame: a compact route, soft drop included, now fits in one frame.
   const frameLimited = planInputTarget(request, movement, candidate,
-    { maxNodes: 1024, maxFrames: 1, maxTimeMs: 1000, compactInputs: true });
+    { maxNodes: 1024, maxFrames: 1, maxTimeMs: 1000, compactInputs: false });
   assert.equal(frameLimited.reason, 'frame-budget');
   assert.ok(frameLimited.nodes < 1024);
   let clock = 0;

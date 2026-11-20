@@ -15,9 +15,9 @@
 //! use `StateBuildHasher` (lookup only, never iterated), and the last depth's alive check skips the move generator
 //! when the answer is known without it (`surely_has_moves`). Outputs are unchanged.
 
-use crate::data::{Board, Piece};
+use crate::data::{Board, Piece, PieceLocation};
 use crate::movegen::NativeS2Move;
-use crate::native_s2::{Chain, Incoming, State};
+use crate::native_s2::{CanonicalSpin, Chain, Incoming, State};
 use crate::map::StateBuildHasher;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -296,14 +296,49 @@ fn sky_moves(state: &State, cache: &mut MoveCache) -> Vec<(bool, Rc<Vec<NativeS2
         .collect()
 }
 
-/// Movegen returns one witness per rotation path, but the lock reads only the cells and the spin, so a
-/// later witness with the same pair gives the same child, which the beam's first-seen dedup would drop.
+/// Movegen returns one witness per rotation path, but the lock reads only the location, the cells and the spin,
+/// so a later witness with the same (cells, spin) gives the same child, which the beam's first-seen dedup would
+/// drop.
 ///
 /// The list is `find_native_s2_moves`' (a stable sort by `witness_key`, then a dedup that keeps the first of
-/// each run) filtered to the first witness of each (cells, spin): that is, for each (cells, spin), the witness
-/// least by (key, generation index), listed in key order. It is computed that way here, from the unsorted
-/// witnesses, without sorting all of them.
+/// each run) filtered to the first witness of each (cells, spin): for each (cells, spin), the witness least by
+/// (key, generation index), listed in key order. The key starts with the location and the spin, and within one
+/// (cells, spin) a witness's later key fields only order witnesses at the same location, which lock alike. So the
+/// list is, for each (cells, spin), the least location among the generated (location, spin) pairs, listed by
+/// (location, spin); `native_s2_sky_lock_set` gives those pairs without building every witness. The returned
+/// moves carry no rotation source, kick or soft-drop count (nothing in this search reads them).
+/// `distinct_locks_reference` (tests) is the witness-based form.
 fn distinct_locks(board: &Board, piece: Piece) -> Vec<NativeS2Move> {
+    thread_local! { static PAIRS: std::cell::RefCell<Vec<(PieceLocation, CanonicalSpin)>> = const { std::cell::RefCell::new(Vec::new()) }; }
+    let mut pairs = PAIRS.with(|t| std::mem::take(&mut *t.borrow_mut()));
+    crate::movegen::native_s2_sky_lock_set(board, piece, &mut pairs);
+    let location_key = |l: &PieceLocation| (l.rotation as u8, l.x, l.y);
+    // Least location per (cells, spin): sort by (cells, spin, location), keep each group's first.
+    let mut grouped: Vec<(([(i8, i8); 4], u8), (u8, i8, i8), usize)> = pairs.iter().enumerate().map(|(i, (l, spin))| {
+        let mut cells = l.cells();
+        cells.sort_unstable();
+        ((cells, *spin as u8), location_key(l), i)
+    }).collect();
+    grouped.sort_unstable_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+    grouped.dedup_by(|a, b| a.0 == b.0);
+    let mut kept: Vec<(PieceLocation, CanonicalSpin)> = grouped.into_iter().map(|(_, _, i)| pairs[i]).collect();
+    kept.sort_unstable_by_key(|(l, spin)| (location_key(l), *spin as u8));
+    PAIRS.with(|t| *t.borrow_mut() = pairs);
+    let source = Rc::new(*board);
+    kept.into_iter().map(|(location, spin)| NativeS2Move {
+        source_board: Rc::clone(&source),
+        location,
+        spin,
+        soft_drops: 0,
+        rotation_from: None,
+        native_kick_index: None,
+        native_kick_offset: None,
+    }).collect()
+}
+
+/// The witness-based `distinct_locks` (before 2026-11-20), kept as the tests' reference.
+#[cfg(test)]
+fn distinct_locks_reference(board: &Board, piece: Piece) -> Vec<NativeS2Move> {
     let raw = crate::movegen::native_s2_witnesses_unsorted(board, piece, crate::movegen::RootEntry::Sky);
     // Least witness per (location, spin), in a table over rotation, x, y and spin (one piece per call; a lock's
     // cells depend on the location only; locations lie in x -4..=13, y -4..=43, the lock's own bounds). The table
@@ -346,7 +381,8 @@ fn distinct_locks(board: &Board, piece: Piece) -> Vec<NativeS2Move> {
     kept.into_iter().map(|i| raw[i].clone()).collect()
 }
 
-/// The sort key of `find_native_s2_moves`.
+/// The sort key of `find_native_s2_moves` (the tests' reference only).
+#[cfg(test)]
 #[allow(clippy::type_complexity)]
 fn witness_key(w: &NativeS2Move) -> (u8, u8, i8, i8, u8, Option<(u8, i8, i8)>, Option<usize>, u32) {
     (
@@ -378,8 +414,29 @@ struct Key {
     hold_available: bool,
     b2b: u32,
     combo: u32,
-    amounts: Vec<u32>,
+    amounts: Amounts,
     last_column: Option<u8>,
+}
+
+/// The pending packet amounts of a `Key`, without a heap list for a short queue. A list has one form (inline up to
+/// 6 amounts), so two keys are equal exactly when their amount lists are.
+#[derive(Hash, PartialEq, Eq)]
+enum Amounts {
+    Inline(u8, [u32; 6]),
+    Heap(Vec<u32>),
+}
+impl Amounts {
+    fn of(packets: &[Packet]) -> Self {
+        if packets.len() <= 6 {
+            let mut amounts = [0u32; 6];
+            for (slot, packet) in amounts.iter_mut().zip(packets) {
+                *slot = packet.amount;
+            }
+            Amounts::Inline(packets.len() as u8, amounts)
+        } else {
+            Amounts::Heap(packets.iter().map(|p| p.amount).collect())
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -520,8 +577,10 @@ pub fn spike_stress_search(position: &Position, horizon: usize, width: usize, kn
     let mut cache = MoveCache::default();
     let (mut expanded, mut depth_reached) = (0usize, 0usize);
     for depth in 1..=max_depth {
-        let mut order: Vec<Node> = Vec::new();
-        let mut index: HashMap<Key, usize, StateBuildHasher> = HashMap::default();
+        // Sized for this depth's children up front (lookup only, so the capacity changes no result).
+        let expected: usize = beam.iter_mut().map(|node| node.moves(&mut cache).iter().map(|(_, list)| list.len()).sum::<usize>()).sum();
+        let mut order: Vec<Node> = Vec::with_capacity(expected);
+        let mut index: HashMap<Key, usize, StateBuildHasher> = HashMap::with_capacity_and_hasher(expected, StateBuildHasher);
         for node in beam.iter_mut() {
             let children = expand(node, mult, &mut cache);
             expanded += 1;
@@ -534,7 +593,7 @@ pub fn spike_stress_search(position: &Position, horizon: usize, width: usize, kn
                     hold_available: c.state.hold_available,
                     b2b: c.state.chain.b2b,
                     combo: c.state.chain.combo,
-                    amounts: c.garbage.packets.iter().map(|p| p.amount).collect(),
+                    amounts: Amounts::of(&c.garbage.packets),
                     last_column: c.garbage.last_column,
                 };
                 match index.get(&key) {
@@ -550,13 +609,17 @@ pub fn spike_stress_search(position: &Position, horizon: usize, width: usize, kn
                 }
             }
         }
-        // Stable sort keeps first-seen order among ties, as the JS Map does.
-        order.sort_by(better);
+        // Stable sort keeps first-seen order among ties, as the JS Map does. The indices are sorted, not the
+        // nodes, which gives the same order without moving every node.
+        let mut ranked: Vec<usize> = (0..order.len()).collect();
+        ranked.sort_by(|&a, &b| better(&order[a], &order[b]));
+        let mut order: Vec<Option<Node>> = order.into_iter().map(Some).collect();
         let mut alive = Vec::new();
-        for mut c in order {
+        for i in ranked {
             if alive.len() >= width {
                 break;
             }
+            let mut c = order[i].take().expect("each node is ranked once");
             // The last depth's nodes are never expanded, so only whether they have a move matters.
             let has = if depth == max_depth { c.surely_has_moves(&mut cache) } else { c.has_moves(&mut cache) };
             if !has {
@@ -610,5 +673,40 @@ mod tests {
                 assert!(!moves.is_empty(), "no Sky move for {piece:?} on case {case}");
             }
         }
+    }
+
+    /// `distinct_locks` (from `native_s2_sky_lock_set`) lists the same (location, spin) moves, in the same order,
+    /// as the witness-based reference, on pseudo-random stacks (random fill, so holes and overhangs, and solid
+    /// stacks) up to row 39, for every piece, and `native_s2_sky_lock_set` lists each witnessed (location, spin) once.
+    #[test]
+    fn distinct_locks_match_the_witness_reference() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; seed };
+        let (mut boards, mut moves) = (0usize, 0usize);
+        for case in 0..3000 {
+            let mut board = Board { cols: [0; 10] };
+            let top = (case % 41) as u32; // stacks up to row 39
+            for x in 0..10 {
+                let height = if case % 3 == 0 { top } else { (next() % (top as u64 + 1)) as u32 };
+                let mask = if height == 0 { 0 } else { (1u64 << height) - 1 };
+                board.cols[x] = match case % 4 { 0 => mask, 1 => next() & mask, _ => mask & !(next() & next() & mask) };
+            }
+            for piece in [Piece::I, Piece::O, Piece::T, Piece::L, Piece::J, Piece::S, Piece::Z] {
+                let a: Vec<_> = distinct_locks(&board, piece).into_iter().map(|m| (m.location, m.spin, *m.source_board)).collect();
+                let b: Vec<_> = distinct_locks_reference(&board, piece).into_iter().map(|m| (m.location, m.spin, *m.source_board)).collect();
+                assert_eq!(a, b, "{piece:?} on case {case}");
+                // The (location, spin) pairs themselves, before the (cells, spin) reduction.
+                let mut pairs = Vec::new();
+                crate::movegen::native_s2_sky_lock_set(&board, piece, &mut pairs);
+                let fresh: std::collections::BTreeSet<_> = pairs.iter().map(|(l, spin)| ((l.rotation as u8, l.x, l.y), *spin as u8)).collect();
+                let witnessed: std::collections::BTreeSet<_> = crate::movegen::native_s2_witnesses_unsorted(&board, piece, crate::movegen::RootEntry::Sky)
+                    .iter().map(|w| ((w.location.rotation as u8, w.location.x, w.location.y), w.spin as u8)).collect();
+                assert_eq!(pairs.len(), fresh.len(), "{piece:?} on case {case}: a pair listed twice");
+                assert_eq!(fresh, witnessed, "{piece:?} on case {case}");
+                boards += 1;
+                moves += a.len();
+            }
+        }
+        assert!(boards == 21_000 && moves > 100_000, "{boards} boards, {moves} moves");
     }
 }

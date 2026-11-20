@@ -310,8 +310,10 @@ test("champion INPUT match locks the WASM F14 core selection, also under incomin
     resolveInput: async (payload) => { const seq = order++; const result = await runtime.resolveInput(payload); plans.push({ payload, result, seq }); return result; },
   } });
   try {
+    // Raw CC2 runs at another PPS LIMIT: at the same limit both sides lock on the same frames, and an attack
+    // (20 frames of travel) always lands after the receiver has decided its piece.
     const start = await handlers.handle({ method: "POST", path: "/api/input-match/start",
-      body: { left: "cc2-raw", right: "cc2-s2-champion", seed: 42, maxTurns: null } });
+      body: { left: "cc2-raw", right: "cc2-s2-champion", seed: 42, maxTurns: null, leftParameters: { pps: 1.5 } } });
     assert.equal(start.status, 200, JSON.stringify(start.body));
     let view = start.body;
     for (let frame = 1; frame < 20_000 && !view.outcome.complete && view.bots.some((bot) => bot.stats.turns < 40); frame += 2) {
@@ -333,9 +335,11 @@ test("champion INPUT match locks the WASM F14 core selection, also under incomin
       assert.ok(decided, "the planner's first target is a core selection");
       if (result.selection.adoptionRank === 0) assert.deepEqual(pose(result.placement), pose(decided.response.selectedPlacement));
     }
-    const preferred = planned.filter(({ result }) => result.selection.adoptionRank === 0).length;
-    assert.ok(preferred / planned.length >= 0.9, `${preferred}/${planned.length} plans locked the core selection`);
-    t.diagnostic(`${decisions.length} core decisions, ${decisions.filter(({ payload }) => payload.request.selector.incoming.pendingRows > 0).length} with incoming rows; ${preferred}/${planned.length} plans on the core selection`);
+    // One plan per piece (the last): a PPS LIMIT start alignment plans the same piece twice.
+    const perPiece = [...new Map(planned.map((plan) => [plan.payload.request.decision.lockTime.piecesPlaced, plan])).values()];
+    const preferred = perPiece.filter(({ result }) => result.selection.adoptionRank === 0).length;
+    assert.ok(preferred / perPiece.length >= 0.9, `${preferred}/${perPiece.length} plans locked the core selection`);
+    t.diagnostic(`${decisions.length} core decisions, ${decisions.filter(({ payload }) => payload.request.selector.incoming.pendingRows > 0).length} with incoming rows; ${preferred}/${perPiece.length} plans on the core selection`);
     // Most pieces reuse the search run while the previous piece was moved.
     const champion = view.bots.find((bot) => bot.type === "cc2-s2-champion").inputExecution;
     assert.ok(champion.championSpeculationHits > champion.championSpeculations / 2, JSON.stringify(champion));

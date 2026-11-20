@@ -732,6 +732,60 @@ test(firstNotFound ? 'incoming maturity discards a stale not-found and replans w
   await handlers.handle({ method: 'POST', path: '/api/input-match/close', body: { sessionId: started.sessionId } });
 });
 
+for (const mode of ['aligned', 'refused', 'late'])
+test(mode === 'aligned' ? 'a paced plan with frames before its lock starts early enough to lock at the PPS deadline'
+  : mode === 'refused' ? 'a paced plan keeps its deadline start when the earlier start does not lock the same way'
+    : 'a paced plan stays ready while its earlier start is planned, and a reply after it was adopted changes nothing', async () => {
+  const alignable = mode === 'aligned';
+  // The planner's first plan for each piece is made 2 frames longer (the same
+  // inputs, held back 2 frames), standing in for a soft drop. A plan given
+  // back as `reuse` replays those inputs from the earlier boundary. In 'late'
+  // that reply is held until the first plan has started.
+  const resolutions = [];
+  const held = [];
+  const handlers = createGuiInputMatchHandlers({ now: () => 0, runtime: {
+    propose: async payload => ({ moves: [spawnMove(payload.state)] }),
+    resolveInput: async payload => {
+      resolutions.push({ startFrame: payload.startFrame, reuse: payload.reuse !== null });
+      const result = resolveInputJob(payload);
+      if (payload.reuse !== null && mode === 'late') return new Promise(resolve => held.push(() => resolve(result)));
+      if (payload.reuse !== null) return alignable ? result : { status: 'not-found', boundary: result.boundary, attempts: [] };
+      if (result.status !== 'planned') return result;
+      const shift = event => ({ ...event, frame: event.frame + 2 });
+      return { ...result, plan: { ...result.plan, lockedAtFrame: result.plan.lockedAtFrame + 2,
+        lock: { ...result.plan.lock, frame: result.plan.lock.frame + 2 }, events: result.plan.events.map(shift) } };
+    }, closeSessions: async () => {},
+  } });
+  const { body: started } = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
+    ...config, rightParameters: { pps: 1 },
+  } });
+  let result;
+  for (let frame = 1; frame <= 200; frame++) {
+    result = await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: { sessionId: started.sessionId, frame } });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    // Released one frame after each first plan's start (frames 60 and 122).
+    if (frame === 61 || frame === 123) held.splice(0).forEach(release => release());
+    await flush();
+    if (result.body.bots[1].stats.turns >= 2) break;
+  }
+  // Only the third piece's request can still be held here.
+  assert.ok(held.length <= 1);
+  held.splice(0).forEach(release => release());
+  await flush();
+  const stats = result.body.bots[1].inputExecution;
+  assert.equal(result.body.bots[1].stats.turns, 2);
+  // PPS LIMIT 1: deadlines at frames 60 and 120 while every lock is on time.
+  assert.deepEqual(resolutions.slice(0, 2), [{ startFrame: 60, reuse: false }, { startFrame: 58, reuse: true }]);
+  assert.equal(stats.paceAlignAttempts, 2);
+  assert.equal(stats.paceAlignedStarts, alignable ? 2 : 0);
+  assert.equal(stats.pacedLocks, 2);
+  assert.equal(stats.deadlineExceededLocks, alignable ? 0 : 2);
+  assert.equal(result.body.bots[1].lastLock.frame, alignable ? 120 : 124);
+  assert.equal(stats.plannedLocks, 2);
+  assert.equal(stats.lateResponses, 0);
+  await handlers.handle({ method: 'POST', path: '/api/input-match/close', body: { sessionId: started.sessionId } });
+});
+
 test('path budget waits retain natural play, suppress retries, replan after locks and export top-out', async () => {
   const closed = [];
   const handlers = createGuiInputMatchHandlers({ now: () => 0, runtime: {
@@ -1146,4 +1200,90 @@ test('a completed handicap round stays scorable but is refused as .ttrm', async 
   const ttrm = await handlers.handle({ method: 'GET', path: '/api/input-match/ttrm' });
   assert.equal(ttrm.status, 409);
   assert.match(ttrm.body.error, /handicap.*\.ttrm/);
+});
+
+// Fresh-incoming diagnostic opt-in: off keeps
+// a planned move across the 4-row packet's maturity and a later 2-row packet; on drops that plan while enough frames
+// remain and decides the piece again on the current rows, at most maxPerPiece times; a lead longer than the wait
+// never drops it.
+// `freshIncomingSides` limits the option
+// to the listed sides; a side outside the list behaves as off.
+// Product setting FRESH INCOMING: the side's
+// `freshIncomingEnabled` gives the same re-decisions as the runner option with leadFrames 8 and maxPerPiece 8.
+for (const [label, option, freshIncomingSides = null, bySetting = false] of [['off', null], ['on', { leadFrames: 8, maxPerPiece: 8 }],
+  ['on by the product setting', { leadFrames: 8, maxPerPiece: 8 }, null, true],
+  ['on with a lead longer than the wait', { leadFrames: 1000, maxPerPiece: 8 }], ['on capped at one re-decision', { leadFrames: 8, maxPerPiece: 1 }],
+  ['on for the right side only', { leadFrames: 8, maxPerPiece: 8 }, ['right']], ['on for the left side only', { leadFrames: 8, maxPerPiece: 8 }, ['left']]])
+test(`fresh incoming ${label}: champion plan across an incoming maturity`, async t => {
+  // What the right-side champion gets.
+  const freshIncoming = freshIncomingSides !== null && !freshIncomingSides.includes('right') ? null : option;
+  const tick = Engine.prototype.tick;
+  let receiver;
+  t.mock.method(Engine.prototype, 'tick', function(events) {
+    if (events.some(event => event.type === 'ige' && event.data.type === 'target' && event.data.data.targets[0] === 1)) receiver = this;
+    const extra = [];
+    if (this === receiver && this.frame === 0) extra.push({ frame: 0, type: 'ige', data: {
+      type: 'interaction', data: { type: 'garbage', amt: 4, size: 1, iid: 1, gameid: 1, ackiid: 0 },
+    } });
+    if (this === receiver && this.frame === 1) extra.push({ frame: 1, type: 'ige', data: {
+      type: 'interaction_confirm', data: { type: 'garbage', iid: 1, gameid: 1, frame: 0 },
+    } });
+    if (this === receiver && this.frame === 30) extra.push({ frame: 30, type: 'ige', data: {
+      type: 'interaction', data: { type: 'garbage', amt: 2, size: 1, iid: 2, gameid: 1, ackiid: 0 },
+    } });
+    return tick.call(this, [...events, ...extra]);
+  });
+  const reranks = [];
+  const resolutions = [];
+  const handlers = createGuiInputMatchHandlers({ now: () => 0, freshIncoming: bySetting ? null : option, freshIncomingSides, runtime: {
+    propose: () => assert.fail('the champion never asks a CC2 proposal process'),
+    decideF14: async payload => fakeCoreDecision(payload.request, 0),
+    rerankF14: async payload => { reranks.push(payload); return fakeCoreDecision(payload.request, 1); },
+    resolveInput: async payload => { resolutions.push(structuredClone(payload)); return resolveInputJob(payload); },
+    closeSessions: async () => {},
+  } });
+  const { body: started } = await handlers.handle({ method: 'POST', path: '/api/input-match/start', body: {
+    left: 'human', right: 'cc2-s2-champion', seed: 42, maxTurns: null, rightParameters: { pps: 1, ...(bySetting ? { freshIncomingEnabled: true } : {}) },
+  } });
+  let view;
+  for (let frame = 1; frame <= 90; frame++) {
+    const result = await handlers.handle({ method: 'POST', path: '/api/input-match/step', body: { sessionId: started.sessionId, frame } });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    view = result.body;
+    for (let i = 0; i < 3; i++) await flush();
+    if (view.bots[1].stats.turns > 0) break;
+  }
+  const stats = view.bots[1].inputExecution;
+  assert.equal(stats.plannedLocks, 1);
+  const first = resolutions.filter(payload => payload.request.decision.lockTime.piecesPlaced === 0);
+  assert.equal(first[0].request.decision.incoming.dueThisLockRows, 0);
+  if (freshIncoming?.leadFrames === 8 && freshIncoming.maxPerPiece === 8) {
+    assert.equal(stats.incomingRedecisions, 2);
+    assert.equal(stats.incomingStaleAdoptions, 0);
+    assert.equal(stats.incomingStaleDueAdoptions, 0);
+    assert.ok(reranks.some(payload => payload.request.selector.incoming.dueThisLockRows === 4));
+    assert.deepEqual(first.at(-1).request.decision.incoming, { pendingRows: 6, dueThisLockRows: 4 });
+  } else if (freshIncoming?.maxPerPiece === 1) {
+    assert.equal(stats.incomingRedecisions, 1);
+    assert.equal(stats.incomingStaleAdoptions, 1);
+    assert.equal(stats.incomingStaleDueAdoptions, 0);
+    assert.deepEqual(first.at(-1).request.decision.incoming, { pendingRows: 4, dueThisLockRows: 4 });
+  } else {
+    assert.equal(stats.incomingStaleAdoptions, 1);
+    assert.equal(reranks.length, 0);
+    if (freshIncoming === null) assert.equal(Object.hasOwn(stats, 'incomingRedecisions'), false);
+    else { assert.equal(stats.incomingRedecisions, 0); assert.equal(stats.incomingStaleDueAdoptions, 1); }
+  }
+  await handlers.handle({ method: 'POST', path: '/api/input-match/close', body: { sessionId: started.sessionId } });
+});
+
+test('fresh incoming rejects a malformed option', () => {
+  for (const freshIncoming of [{}, { leadFrames: 0, maxPerPiece: 1 }, { leadFrames: 8, maxPerPiece: 1.5 }]) {
+    assert.throws(() => createGuiInputMatchHandlers({ runtime: {}, freshIncoming }), /invalid freshIncoming/);
+  }
+  const freshIncoming = { leadFrames: 8, maxPerPiece: 8 };
+  for (const freshIncomingSides of [[], ['left', 'left'], ['middle'], 'left']) {
+    assert.throws(() => createGuiInputMatchHandlers({ runtime: {}, freshIncoming, freshIncomingSides }), /invalid freshIncomingSides/);
+  }
+  assert.throws(() => createGuiInputMatchHandlers({ runtime: {}, freshIncomingSides: ['left'] }), /invalid freshIncomingSides/);
 });

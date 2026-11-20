@@ -395,6 +395,16 @@ export function formatInputExecutionTooltip(inputExecution) {
     lines.push(`経路未発見 ${counts.notFound}回 / 予測失効 ${counts.stale}回`);
     lines.push(`PPS期限超過 / PPS有効接地: ${rate(inputExecution.deadlineExceededLocks, inputExecution.pacedLocks)}`);
   }
+  // FRESH INCOMING: plans dropped and decided again because the incoming rows changed (present only while ON).
+  if (Number.isFinite(inputExecution.incomingRedecisions)) {
+    lines.push(`FRESH INCOMING: 決め直し ${inputExecution.incomingRedecisions}回 / 古いせり上がり量のまま置いた手 ${shownInputCount(inputExecution.incomingStaleAdoptions)}回`);
+  }
+  // LOW PPS BOOST (present only while ON): the selections the side was raised to, or that it does not apply.
+  if (Number.isFinite(inputExecution.lowPpsBoostSelections)) {
+    lines.push(inputExecution.lowPpsBoostSelections > 0
+      ? `LOW PPS BOOST: SELECTION LIMIT ${inputExecution.lowPpsBoostSelections.toLocaleString('en-US')} selections`
+      : 'LOW PPS BOOST: この設定では働きません');
+  }
   // RG (EXPERIMENTAL): how often the spike re-rank changed the core's move, and the time it added.
   const rg = inputExecution.rg;
   if (rg && typeof rg === "object" && Number.isFinite(rg.decisions)) {
