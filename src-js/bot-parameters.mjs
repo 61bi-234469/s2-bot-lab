@@ -65,7 +65,31 @@ export const RG_PARAMETER = Object.freeze({
   omitDefault: true,
   description: "実験的な機能です。既定は OFF で、現チャンピオンの TTRM INPUT の対局でのみ動きます。毎手、評価の近い候補手の中から、仮に大きなせり上がりを受けたときの探索で高さが低く見積もられる手に選び直します（spike re-rank RG）。その探索で見積もった火力が下がる手には切り替えません。強くなることは確かめていません。判断の待ち時間が増えるため、PPS が速いと期待した効果が得られないことがあります。PPS の制限はありません。",
 });
-const CURRENT_CHAMPION_PARAMETERS = Object.freeze([...CHAMPION_PARAMETERS, RG_PARAMETER]);
+// FRESH INCOMING (2026-11-12): in TTRM INPUT, a plan made before the incoming rows changed is decided again while
+// at least 8 frames remain before its start (src-js/gui-input-match.mjs PRODUCT_FRESH_INCOMING). Off by default and
+// left out of the parameters while off, as MULTITHREAD. Measured at 1 and 3 PPS: a gain at 1 PPS, no clear difference at 3; no strength comparison above 3 PPS.
+export const FRESH_INCOMING_PARAMETER = Object.freeze({
+  key: "freshIncomingEnabled",
+  label: "FRESH INCOMING",
+  group: "input",
+  type: "boolean",
+  defaultValue: false,
+  omitDefault: true,
+  description: "既定は OFF で、現チャンピオンの TTRM INPUT の対局でのみ動きます。手を決めた後、置き始める前にせり上がりの予告の量が変わったら、その手を捨てて決め直します。置き始めまで 8 フレーム以上あるときだけ働き、1 つのミノにつき 8 回までです。開発用の自己対戦では、1 PPS で OFF より強い結果でした。3 PPS でははっきりした差は見られませんでした。3 PPS より速いときの強さの比較はしていません。",
+});
+// LOW PPS BOOST (2026-11-13): in TTRM INPUT, a side paced at PPS LIMIT 3 or below has a smaller SELECTION
+// LIMIT raised to 4,096 (src-js/gui-input-match.mjs `lowPpsBoostedParameters`). Off by default and left out of
+// the parameters while off, as MULTITHREAD. Measured in virtual-time self-play at 1 and 3 PPS only.
+export const LOW_PPS_BOOST_PARAMETER = Object.freeze({
+  key: "lowPpsBoostEnabled",
+  label: "LOW PPS BOOST",
+  group: "input",
+  type: "boolean",
+  defaultValue: false,
+  omitDefault: true,
+  description: "既定は OFF で、現チャンピオンの TTRM INPUT の対局でのみ動きます。PPS が ON で PPS LIMIT が 3 以下のとき、SELECTION LIMIT が 4,096 より小さければ 4,096 に上げます（THINK TIME が ON なら、その時間で先に止まることがあります）。PPS LIMIT の設定は変わりませんが、探索が間に合わないと置くのが遅れることがあります。PPS LIMIT が 3 より大きいとき、PPS が OFF のとき、SELECTION が OFF のとき、MULTITHREAD・FRESH INCOMING・RG のどれかが ON のときは何もしません。1 PPS と 3 PPS の、時間を仮想的に進める自己対戦で確かめた設定です。",
+});
+const CURRENT_CHAMPION_PARAMETERS = Object.freeze([...CHAMPION_PARAMETERS, FRESH_INCOMING_PARAMETER, LOW_PPS_BOOST_PARAMETER, RG_PARAMETER]);
 
 /* Each GUI bot's display name and settings introduction, shared by both hosts.
    The project bots run oldest to newest; names describe the design, and only
@@ -292,6 +316,12 @@ export function fairComparisonBotParameters(botType, input = {}) {
   // FAIR runs the plain search: RG (EXPERIMENTAL) is TTRM INPUT only.
   const rg = definitionFor(normalizedType).parameters.some((parameter) => parameter.key === RG_PARAMETER.key)
     ? { [RG_PARAMETER.key]: false } : {};
+  // FRESH INCOMING is TTRM INPUT only as well.
+  const fresh = definitionFor(normalizedType).parameters.some((parameter) => parameter.key === FRESH_INCOMING_PARAMETER.key)
+    ? { [FRESH_INCOMING_PARAMETER.key]: false } : {};
+  // LOW PPS BOOST is TTRM INPUT only as well.
+  const boost = definitionFor(normalizedType).parameters.some((parameter) => parameter.key === LOW_PPS_BOOST_PARAMETER.key)
+    ? { [LOW_PPS_BOOST_PARAMETER.key]: false } : {};
   return normalizeBotParameters(botType, {
     ...input,
     ppsEnabled: false,
@@ -300,6 +330,8 @@ export function fairComparisonBotParameters(botType, input = {}) {
     thinkTimeEnabled: false,
     ...multithread,
     ...rg,
+    ...fresh,
+    ...boost,
   });
 }
 

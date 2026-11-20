@@ -1353,8 +1353,8 @@ impl CollisionMaps {
 
 /// `find_native_s2_moves`'s witnesses before its sort and dedup, in generation order, for the spike-stress
 /// search, which keeps one witness per lock (`crate::spike_stress::distinct_locks`). Placed after the generator
-/// so no line above it moved; compiled where `spike_stress` is.
-#[cfg(any(not(target_arch = "wasm32"), feature = "spike-wasm"))]
+/// so no line above it moved; since 2026-11-20 only the tests' reference (`native_s2_sky_lock_set` serves the search).
+#[cfg(test)]
 pub(crate) fn native_s2_witnesses_unsorted(board: &Board, piece: Piece, entry: RootEntry) -> Vec<NativeS2Move> {
     let mut sink = (std::rc::Rc::new(*board), Vec::new());
     find_moves_core(board, piece, true, entry, Some(&mut sink));
@@ -2077,4 +2077,228 @@ mod tests {
             }
         }
     }
+}
+
+/// The (location, spin) pairs of `native_s2_witnesses_unsorted(board, piece, RootEntry::Sky)`, each once, for the
+/// spike-stress search: its lock reads a witness's location and spin only, so the rotation source, kick index and
+/// soft-drop count of each witness, and the root lock list the champion reads, are not built. The search is
+/// `find_moves_in` with the Sky entry, the direct 180 and witnesses on, step for step: the same seeds, frontier,
+/// soft-drop values (40 and above never stored), moves and recording conditions. Appended after the test module so
+/// no line above it moved; compiled where `spike_stress` is.
+#[cfg(any(not(target_arch = "wasm32"), feature = "spike-wasm"))]
+pub(crate) fn native_s2_sky_lock_set(board: &Board, piece: Piece, out: &mut Vec<(PieceLocation, crate::native_s2::CanonicalSpin)>) {
+    use crate::native_s2::CanonicalSpin;
+    // Seen (location, spin): a table over rotation, x -4..=13, y -4..=43 (the lock's bounds) and spin, kept
+    // between calls and cleared through the slots used.
+    const SLOTS: usize = 4 * 18 * 48 * 3;
+    thread_local! { static SEEN: std::cell::RefCell<Vec<bool>> = std::cell::RefCell::new(vec![false; SLOTS]); }
+    let mut seen = SEEN.with(|t| std::mem::take(&mut *t.borrow_mut()));
+    if seen.len() != SLOTS {
+        seen = vec![false; SLOTS];
+    }
+    out.clear();
+    let mut record = |location: PieceLocation, spin: CanonicalSpin| {
+        assert!(location.piece == piece && (-4..=13).contains(&location.x) && (-4..=43).contains(&location.y),
+            "lock outside the lock bounds");
+        let s = ((location.rotation as usize * 18 + (location.x + 4) as usize) * 48 + (location.y + 4) as usize) * 3 + spin as usize;
+        if !seen[s] {
+            seen[s] = true;
+            out.push((location, spin));
+        }
+    };
+    let heights = column_heights(board);
+    let walled = Board { cols: board.cols.map(|c| c | !0u64 << 40) };
+    let mut collision_map = CollisionMaps::new(&walled, piece).with_ceiling(44);
+    collision_map.canonical_rotation = true;
+    // `PieceLocation::drop_distance(board)` from the collision map: a location the search holds is unobstructed, so
+    // its cells lie below the walled row 40, where the walled board is the board; the map's bit y at column x is set
+    // when the piece at (x, y) overlaps it or the floor (pivot y below 0 always does).
+    let drop_distance = |l: PieceLocation| -> i8 {
+        let below = collision_map.boards[l.rotation as usize][l.x as usize] & ((1u64 << l.y) - 1);
+        let d = if below == 0 { l.y } else { l.y - 1 - (63 - below.leading_zeros() as i8) };
+        #[cfg(test)]
+        assert_eq!(d, l.drop_distance(board), "{l:?}");
+        d
+    };
+    // `record_s2_rotation` with a sink: the move takes the evidence's spin, and a grounded one is recorded.
+    let rotated = |record: &mut dyn FnMut(PieceLocation, CanonicalSpin), from: PieceLocation, mut mv: Placement| -> Placement {
+        let offset = (mv.location.x - from.x, mv.location.y - from.y);
+        let spin = sky_spin_from_evidence(&collision_map, board, mv.location, from.rotation, offset);
+        mv.spin = match spin {
+            CanonicalSpin::None => Spin::None,
+            CanonicalSpin::Mini => Spin::Mini,
+            CanonicalSpin::Normal => Spin::Full,
+        };
+        if drop_distance(mv.location) == 0 {
+            record(mv.location, spin);
+        }
+        mv
+    };
+    let mut workspace = MOVEGEN_WORKSPACE.with(|slot| slot.borrow_mut().take()).unwrap_or_else(|| {
+        Box::new(MovegenWorkspace { queue: Frontier::new(), values: PlacementTable::new(), underground_locks: PlacementTable::new() })
+    });
+    {
+        let MovegenWorkspace { queue, values, .. } = &mut *workspace;
+        for &rotation in &[Rotation::North, Rotation::East, Rotation::South, Rotation::West] {
+            for x in 0..10 {
+                let top = rotation.rotate_cells(piece.cells()).iter().map(|&(_, dy)| dy).max().unwrap_or(0);
+                let mut location = PieceLocation { piece, rotation, x, y: 39 - top };
+                if collision_map.obstructed(location) {
+                    continue;
+                }
+                let distance = drop_distance(location);
+                location.y -= distance;
+                let mut update_position = update_position(queue, values, false, &heights);
+                if let Some(mv) = shift(location, &collision_map, -1) {
+                    if drop_distance(mv.location) == 0 { record(mv.location, CanonicalSpin::None); }
+                    update_position(mv, distance as u32);
+                }
+                if let Some(mv) = shift(location, &collision_map, 1) {
+                    if drop_distance(mv.location) == 0 { record(mv.location, CanonicalSpin::None); }
+                    update_position(mv, distance as u32);
+                }
+                if let Some(mv) = sky_rotate(location, SkyTurn::Cw, &collision_map, board) {
+                    let mv = rotated(&mut record, location, mv);
+                    update_position(mv, distance as u32);
+                }
+                if let Some(mv) = sky_rotate(location, SkyTurn::Ccw, &collision_map, board) {
+                    let mv = rotated(&mut record, location, mv);
+                    update_position(mv, distance as u32);
+                }
+                if let Some(mv) = sky_rotate(location, SkyTurn::Half, &collision_map, board) {
+                    let mv = rotated(&mut record, location, mv);
+                    update_position(mv, distance as u32);
+                }
+                record(location, CanonicalSpin::None);
+            }
+        }
+        while let Some(expand) = queue.pop() {
+            if expand.soft_drops != values.get(&expand.mv).unwrap_or(40) {
+                continue;
+            }
+            let drop_dist = drop_distance(expand.mv.location);
+            let dropped = Placement {
+                location: PieceLocation { y: expand.mv.location.y - drop_dist, ..expand.mv.location },
+                spin: if drop_dist == 0 { expand.mv.spin } else { Spin::None },
+            };
+            if drop_dist > 0 {
+                record(dropped.location, CanonicalSpin::None);
+            }
+            let mut update_position = update_position(queue, values, false, &heights);
+            update_position(dropped, expand.soft_drops + drop_dist as u32);
+            if let Some(mv) = shift(expand.mv.location, &collision_map, -1) {
+                if drop_distance(mv.location) == 0 { record(mv.location, CanonicalSpin::None); }
+                update_position(mv, expand.soft_drops);
+            }
+            if let Some(mv) = shift(expand.mv.location, &collision_map, 1) {
+                if drop_distance(mv.location) == 0 { record(mv.location, CanonicalSpin::None); }
+                update_position(mv, expand.soft_drops);
+            }
+            if let Some(mv) = sky_rotate(expand.mv.location, SkyTurn::Cw, &collision_map, board) {
+                let mv = rotated(&mut record, expand.mv.location, mv);
+                update_position(mv, expand.soft_drops);
+            }
+            if let Some(mv) = sky_rotate(expand.mv.location, SkyTurn::Ccw, &collision_map, board) {
+                let mv = rotated(&mut record, expand.mv.location, mv);
+                update_position(mv, expand.soft_drops);
+            }
+            if let Some(mv) = sky_rotate(expand.mv.location, SkyTurn::Half, &collision_map, board) {
+                let mv = rotated(&mut record, expand.mv.location, mv);
+                update_position(mv, expand.soft_drops);
+            }
+        }
+        queue.clear();
+        values.clear();
+    }
+    MOVEGEN_WORKSPACE.with(|slot| *slot.borrow_mut() = Some(workspace));
+    for (location, spin) in out.iter() {
+        seen[((location.rotation as usize * 18 + (location.x + 4) as usize) * 48 + (location.y + 4) as usize) * 3 + *spin as usize] = false;
+    }
+    SEEN.with(|t| *t.borrow_mut() = seen);
+}
+
+/// A turn of `native_s2_sky_lock_set`.
+#[cfg(any(not(target_arch = "wasm32"), feature = "spike-wasm"))]
+#[derive(Clone, Copy)]
+enum SkyTurn {
+    Cw,
+    Ccw,
+    Half,
+}
+
+/// `rotate_cw` / `rotate_ccw` / `rotate_180` for `native_s2_sky_lock_set` (decision-compatible speed work,
+/// 2026-11-20). Its map is the Sky one: the board walled from row 40 with ceiling 44, and `canonical_rotation` on.
+/// There a location is obstructed on the map exactly when it is obstructed on the board (`Board::occupied` treats
+/// rows 40 and above, columns outside 0..10 and rows below 0 as filled, and every piece holds its pivot cell, so a
+/// pivot at row 40 or above is obstructed both ways), so `rotate`'s two checks agree and the first kick free on the
+/// map is the one taken. The move's spin is left `Spin::None`: the caller replaces it with the evidence's spin.
+/// A test build checks each answer's location against the shared function.
+#[cfg(any(not(target_arch = "wasm32"), feature = "spike-wasm"))]
+fn sky_rotate(from: PieceLocation, turn: SkyTurn, collision_map: &CollisionMaps, board: &Board) -> Option<Placement> {
+    let found = (|| {
+        let target_rotation = match turn {
+            SkyTurn::Cw => from.rotation.cw(),
+            SkyTurn::Ccw => from.rotation.ccw(),
+            SkyTurn::Half => from.rotation.flip(),
+        };
+        let attempt = |(dx, dy): (i8, i8)| {
+            let target = PieceLocation { rotation: target_rotation, x: from.x + dx, y: from.y + dy, ..from };
+            (!collision_map.obstructed(target)).then_some(target)
+        };
+        match turn {
+            SkyTurn::Half => {
+                let transition = direct_180_transition(from.piece, from.rotation);
+                transition.rows.iter().take(transition.row_count as usize).find_map(|row| attempt(row.native_offset))
+            }
+            _ if from.piece == Piece::O => None,
+            _ => kicks(from.piece, from.rotation, target_rotation).iter().find_map(|&offset| attempt(offset)),
+        }
+    })();
+    #[cfg(test)]
+    {
+        let shared = match turn {
+            SkyTurn::Cw => rotate_cw(from, collision_map, board),
+            SkyTurn::Ccw => rotate_ccw(from, collision_map, board),
+            SkyTurn::Half => rotate_180(from, collision_map, board),
+        };
+        assert_eq!(found, shared.map(|p| p.location), "{from:?}");
+    }
+    let _ = board;
+    found.map(|location| Placement { location, spin: Spin::None })
+}
+
+/// `crate::native_s2::spin_from_evidence(board, target, true, from_rotation, kick_offset)` with the Sky map for the
+/// stuck test (the map and the board agree on every location, see `sky_rotate`). A test build checks each answer.
+#[cfg(any(not(target_arch = "wasm32"), feature = "spike-wasm"))]
+fn sky_spin_from_evidence(collision_map: &CollisionMaps, board: &Board, target: PieceLocation, from_rotation: Rotation,
+    kick_offset: (i8, i8)) -> crate::native_s2::CanonicalSpin {
+    use crate::native_s2::CanonicalSpin;
+    let spin = (|| {
+        let stuck = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+            .iter()
+            .all(|&(dx, dy)| collision_map.obstructed(PieceLocation { x: target.x + dx, y: target.y + dy, ..target }));
+        if target.piece == Piece::T {
+            let count = [(-1, -1), (1, -1), (-1, 1), (1, 1)]
+                .iter()
+                .filter(|&&(x, y)| board.occupied((target.x + x, target.y + y)))
+                .count();
+            if count >= 3 {
+                let front = [(-1, 1), (1, 1)]
+                    .iter()
+                    .filter(|&&cell| {
+                        let (x, y) = target.rotation.rotate_cell(cell);
+                        board.occupied((target.x + x, target.y + y))
+                    })
+                    .count();
+                let fin = matches!(from_rotation, Rotation::North | Rotation::South)
+                    && ((target.rotation == Rotation::West && kick_offset == (1, -2))
+                        || (target.rotation == Rotation::East && kick_offset == (-1, -2)));
+                return if front == 2 || fin { CanonicalSpin::Normal } else { CanonicalSpin::Mini };
+            }
+        }
+        if stuck { CanonicalSpin::Mini } else { CanonicalSpin::None }
+    })();
+    #[cfg(test)]
+    assert_eq!(spin, crate::native_s2::spin_from_evidence(board, target, true, from_rotation, kick_offset), "{target:?}");
+    spin
 }

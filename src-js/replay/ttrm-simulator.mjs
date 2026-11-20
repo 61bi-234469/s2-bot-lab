@@ -634,6 +634,8 @@ export function createInputReplaySession(playerRound, { maxTimeMs = 10_000, sign
       return { decision: readDecision(), movement: projectInputPublicMovement(engine) };
     },
     executedEvents() { return structuredClone(executedEvents); },
+    // Against MAX_TTRM_EVENTS_PER_PLAYER (measurement runners record the headroom).
+    executedEventCount() { return executedEvents.length; },
     takeOutgoing() { return outgoing.splice(0); },
     applyStallPenaltyLine() {
       if (status !== "active") throw new TtrmError("execute", "input session is not active");

@@ -83,7 +83,8 @@ export function normalizeRgWait(wait = "block") {
 }
 
 /**
- * RG for one INPUT side over a spike search (src-js/spike-wasm-client.mjs). `apply(request, response, rootChildValues)`
+ * RG for one INPUT side over a spike search (src-js/spike-wasm-client.mjs), or a learned rule when `spike` is a learned-rule
+ * client (`kind: "learned"`, provided by the caller): that client is the rule and rebuilds RG's position itself. `apply(request, response, rootChildValues)`
  * returns the rule's result (choice null = keep the core's move) and whether it came from the cache; `prepare` starts
  * the same computation for a speculative search without waiting. Failures reject (no fallback move). `onApply`
  * (checks only) sees every applied decision with its inputs and result. `onFailure` hears every failed computation,
@@ -100,11 +101,13 @@ export function normalizeRgWait(wait = "block") {
  * for every started computation (a round's checks call it before closing so no failure goes unseen).
  */
 export function createInputRg(spike, { capacity = 8, onApply = null, onPrepare = null, onFailure = null, wait = "block",
-  maxQueued = 1, now = () => performance.now(), createRule = createRgRule } = {}) {
+  maxQueued = 1, now = () => performance.now(), createRule = createRgRule, rule: ruleOptions = null } = {}) {
   const mode = normalizeRgWait(wait);
   if (!Number.isSafeInteger(maxQueued) || maxQueued < 1 || maxQueued > 8) throw new Error("invalid RG maxQueued");
+  // `rule` (checks only): `{ settings, margin }` for src-js/rg-spike-rerank.mjs createRgRule; null is rule RG as it is.
+  if (ruleOptions !== null && spike?.kind === "learned") throw new Error("RG rule options do not apply to a learned rule");
   // `createRule` is replaced only by the scheduling tests.
-  const rule = createRule(spike);
+  const rule = spike?.kind === "learned" ? spike : ruleOptions === null ? createRule(spike) : createRule(spike, { settings: ruleOptions.settings, margin: ruleOptions.margin });
   const cache = new Map();
   const started = new Set();
   const queue = [];
@@ -128,7 +131,7 @@ export function createInputRg(spike, { capacity = 8, onApply = null, onPrepare =
     entry.state = "running"; entry.startedAt = now(); counters.started++;
     const { request, response, rootChildValues } = entry.input;
     const withChildren = { ...response, diagnostics: { ...(response.diagnostics ?? {}), rootChildValues } };
-    entry.promise = Promise.resolve().then(() => rule.ruleRG(rgStateFromRequest(request), request, withChildren))
+    entry.promise = Promise.resolve().then(() => rule.ruleRG(rule.requestOnly === true ? null : rgStateFromRequest(request), request, withChildren))
       .then((result) => { entry.state = "done"; entry.doneAt = now(); entry.result = result; return result; },
         (error) => { entry.state = "failed"; entry.doneAt = now(); throw error; });
     // A failure is reported even when no decision ever waits for this key (a speculation that was not used).
@@ -168,6 +171,16 @@ export function createInputRg(spike, { capacity = 8, onApply = null, onPrepare =
   return Object.freeze({
     wait: mode,
     counters: () => ({ ...counters, queued: queue.length, running: running !== null }),
+    // A rule with `prelist` (a learned-rule client) fills its listing cache for a predicted
+    // selector. Nothing waits for it; a failure is reported as any failed computation (the client then fails every
+    // later request, so the round stops at its next decision).
+    prelist(selector) {
+      if (typeof rule.prelist !== "function") return;
+      const p = Promise.resolve().then(() => rule.prelist(selector));
+      p.catch((error) => onFailure?.(error));
+      started.add(p);
+      p.then(() => started.delete(p), () => started.delete(p));
+    },
     prepare(request, response, rootChildValues) {
       if (response?.status === "move" && rootChildValues) {
         onPrepare?.({ request, response, rootChildValues });
@@ -180,7 +193,9 @@ export function createInputRg(spike, { capacity = 8, onApply = null, onPrepare =
       if (!rootChildValues) throw new Error("RG: a move response without root child values");
       if (mode === "block") {
         const { entry, cached } = computeBlock(request, response, rootChildValues, "apply");
-        const result = { ...(await entry.promise), cached };
+        // Where a cached computation was when the decision came (checks only): "done" or "running".
+        const seen = cached ? entry.state : "new";
+        const result = { ...(await entry.promise), cached, seen };
         onApply?.({ request, response, rootChildValues, result });
         return result;
       }

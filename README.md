@@ -72,6 +72,16 @@ failure value), and the bot switches to a candidate whose score is clearly lower
 estimated attack. It is experimental: no strength claim is made for it. It waits for that search
 on every move, so at a fast PPS the expected effect may not appear; there is no PPS limit. Each side
 with it on starts three spike-search workers for the round and closes them when the round ends.
+FRESH INCOMING (off by default, on the current champion only, TTRM INPUT matches only) drops a
+planned move and decides the piece again when the announced incoming garbage changes before the piece
+starts moving, while at least eight frames remain, at most eight times per piece. In development self-play
+it did better than off at 1 PPS and showed no clear difference at 3 PPS; no strength comparison was run
+above 3 PPS.
+LOW PPS BOOST (off by default, on the current champion only, TTRM INPUT matches only) raises a smaller
+SELECTION LIMIT to 4,096 when PPS LIMIT is 3 or below (THINK TIME, when on, can still stop the search
+first); the PPS LIMIT setting stays the same, but a placement can be late when the search does not
+finish in time. It does nothing above PPS LIMIT 3, with PPS or SELECTION off, or with MULTITHREAD,
+FRESH INCOMING or RG (EXPERIMENTAL) on. It was measured in virtual-time self-play at 1 and 3 PPS.
 The Pages build runs these Cold Clear 2 entries
 in browser module workers. It bundles three
 import-free WebAssembly engines (plus the import-free spike-stress search of RG (EXPERIMENTAL), loaded

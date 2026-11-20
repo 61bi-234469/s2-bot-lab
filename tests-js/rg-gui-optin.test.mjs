@@ -96,3 +96,19 @@ test("RG (EXPERIMENTAL): a start that fails after its pools started closes them"
   const next = await start(handlers, startBody(false, true));
   assert.equal(next.status, 200, JSON.stringify(next.body));
 });
+
+// FRESH INCOMING: the same placement as RG (EXPERIMENTAL).
+test("FRESH INCOMING: only the current champion offers it, off by default and left out while off; FAIR turns it off", async () => {
+  const { FRESH_INCOMING_PARAMETER, defaultBotParameters, normalizeBotParameters, fairComparisonBotParameters, botParameterCapability } = await import("../src-js/bot-parameters.mjs");
+  const { PRODUCT_FRESH_INCOMING } = await import("../src-js/gui-input-match.mjs");
+  assert.deepEqual(PRODUCT_FRESH_INCOMING, { leadFrames: 8, maxPerPiece: 8 });
+  assert.equal(FRESH_INCOMING_PARAMETER.defaultValue, false);
+  assert.equal(Object.hasOwn(defaultBotParameters("cc2-s2-champion"), "freshIncomingEnabled"), false);
+  assert.equal(Object.hasOwn(normalizeBotParameters("cc2-s2-champion", { freshIncomingEnabled: false }), "freshIncomingEnabled"), false);
+  assert.equal(normalizeBotParameters("cc2-s2-champion", { freshIncomingEnabled: true }).freshIncomingEnabled, true);
+  assert.equal(Object.hasOwn(fairComparisonBotParameters("cc2-s2-champion", { freshIncomingEnabled: true }), "freshIncomingEnabled"), false);
+  assert.ok(botParameterCapability("cc2-s2-champion").parameters.some((p) => p.key === "freshIncomingEnabled"));
+  for (const former of ["cc2-s2-champion-spsa-v10", "cc2-s2-champion-spsa-v7", "cc2-s2-champion-tree-reuse", "cc2-s2-champion-profile-b"]) {
+    assert.throws(() => normalizeBotParameters(former, { freshIncomingEnabled: true }), /unsupported .* parameter freshIncomingEnabled/);
+  }
+});

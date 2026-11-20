@@ -9,7 +9,7 @@ const ROUNDS = new WeakMap();
 /** One referee owns both clocks, delivery and the observed terminal receipt. */
 export function createInputExecutionRound({ seed, ids = ['left', 'right'], handlingById = {},
   stallPenaltyForgivenessId = null, initialGarbageById = {}, timeProgression = true,
-  naturalGravity = true } = {}) {
+  naturalGravity = true, seedById = null } = {}) {
   if (typeof timeProgression !== 'boolean') throw new Error('input round time progression must be boolean');
   if (typeof naturalGravity !== 'boolean') throw new Error('input round natural gravity must be boolean');
   if (!Array.isArray(ids) || ids.length !== 2 || new Set(ids).size !== 2 || ids.some(id => typeof id !== 'string' || !id)) {
@@ -19,8 +19,11 @@ export function createInputExecutionRound({ seed, ids = ['left', 'right'], handl
   if (Object.keys(handlingById).some(id => !ids.includes(id))) throw new Error('unknown handling player');
   if (stallPenaltyForgivenessId !== null && !ids.includes(stallPenaltyForgivenessId)) throw new Error('unknown STALL forgiveness player');
   if (Object.keys(initialGarbageById).some(id => !ids.includes(id))) throw new Error('unknown initial garbage player');
+  // Diagnostic opt-in (runner only): a different seed per player (distinct pieces); null gives both players `seed`.
+  if (seedById !== null && !(seedById && typeof seedById === 'object' && Object.keys(seedById).length === 2 &&
+    ids.every(id => Number.isSafeInteger(seedById[id]) && seedById[id] >= 0))) throw new Error('invalid input round seedById');
   const sessions = ids.map(id => createInputReplaySession({ id, replay: {
-    frames: 0, events: [], options: inputExecutionOptions({ seed, handling: handlingById[id], timeProgression, naturalGravity }), results: { stats: { garbage: { sent: 0 } } },
+    frames: 0, events: [], options: inputExecutionOptions({ seed: seedById === null ? seed : seedById[id], handling: handlingById[id], timeProgression, naturalGravity }), results: { stats: { garbage: { sent: 0 } } },
   } }, { canonicalProfile: INPUT_EXECUTION_PROFILE.id, forgiveStallPenalty: id === stallPenaltyForgivenessId,
     initialGarbageCells: initialGarbageById[id] ?? null }));
   let status = 'active';
@@ -49,6 +52,11 @@ export function createInputExecutionRound({ seed, ids = ['left', 'right'], handl
     refereeView() {
       return { terminal: structuredClone(terminal), players: sessions.map((session, index) =>
         ({ id: ids[index], ...session.refereeView() })) };
+    },
+    executedEventCount(id) {
+      const index = ids.indexOf(id);
+      if (index < 0) throw new Error('unknown input round player');
+      return sessions[index].executedEventCount();
     },
     refereeLastLock(id) {
       const index = ids.indexOf(id);
@@ -160,7 +168,7 @@ export function assertInputPlanLock(planned, actual) {
   const actualCells = actual?.cells?.map(([x, y]) => `${x},${y}`).sort().join(';');
   if (actualCells !== planned.cells || actual.piece !== PIECE[planned.piece] ||
       actual.rotation !== planned.rotation || actual.clear.spin !== planned.spin ||
-      actual.frame !== planned.frame || actual.subframe !== 0 || actual.usedHold !== planned.usedHold ||
+      actual.frame !== planned.frame || actual.subframe !== (planned.subframe ?? 0) || actual.usedHold !== planned.usedHold ||
       actual.hold !== (planned.holdAfter === null ? null : PIECE[planned.holdAfter]) ||
       JSON.stringify(actual.rotationEvidence) !== JSON.stringify(planned.evidence)) {
     throw new Error(`input execution differs from its planned lock at frame ${actual?.frame ?? 'missing'}`);

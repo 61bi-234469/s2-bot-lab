@@ -93,10 +93,15 @@ export function resolveIdentity(state, request, identity, reachable = null) {
  * `diagnostics.rootChildValues` and returns `{ applicable, reason, choice, rows, resolvedChoice? }` (choice null =
  * keep the selected move). `onSearchRequest` (checks only) sees every search line.
  */
-export function createRgRule(spike, { onSearchRequest = null } = {}) {
+export function createRgRule(spike, { onSearchRequest = null, settings = RG_RULE.settings, margin = RG_RULE.margin } = {}) {
   if (typeof spike?.request !== "function") throw new Error("RG needs a spike search with request()");
+  // `settings` / `margin` (checks only): one spike
+  // search setting other than RG's width 32, horizon 12, and the rows a candidate's spike height must be below the
+  // selected move's. The defaults are rule RG.
+  if (!(Array.isArray(settings) && settings.length === 1 && Number.isSafeInteger(settings[0]?.width) && settings[0].width >= 1
+    && Number.isSafeInteger(settings[0]?.horizon) && settings[0].horizon >= 1)) throw new Error("RG takes exactly one spike search setting { width, horizon }");
+  if (!(Number.isFinite(margin) && margin > 0)) throw new Error("RG margin must be a positive number");
   let serial = 0;
-  const settings = RG_RULE.settings;
   const prepare = (state, placement) => {
     const view = amountOnlyGarbage(state);
     const tr = applyTransition(view, { kind: "placement", placement }, state.rulesetId);
@@ -141,7 +146,7 @@ export function createRgRule(spike, { onSearchRequest = null } = {}) {
       F: stresses[k].F, A13: stresses[k].A13, top: stresses[k].top, resolved: resolved[k] !== null }));
     const selRow = rows.find((r) => r.identity === sel.identity);
     if (selRow.F === null || selRow.A13 === null) return { applicable: false, reason: "selected-stress-unavailable", choice: null, rows };
-    const better = rows.filter((r) => r.F !== null && r.A13 !== null && r.top === false && r.F <= selRow.F - RG_RULE.margin && r.A13 >= selRow.A13)
+    const better = rows.filter((r) => r.F !== null && r.A13 !== null && r.top === false && r.F <= selRow.F - margin && r.A13 >= selRow.A13)
       .sort((a, b) => a.F - b.F || b.value - a.value || rankOf(ranking, a.identity) - rankOf(ranking, b.identity) || (a.identity < b.identity ? -1 : 1));
     const choice = better[0]?.identity ?? null;
     const k = cands.findIndex((c) => c.identity === choice);
