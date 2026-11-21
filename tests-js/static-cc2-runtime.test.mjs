@@ -60,6 +60,8 @@ test("input resolution waits for an initializing worker and propagates init fail
     const proposed = runtime.propose({ sessionKey: 'test', engine: 'cc2-s2-f14', state: {}, selectionLimit: 512, thinkMs: null });
     const resolved = runtime.resolveInput({ request: { sessionKey: 'test', type: 'cc2-s2-f14' } });
     const settled = Promise.allSettled([proposed, resolved]);
+    // The engine worker's init goes out at once (it uses the page's compiled module only when one is already ready).
+    for (let turn = 0; turn < 100 && messages.length === 0; turn++) await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual(messages, ['init']);
     finish();
     const outcomes = await settled;
@@ -83,7 +85,9 @@ test('reset during static worker initialization closes its late result', async (
   }
   const runtime = createStaticCc2Runtime({ WorkerType: DelayedWorker });
   const pending = runtime.propose({ sessionKey: 'input-old/right', engine: 'cc2-s2-f14', state: {}, selectionLimit: 512, thinkMs: null });
-  const rejected = assert.rejects(pending, /replaced during initialization/);
+  // Closing while the worker starts ends it at once (no wait for its init reply); a late reply changes nothing.
+  const rejected = assert.rejects(pending, /replaced during initialization|session is closed/);
+  for (let turn = 0; turn < 100 && initialization === undefined; turn++) await new Promise((resolve) => setImmediate(resolve));
   await runtime.closeSessions({ sessionKeys: ['input-old/right'] });
   worker.onmessage({ data: { id: initialization.id, ok: true } });
   await rejected;

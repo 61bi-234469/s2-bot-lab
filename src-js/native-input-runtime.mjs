@@ -32,7 +32,32 @@ export function createNativeInputRuntime({ engineFor, f14SessionFor = null }) {
     });
     return entry;
   }
+  function openProposalEntry(sessionKey, engine, selectionLimit, inputCandidates) {
+    const definition = engineFor(engine);
+    return openEntry(sessionKey, { engine, selectionLimit, inputCandidates, f14: false }, () => createCc2Session({
+      binary: definition.binary, binaryArguments: s2ConfigArguments(definition.config ?? null),
+      expectedName: definition.protocolName, selectionLimit, searchSeed: '5994928009864282113' }));
+  }
+  function openF14Entry(sessionKey, type) {
+    return openEntry(sessionKey, { engine: type, selectionLimit: null, inputCandidates: false, f14: true }, () => f14SessionFor(type));
+  }
   return {
+    /** Starts, before a round's first decision, the entries that decision would open (the same keys propose and
+     * decideF14 check): for each side `{ sessionKey, type, f14, selectionLimit, inputCandidates }`. A side whose
+     * engine is unavailable is skipped, and a start that fails is left to the first decision, which meets the same
+     * failed entry; so a round starts and fails as before. */
+    async prepareSessions({ sessions: wanted = [] } = {}) {
+      const started = [];
+      for (const { sessionKey, type, f14 = false, selectionLimit = null, inputCandidates = false } of wanted) {
+        if (typeof sessionKey !== 'string' || sessionKey.length === 0 || sessions.has(sessionKey)) continue;
+        if (f14 && f14SessionFor === null) continue;
+        let entry;
+        try { entry = f14 ? openF14Entry(sessionKey, type) : openProposalEntry(sessionKey, type, selectionLimit, inputCandidates); }
+        catch { continue; }
+        started.push(entry.initializing);
+      }
+      await Promise.allSettled(started);
+    },
     async propose({ sessionKey, engine, state, selectionLimit, thinkMs }) {
       const inputCandidates = state?.input_candidates === true;
       if (inputCandidates && !['cc2-raw', 'cc2-chouhy'].includes(engine)) throw new Error('input candidate prefix engine mismatch');
@@ -40,12 +65,7 @@ export function createNativeInputRuntime({ engineFor, f14SessionFor = null }) {
       if (entry && (entry.engine !== engine || entry.f14 || entry.selectionLimit !== selectionLimit || entry.inputCandidates !== inputCandidates)) {
         throw new Error('input session engine or selection budget mismatch');
       }
-      if (!entry) {
-        const definition = engineFor(engine);
-        entry = openEntry(sessionKey, { engine, selectionLimit, inputCandidates, f14: false }, () => createCc2Session({
-          binary: definition.binary, binaryArguments: s2ConfigArguments(definition.config ?? null),
-          expectedName: definition.protocolName, selectionLimit, searchSeed: '5994928009864282113' }));
-      }
+      if (!entry) entry = openProposalEntry(sessionKey, engine, selectionLimit, inputCandidates);
       const bot = await entry.initializing;
       return bot.suggest({ state, thinkMs: thinkMs ?? 50, timeLimitEnabled: thinkMs !== null });
     },
@@ -54,8 +74,7 @@ export function createNativeInputRuntime({ engineFor, f14SessionFor = null }) {
       if (engine?.botType !== type || engine?.engineId !== type) throw new Error(`CC2 F14 engine identity mismatch for ${type}`);
       let entry = sessions.get(sessionKey);
       if (entry && (entry.engine !== type || !entry.f14)) throw new Error('input session engine or selection budget mismatch');
-      if (!entry) entry = openEntry(sessionKey, { engine: type, selectionLimit: null, inputCandidates: false, f14: true },
-        () => f14SessionFor(type));
+      if (!entry) entry = openF14Entry(sessionKey, type);
       const session = await entry.initializing;
       return session.decideF14({ request, profile });
     },

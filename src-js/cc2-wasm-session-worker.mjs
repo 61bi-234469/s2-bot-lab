@@ -3,7 +3,7 @@ import { createCc2WasmSession } from './cc2-wasm-engine.mjs';
 
 // One F14 WASM session per worker. Messages run in arrival order: each
 // session call is synchronous WASM work once the session is ready.
-const ready = createCc2WasmSession({ wasmBytes: workerData.wasmBytes });
+const ready = createCc2WasmSession({ wasmBytes: workerData.wasmBytes, wasmModule: workerData.wasmModule ?? null });
 ready.then(() => parentPort.postMessage({ id: 0 }), error => parentPort.postMessage({ id: 0, error: error?.message ?? String(error) }));
 parentPort.on('message', async ({ id, op, payload }) => {
   try {

@@ -2,9 +2,11 @@ import { Worker } from 'node:worker_threads';
 
 /** The F14 decision surface of createCc2WasmSession, run in a worker thread so
  * the synchronous WASM search never blocks the local server's event loop. */
-export async function createCc2WasmWorkerSession({ wasmBytes }) {
-  if (!(wasmBytes instanceof ArrayBuffer) && !ArrayBuffer.isView(wasmBytes)) throw new TypeError('wasmBytes is required');
-  const worker = new Worker(new URL('./cc2-wasm-session-worker.mjs', import.meta.url), { workerData: { wasmBytes } });
+export async function createCc2WasmWorkerSession({ wasmBytes, wasmModule = null }) {
+  // A compiled module of the same bytes (see createCc2WasmSession) is passed to the worker instead of the bytes.
+  if (wasmModule !== null && !(wasmModule instanceof WebAssembly.Module)) throw new TypeError('wasmModule must be a WebAssembly.Module');
+  if (wasmModule === null && !(wasmBytes instanceof ArrayBuffer) && !ArrayBuffer.isView(wasmBytes)) throw new TypeError('wasmBytes is required');
+  const worker = new Worker(new URL('./cc2-wasm-session-worker.mjs', import.meta.url), { workerData: wasmModule !== null ? { wasmModule } : { wasmBytes } });
   const pending = new Map();
   let nextId = 0;
   let failure = null;

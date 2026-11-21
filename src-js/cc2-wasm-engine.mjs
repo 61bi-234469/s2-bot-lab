@@ -3,10 +3,17 @@ import { instantiateThreadedWasm } from "./cc2-wasm-threads.mjs";
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-export async function createCc2WasmSession({ wasmBytes, config = null, selectionLimit, searchSeed }) {
-  if (!(wasmBytes instanceof ArrayBuffer) && !ArrayBuffer.isView(wasmBytes)) throw new TypeError("wasmBytes is required");
+/**
+ * `wasmModule` (a compiled WebAssembly.Module of the same bytes) may replace `wasmBytes`: a host that compiles each WASM
+ * once and hands the module to every new session skips the compile, and later sessions run code that is already warm.
+ * A search bounded by selections decides the same either way; a THINK TIME search stops on time, so warm code can reach
+ * more selections in the same time and choose another move, as any faster run can.
+ */
+export async function createCc2WasmSession({ wasmBytes, wasmModule = null, config = null, selectionLimit, searchSeed }) {
+  if (wasmModule !== null && !(wasmModule instanceof WebAssembly.Module)) throw new TypeError("wasmModule must be a WebAssembly.Module");
+  if (wasmModule === null && !(wasmBytes instanceof ArrayBuffer) && !ArrayBuffer.isView(wasmBytes)) throw new TypeError("wasmBytes is required");
   const normalizedSelectionLimit = normalizeSelectionLimit(selectionLimit);
-  const module = await WebAssembly.compile(wasmBytes);
+  const module = wasmModule ?? await WebAssembly.compile(wasmBytes);
   const imports = WebAssembly.Module.imports(module);
   if (imports.length !== 0) throw new Error(`CC2 WASM must be import-free; found ${imports.length}`);
   const { exports } = await WebAssembly.instantiate(module, {});

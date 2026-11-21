@@ -313,7 +313,7 @@ const inputRuntime = createNativeInputRuntime({ engineFor: inputEngineFor, f14Se
 async function inputF14Session(type) {
   if (!isF14CoreType(type)) throw new Error(`unsupported F14 INPUT bot ${type}`);
   if (inputChampionWasm.wasmSha256 === null) throw new Error(`${inputChampionWasm.label} WASM artifact not found: ${inputChampionWasm.wasm}`);
-  return createCc2WasmWorkerSession({ wasmBytes: readWasmBytesMatchingHash(inputChampionWasm) });
+  return createCc2WasmWorkerSession({ wasmModule: await compiledWasmModule(inputChampionWasm) });
 }
 function inputEngineFor(type) {
   if (type === "cc2-s2-champion-legacy") {
@@ -1244,7 +1244,21 @@ async function createF14WasmSession(engine) {
   if (!engine.f14WasmCompat || engine.wasmSha256 === null) {
     throw new Error(`${engine.label} WASM artifact unavailable`);
   }
-  return createCc2WasmWorkerSession({ wasmBytes: readWasmBytesMatchingHash(engine) });
+  return createCc2WasmWorkerSession({ wasmModule: await compiledWasmModule(engine) });
+}
+
+// One compiled module per WASM artifact: every session after the first skips the compile and runs code V8 has already
+// optimized. The bytes are still read and checked against the startup hash for every session, as before.
+const compiledWasm = new Map();
+function compiledWasmModule(engine) {
+  const wasmBytes = readWasmBytesMatchingHash(engine);
+  let module = compiledWasm.get(engine.wasmSha256);
+  if (module === undefined) {
+    module = WebAssembly.compile(wasmBytes);
+    compiledWasm.set(engine.wasmSha256, module);
+    module.catch(() => { if (compiledWasm.get(engine.wasmSha256) === module) compiledWasm.delete(engine.wasmSha256); });
+  }
+  return module;
 }
 
 function readWasmBytesMatchingHash(engine) {

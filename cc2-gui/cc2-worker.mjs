@@ -38,16 +38,25 @@ self.onmessage = async ({ data }) => {
       engine = payload.engine;
       self.postMessage({ id, ok: true });
     } else if (type === "init") {
-      const response = await fetch(new URL(payload.wasm, import.meta.url));
-      if (!response.ok) throw new Error(`WASM fetch failed: ${response.status}`);
       let config = payload.config ?? null;
       if (payload.configUrl) {
         const configResponse = await fetch(new URL(payload.configUrl, import.meta.url));
         if (!configResponse.ok) throw new Error(`config fetch failed: ${configResponse.status}`);
         config = await configResponse.text();
       }
-      session = await createThreadedSessionOrNull(payload, config)
-        ?? await createCc2WasmSession({ ...payload, config, wasmBytes: await response.arrayBuffer() });
+      // The threaded build first, when offered; the single-thread build is loaded only when it is not used. The page
+      // compiles each single-thread WASM once and passes the module (static-host.mjs); without one, fetch the bytes here.
+      session = await createThreadedSessionOrNull(payload, config);
+      if (session === null) {
+        const wasmModule = payload.wasmModule instanceof WebAssembly.Module ? payload.wasmModule : null;
+        let wasmBytes;
+        if (wasmModule === null) {
+          const response = await fetch(new URL(payload.wasm, import.meta.url));
+          if (!response.ok) throw new Error(`WASM fetch failed: ${response.status}`);
+          wasmBytes = await response.arrayBuffer();
+        }
+        session = await createCc2WasmSession({ ...payload, config, wasmModule, ...(wasmModule === null ? { wasmBytes } : {}) });
+      }
       engine = payload.engine;
       self.postMessage({ id, ok: true, value: { threaded: session.threaded === true } });
     } else if (type === "suggest") {
