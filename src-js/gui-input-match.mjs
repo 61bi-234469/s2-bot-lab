@@ -70,9 +70,11 @@ async function closeRgPools(session) {
 }
 // A round that ended (complete or failed) releases its core sessions and its spike pools.
 const closeRound = (runtime, session) => Promise.allSettled([runtime.closeSessions({ sessionKeys: session.keys }), closeRgPools(session)]);
+// The CC2 bots that propose INPUT candidates (input_candidates); their sessions are keyed on it.
+const INPUT_CANDIDATE_TYPES = new Set(['cc2-raw', 'cc2-chouhy']);
 const nativeInputState = (decision, parameters, type) => ({
   ...guiStateToCc2NativeStart(decisionStateToSyntheticGui(decision), { queueLimit: parameters.queueDepth }),
-  ...(['cc2-raw', 'cc2-chouhy'].includes(type) ? { input_candidates: true } : {}),
+  ...(INPUT_CANDIDATE_TYPES.has(type) ? { input_candidates: true } : {}),
   ...(F14_CORE_TYPES.has(type) ? { incoming: structuredClone(decision.incoming) } : {}),
 });
 const nativeInputStateWithoutIncoming = state => {
@@ -344,6 +346,18 @@ export function createGuiInputMatchHandlers({ runtime, now = () => performance.n
               turnMatch: { ...turnMatch },
               handicap: { id: HANDICAP_GARBAGE_ID, enabled: handicap.enabled } } };
           rgOwner.session = current;
+          // Each bot side's sessions start now, under the keys their first decision opens (decideF14 for an F14-core
+          // bot, propose with this SELECTION LIMIT otherwise). The start does not wait for them, so it answers as before;
+          // the first decision awaits the same entry, and starting the worker and loading its engine overlap whatever
+          // comes before it (the 1P countdown, the first step). A failed start is met by the first decision as before.
+          if (typeof runtime.prepareSessions === 'function') {
+            void runtime.prepareSessions({ sessions: IDS.filter(id => types[id] !== 'human').map(id => {
+              const sessionKey = current.keys[IDS.indexOf(id)];
+              return F14_CORE_TYPES.has(types[id]) ? { sessionKey, type: types[id], f14: true }
+                : { sessionKey, type: types[id], f14: false, inputCandidates: INPUT_CANDIDATE_TYPES.has(types[id]),
+                  selectionLimit: parameters[id].selectionEnabled ? parameters[id].selectionLimit : null };
+            }) }).catch(() => {});
+          }
           return ok(view(current));
           } catch (error) {
             // A start that fails after its pools started (a bad seed, a replaced round) closes them.

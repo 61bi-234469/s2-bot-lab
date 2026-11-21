@@ -167,13 +167,32 @@ export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTim
         // so a search on the engine worker (the next piece's speculation)
         // never delays it.
         if (entry.workerSession === null) await entry.initializing;
-        entry.resolver ??= createWorkerSession({ WorkerType, engine: entry.engine, selectionLimit: null, resolverOnly: true });
+        // A round closed while the engine started must not start a resolver nothing would close.
+        if (sessions.get(payload.request.sessionKey) !== entry) throw new Error('input worker session replaced');
+        entry.resolver ??= createWorkerSession({ WorkerType, engine: entry.engine, selectionLimit: null, resolverOnly: true, onStart: entry.track });
         const resolver = await entry.resolver;
         const result = await resolver.resolveInput(payload);
         if (sessions.get(payload.request.sessionKey) !== entry) throw new Error('input worker session replaced');
         scheduleIdleClose(payload.request.sessionKey, entry);
         return result;
       } catch (error) { await closeEntry(payload.request.sessionKey, entry); throw error; }
+    },
+
+    /** Starts, before a round's first decision, the entries that decision would open: for each side
+     * `{ sessionKey, type, f14, selectionLimit, inputCandidates }` (the key decideF14 or propose then finds), plus the
+     * INPUT resolution worker. Failures are left to the first decision, which meets the same failed entry. */
+    async prepareSessions({ sessions: wanted = [] } = {}) {
+      const started = [];
+      for (const { sessionKey, type, f14 = false, selectionLimit = null, inputCandidates = false } of wanted) {
+        if (typeof sessionKey !== "string" || sessionKey.length === 0 || sessions.has(sessionKey)) continue;
+        const entry = createSessionEntry(sessionKey, type, f14 ? false : inputCandidates, f14 ? null : selectionLimit);
+        entry.resolver ??= createWorkerSession({ WorkerType, engine: type, selectionLimit: null, resolverOnly: true, onStart: entry.track });
+        void entry.resolver.catch(() => {});
+        // An entry the round never uses is closed like any idle one; the first use clears the timer.
+        scheduleIdleClose(sessionKey, entry);
+        started.push(entry.initializing, entry.resolver);
+      }
+      await Promise.allSettled(started);
     },
 
     async closeSessions({ sessionKeys = null } = {}) {
@@ -206,7 +225,10 @@ export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTim
     };
     sessions.set(sessionKey, entry);
     const initialized = entry;
-    entry.initializing = createWorkerSession({ WorkerType, engine, selectionLimit, threads }).then(async workerSession => {
+    // Workers still starting are stopped by closeEntry at once instead of waiting for their init reply.
+    entry.cancels = new Set();
+    entry.track = (cancel) => { entry.cancels.add(cancel); return () => entry.cancels.delete(cancel); };
+    entry.initializing = createWorkerSession({ WorkerType, engine, selectionLimit, threads, onStart: entry.track }).then(async workerSession => {
       initialized.workerSession = workerSession;
       if (sessions.get(sessionKey) !== initialized) {
         await workerSession.close();
@@ -222,12 +244,39 @@ export function createStaticCc2Runtime({ WorkerType = globalThis.Worker, idleTim
     if (sessions.get(sessionKey) !== entry) return;
     sessions.delete(sessionKey);
     clearIdleClose(entry);
+    for (const cancel of [...(entry.cancels ?? [])]) cancel();
     await entry.workerSession?.close();
     await (await entry.resolver?.catch(() => null))?.close();
   }
 }
 
-async function createWorkerSession({ WorkerType, engine, selectionLimit, resolverOnly = false, threads = "auto" }) {
+// Each import-free WASM is compiled once per page in the background, and once it is ready the module is handed to every
+// new worker: later rounds skip the fetch and the compile and run code the browser has already optimized. A worker never
+// waits for it: until the module is ready (or when the compile fails or has not finished in 15 s, after which a later
+// worker starts it again) the worker fetches and compiles the bytes itself, as before.
+const compiledWasmModules = new Map();
+function compiledWasmModuleIfReady(wasm) {
+  let entry = compiledWasmModules.get(wasm);
+  if (entry === undefined && typeof fetch === "function") {
+    entry = { module: null };
+    compiledWasmModules.set(wasm, entry);
+    const abort = typeof AbortController === "function" ? new AbortController() : null;
+    let timer = null;
+    const timeout = new Promise((resolve) => { timer = setTimeout(() => { abort?.abort(); resolve(null); }, 15_000); timer?.unref?.(); });
+    const compile = (async () => {
+      const response = await fetch(new URL(wasm, import.meta.url), abort ? { signal: abort.signal } : undefined);
+      return response.ok ? WebAssembly.compile(await response.arrayBuffer()) : null;
+    })().catch(() => null);
+    void Promise.race([compile, timeout]).then((module) => {
+      clearTimeout(timer);
+      if (module instanceof WebAssembly.Module) entry.module = module;
+      else if (compiledWasmModules.get(wasm) === entry) compiledWasmModules.delete(wasm);
+    });
+  }
+  return entry?.module ?? null;
+}
+
+async function createWorkerSession({ WorkerType, engine, selectionLimit, resolverOnly = false, threads = "auto", onStart = null }) {
   const wasm = engine === "cc2-raw" ? "./cold_clear_2_upstream.wasm" : engine === "cc2-chouhy" ? "./cold_clear_2_chouhy.wasm" : "./cold_clear_2_s2.wasm";
   const workerUrl = new URL("./cc2-worker.bundle.js", import.meta.url);
   workerUrl.searchParams.set("v", globalThis.__CC2_WORKER_VERSION__ ?? "dev");
@@ -255,6 +304,14 @@ async function createWorkerSession({ WorkerType, engine, selectionLimit, resolve
     failPending(new Error(event.message || "CC2 worker failed to start"));
   };
   worker.onmessageerror = () => failPending(new Error("CC2 worker returned an unreadable message"));
+  // Until init answers, `onStart` holds a cancel that ends the worker (its init then rejects).
+  let started = false;
+  const untrack = onStart?.(() => {
+    if (started || closed) return;
+    closed = true;
+    failPending(new Error("CC2 worker session is closed"));
+    worker.terminate();
+  }) ?? (() => {});
   const request = (type, payload) => new Promise((resolve, reject) => {
     if (closed || workerFailure !== null) {
       reject(workerFailure ?? new Error("CC2 worker session is closed"));
@@ -262,7 +319,8 @@ async function createWorkerSession({ WorkerType, engine, selectionLimit, resolve
     }
     const id = nextId++;
     pending.set(id, { resolve, reject });
-    worker.postMessage({ id, type, payload });
+    try { worker.postMessage({ id, type, payload }); }
+    catch (error) { pending.delete(id); reject(error); }
   });
   const configUrl = ["cc2-s2-champion", "cc2-s2-champion-spsa-v1", "cc2-s2-champion-spsa-v2", "cc2-s2-champion-ren-gain", "cc2-s2-champion-backup", "cc2-s2-champion-tree-reuse", "cc2-s2-champion-spsa-v7", "cc2-s2-champion-spsa-v10", "cc2-s2-champion-previous", "cc2-s2-champion-profile-b", "cc2-s2-champion-legacy"].includes(engine)
     ? "./cc2-s2-spawn-integrity-substrate-v2.json"
@@ -275,12 +333,23 @@ async function createWorkerSession({ WorkerType, engine, selectionLimit, resolve
     && globalThis.crossOriginIsolated === true ? "./cold_clear_2_s2_threads.wasm" : undefined;
   let initialized;
   try {
-    initialized = await request("init", resolverOnly ? { engine, resolverOnly: true }
-      : { engine, wasm, configUrl, selectionLimit, searchSeed: "5994928009864282113", ...(threadedWasm ? { threadedWasm } : {}) });
+    const init = { engine, wasm, configUrl, selectionLimit, searchSeed: "5994928009864282113", ...(threadedWasm ? { threadedWasm } : {}) };
+    // The threaded build starts as before (its worker loads the single-thread build only as a fallback).
+    const wasmModule = resolverOnly || threadedWasm ? null : compiledWasmModuleIfReady(wasm);
+    try {
+      initialized = await request("init", resolverOnly ? { engine, resolverOnly: true } : wasmModule !== null ? { ...init, wasmModule } : init);
+    } catch (error) {
+      // A browser that cannot pass the module to a worker: the worker fetches and compiles the bytes itself.
+      if (wasmModule === null || error?.name !== "DataCloneError") throw error;
+      initialized = await request("init", init);
+    }
   } catch (error) {
+    untrack();
     worker.terminate();
     throw error;
   }
+  started = true;
+  untrack();
   return Object.freeze({
     threaded: initialized?.threaded === true,
     suggest: ({ state, thinkMs }) => request("suggest", { state, thinkMs }),
